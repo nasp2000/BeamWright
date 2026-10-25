@@ -1,5 +1,6 @@
 pub mod bezier;
 pub mod boolean;
+pub mod distribution;
 pub mod grid;
 pub mod intersection;
 pub mod offset;
@@ -24,3 +25,6 @@ pub use point::Point2;
 
 #[allow(unused_imports)]
 pub use grid::grid_positions;
+
+#[allow(unused_imports)]
+pub use distribution::distribute;
