@@ -16,6 +16,19 @@ impl Line {
         self.start = crate::geometry::Point2::new(self.start.x + dx, self.start.y + dy);
         self.end = crate::geometry::Point2::new(self.end.x + dx, self.end.y + dy);
     }
+    pub fn scale(&mut self, sx: f64, sy: f64, center: crate::geometry::Point2) {
+        self.start = scale_point(self.start, sx, sy, center);
+        self.end = scale_point(self.end, sx, sy, center);
+    }
+}
+
+fn scale_point(
+    p: crate::geometry::Point2,
+    sx: f64,
+    sy: f64,
+    c: crate::geometry::Point2,
+) -> crate::geometry::Point2 {
+    crate::geometry::Point2::new(c.x + (p.x - c.x) * sx, c.y + (p.y - c.y) * sy)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +51,10 @@ impl Rect {
     pub fn translate(&mut self, dx: f64, dy: f64) {
         self.origin = Point2::new(self.origin.x + dx, self.origin.y + dy);
     }
+    pub fn scale(&mut self, sx: f64, sy: f64) {
+        self.width *= sx;
+        self.height *= sy;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +70,10 @@ impl Ellipse {
     }
     pub fn translate(&mut self, dx: f64, dy: f64) {
         self.center = Point2::new(self.center.x + dx, self.center.y + dy);
+    }
+    pub fn scale(&mut self, sx: f64, sy: f64) {
+        self.rx *= sx;
+        self.ry *= sy;
     }
 }
 
