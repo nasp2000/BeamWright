@@ -1,4 +1,5 @@
 pub mod dxf;
+pub mod format;
 pub mod gcode;
 pub mod hpgl;
 pub mod pdf;
@@ -9,6 +10,8 @@ pub mod svg;
 
 #[allow(unused_imports)]
 pub use dxf::import_dxf;
+#[allow(unused_imports)]
+pub use format::{detect_format, import_by_extension};
 #[allow(unused_imports)]
 pub use gcode::import_gcode;
 #[allow(unused_imports)]
