@@ -2,6 +2,7 @@ pub mod dialogs;
 pub mod icons;
 pub mod layer_panel;
 pub mod menus;
+pub mod preview_panel;
 pub mod properties;
 pub mod toolbar;
 

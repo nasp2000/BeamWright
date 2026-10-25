@@ -37,6 +37,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Rectangle,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
             let _ = (x, y, w, h);
         }
@@ -48,6 +49,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Ellipse,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }
@@ -58,6 +60,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Ellipse,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }
@@ -68,6 +71,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Line,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }
@@ -81,6 +85,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Path,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }
@@ -91,6 +96,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Path,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }
@@ -100,6 +106,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
             id: format!("obj-{}", doc.objects.len()),
             kind: ObjectKind::Text,
             layer_id: lid.clone(),
+            operation_id: None,
         });
     }
     // images
@@ -109,6 +116,7 @@ pub fn import_svg(src: &str) -> Result<Document> {
                 id: format!("obj-{}", doc.objects.len()),
                 kind: ObjectKind::Image,
                 layer_id: lid.clone(),
+                operation_id: None,
             });
         }
     }

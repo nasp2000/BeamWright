@@ -15,6 +15,7 @@ pub fn import_dxf(src: &str) -> Result<Document> {
             id: format!("obj-{}", doc.objects.len()),
             kind: crate::document::model::ObjectKind::Path,
             layer_id: doc.layers[0].id.clone(),
+            operation_id: None,
         });
     }
     if doc.layers[0].id.is_empty() {

@@ -30,6 +30,7 @@ pub struct DocumentObject {
     pub id: String,
     pub kind: ObjectKind,
     pub layer_id: String,
+    pub operation_id: Option<String>,
 }
 
 /// The main document (PLAN.md §4.1).
@@ -80,6 +81,26 @@ impl Document {
             }
         }
         Ok(())
+    }
+}
+
+impl Document {
+    pub fn assign_operation(&mut self, object_id: &str, operation_id: Option<String>) {
+        if let Some(o) = self.objects.iter_mut().find(|o| o.id == object_id) {
+            o.operation_id = operation_id;
+        }
+    }
+    pub fn objects_on_layer(&self, layer_id: &str) -> Vec<&DocumentObject> {
+        self.objects
+            .iter()
+            .filter(|o| o.layer_id == layer_id)
+            .collect()
+    }
+    pub fn layer_of(&self, object_id: &str) -> Option<&str> {
+        self.objects
+            .iter()
+            .find(|o| o.id == object_id)
+            .map(|o| o.layer_id.as_str())
     }
 }
 
@@ -134,5 +155,59 @@ mod tests {
             ..Document::default()
         };
         assert!(d.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod assoc_tests {
+    use super::*;
+    use crate::document::model::DocumentObject;
+
+    #[test]
+    fn assign_operation() {
+        let mut d = Document::default();
+        d.layers[0].id = "l1".to_string();
+        d.objects.push(DocumentObject {
+            id: "o1".to_string(),
+            kind: ObjectKind::Line,
+            layer_id: "l1".to_string(),
+            operation_id: None,
+        });
+        d.assign_operation("o1", Some("op-1".to_string()));
+        assert_eq!(d.objects[0].operation_id, Some("op-1".to_string()));
+    }
+
+    #[test]
+    fn objects_on_layer() {
+        let mut d = Document::default();
+        d.layers[0].id = "l1".to_string();
+        d.objects.push(DocumentObject {
+            id: "o1".to_string(),
+            kind: ObjectKind::Line,
+            layer_id: "l1".to_string(),
+            operation_id: None,
+        });
+        d.objects.push(DocumentObject {
+            id: "o2".to_string(),
+            kind: ObjectKind::Line,
+            layer_id: "l2".to_string(),
+            operation_id: None,
+        });
+        assert_eq!(d.objects_on_layer("l1").len(), 1);
+        assert_eq!(d.objects_on_layer("l2").len(), 1);
+    }
+
+    #[test]
+    fn layer_of() {
+        let mut d = Document::default();
+        d.layers[0].id = "l1".to_string();
+        d.objects.push(DocumentObject {
+            id: "o1".to_string(),
+            kind: ObjectKind::Line,
+            layer_id: "l1".to_string(),
+            operation_id: None,
+        });
+        assert_eq!(d.layer_of("o1"), Some("l1"));
+        assert!(d.layer_of("nope").is_none());
     }
 }

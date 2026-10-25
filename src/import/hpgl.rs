@@ -18,6 +18,7 @@ pub fn import_hpgl(src: &str) -> Result<Document> {
             id: format!("obj-{}", doc.objects.len()),
             kind: crate::document::model::ObjectKind::Path,
             layer_id: layer_id.clone(),
+            operation_id: None,
         });
     }
     Ok(doc)

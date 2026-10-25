@@ -32,6 +32,7 @@ mod tests {
             id: "o1".to_string(),
             kind: ObjectKind::Line,
             layer_id: "l1".to_string(),
+            operation_id: None,
         });
         let s = export_dxf(&d).unwrap();
         assert!(s.contains("LINE"));

@@ -25,6 +25,7 @@ pub fn import_raster(path: &Path) -> Result<Document> {
         id: "img-0".to_string(),
         kind: ObjectKind::Image,
         layer_id: lid,
+        operation_id: None,
     });
     Ok(doc)
 }

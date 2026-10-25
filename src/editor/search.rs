@@ -43,6 +43,7 @@ mod tests {
             id: "myline".to_string(),
             kind: crate::document::model::ObjectKind::Line,
             layer_id: String::new(),
+            operation_id: None,
         });
         let r = search_objects(&d, "myline");
         assert_eq!(r.len(), 1);
