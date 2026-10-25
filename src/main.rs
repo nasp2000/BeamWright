@@ -13,6 +13,7 @@ mod history;
 mod import;
 mod layers;
 mod materials;
+mod messages;
 mod objects;
 mod operations;
 mod preview;
