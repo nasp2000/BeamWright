@@ -1,1 +1,4 @@
-//! preview module (stub, Phase 1).
+pub mod ordering;
+
+#[allow(unused_imports)]
+pub use ordering::order_indices;
