@@ -1,5 +1,7 @@
+pub mod alignment;
 pub mod canvas;
 pub mod selection;
+pub mod snapping;
 pub mod tools;
 
 #[allow(unused_imports)]
