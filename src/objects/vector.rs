@@ -12,6 +12,10 @@ impl Line {
     pub fn length(&self) -> f64 {
         self.start.distance(self.end)
     }
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.start = crate::geometry::Point2::new(self.start.x + dx, self.start.y + dy);
+        self.end = crate::geometry::Point2::new(self.end.x + dx, self.end.y + dy);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +35,9 @@ impl Rect {
             self.origin.y + self.height / 2.0,
         )
     }
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.origin = Point2::new(self.origin.x + dx, self.origin.y + dy);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +50,9 @@ pub struct Ellipse {
 impl Ellipse {
     pub fn area(&self) -> f64 {
         std::f64::consts::PI * self.rx * self.ry
+    }
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.center = Point2::new(self.center.x + dx, self.center.y + dy);
     }
 }
 
