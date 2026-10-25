@@ -1,4 +1,5 @@
 pub mod dialect;
+pub mod raster;
 pub mod toolpath;
 pub mod validate;
 pub mod writer;
