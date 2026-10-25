@@ -1,3 +1,4 @@
+pub mod preferences;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub default_unit: &'static str,
@@ -29,7 +30,7 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DrawingPrefs {
     pub grid_spacing_mm: f64,
     pub snap_tolerance_px: f64,
