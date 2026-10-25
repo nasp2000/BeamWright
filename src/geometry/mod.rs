@@ -1,3 +1,4 @@
+pub mod bezier;
 pub mod boolean;
 pub mod intersection;
 pub mod offset;
