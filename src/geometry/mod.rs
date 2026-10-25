@@ -1,5 +1,6 @@
 pub mod bezier;
 pub mod boolean;
+pub mod grid;
 pub mod intersection;
 pub mod offset;
 pub mod path;
@@ -20,3 +21,6 @@ pub use path::Path;
 pub use path::Segment as PathSegment;
 #[allow(unused_imports)]
 pub use point::Point2;
+
+#[allow(unused_imports)]
+pub use grid::grid_positions;
