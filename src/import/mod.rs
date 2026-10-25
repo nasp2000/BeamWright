@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod dxf;
 pub mod format;
 pub mod gcode;
@@ -8,6 +9,8 @@ pub mod raster;
 pub mod [redacted];
 pub mod svg;
 
+#[allow(unused_imports)]
+pub use ai::import_ai;
 #[allow(unused_imports)]
 pub use dxf::import_dxf;
 #[allow(unused_imports)]
