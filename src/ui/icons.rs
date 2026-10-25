@@ -404,25 +404,30 @@ impl Icon {
 /// Clickable button with an icon and a text label.
 pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
     let icon_size = 14.0f32;
-    let spacing = 6.0f32;
+    let spacing = 4.0f32;
     let text_color = ui.visuals().text_color();
     let font = egui::FontId::default();
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font, text_color));
-    let total_w = icon_size + spacing + galley.size().x;
-    let h = galley.size().y.max(icon_size);
+    let text_w = galley.size().x;
+    let total_w = icon_size.max(text_w);
+    let h = galley.size().y + spacing + icon_size;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(total_w, h), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
         if response.hovered() {
             painter.rect_filled(rect, 2.0, ui.visuals().widgets.hovered.bg_fill);
         }
-        let ic_rect = egui::Rect::from_min_size(rect.min, egui::vec2(icon_size, icon_size));
-        icon.paint(&painter, ic_rect, text_color);
-        let text_pos = egui::pos2(
-            rect.min.x + icon_size + spacing,
-            rect.center().y - galley.size().y * 0.5,
-        );
+        let text_h = galley.size().y;
+        let text_pos = egui::pos2(rect.center().x - text_w * 0.5, rect.min.y);
         painter.galley(text_pos, galley, text_color);
+        let ic_rect = egui::Rect::from_center_size(
+            egui::pos2(
+                rect.center().x,
+                rect.min.y + text_h + spacing + icon_size * 0.5,
+            ),
+            egui::vec2(icon_size, icon_size),
+        );
+        icon.paint(&painter, ic_rect, text_color);
     }
     response
 }
@@ -430,22 +435,39 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
 /// Menu title with icon (non-clickable header style).
 pub fn icon_label(ui: &mut Ui, icon: Icon, label: &str) {
     let icon_size = 14.0f32;
-    let spacing = 6.0f32;
+    let spacing = 4.0f32;
     let text_color = ui.visuals().text_color();
     let font = egui::FontId::default();
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font, text_color));
-    let total_w = icon_size + spacing + galley.size().x;
-    let h = galley.size().y.max(icon_size);
+    let text_w = galley.size().x;
+    let total_w = icon_size.max(text_w);
+    let h = (if label.is_empty() {
+        0.0
+    } else {
+        galley.size().y + spacing
+    }) + icon_size;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, h), egui::Sense::hover());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
-        let ic_rect = egui::Rect::from_min_size(rect.min, egui::vec2(icon_size, icon_size));
-        icon.paint(&painter, ic_rect, text_color);
-        let text_pos = egui::pos2(
-            rect.min.x + icon_size + spacing,
-            rect.center().y - galley.size().y * 0.5,
+        let text_h = if label.is_empty() {
+            0.0
+        } else {
+            galley.size().y
+        };
+        if !label.is_empty() {
+            let text_pos = egui::pos2(rect.center().x - text_w * 0.5, rect.min.y);
+            painter.galley(text_pos, galley, text_color);
+        }
+        let y_off = if label.is_empty() {
+            0.0
+        } else {
+            text_h + spacing
+        };
+        let ic_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.min.y + y_off + icon_size * 0.5),
+            egui::vec2(icon_size, icon_size),
         );
-        painter.galley(text_pos, galley, text_color);
+        icon.paint(&painter, ic_rect, text_color);
     }
 }
 
