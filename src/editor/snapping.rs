@@ -26,6 +26,13 @@ impl SnapSettings {
     }
 }
 
+pub fn snap_to_grid(value: f64, spacing: f64) -> f64 {
+    if spacing <= 0.0 {
+        return value;
+    }
+    (value / spacing).round() * spacing
+}
+
 #[cfg(test)]
 mod tests {
     use super::SnapSettings;
@@ -53,5 +60,26 @@ mod tests {
     fn tolerance() {
         let s = SnapSettings::default();
         assert!(s.tolerance_px > 0.0);
+    }
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::snap_to_grid;
+
+    #[test]
+    fn snap_basic() {
+        assert!((snap_to_grid(2.4, 1.0) - 2.0).abs() < 1e-9);
+        assert!((snap_to_grid(2.6, 1.0) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snap_zero_spacing() {
+        assert!((snap_to_grid(2.4, 0.0) - 2.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snap_negative_spacing() {
+        assert!((snap_to_grid(2.4, -1.0) - 2.4).abs() < 1e-9);
     }
 }
