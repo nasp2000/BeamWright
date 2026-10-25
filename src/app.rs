@@ -7,6 +7,7 @@ use crate::document::{Document, serialization};
 use crate::editor::{CanvasState, Selection, Tool};
 use crate::history::UndoStack;
 use crate::messages::MessageCatalog;
+use crate::ui::icons::Icon;
 
 #[derive(Default)]
 pub struct BeamWrightApp {
@@ -24,26 +25,23 @@ pub struct BeamWrightApp {
 
 impl eframe::App for BeamWrightApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        // Top menu
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("New").clicked() {
+                ui.menu_button(format!("{} {}", Icon::File.glyph(), "File"), |ui| {
+                    if ui
+                        .button(format!("{} {}", Icon::File.glyph(), "New"))
+                        .clicked()
+                    {
                         self.document = Document::default();
                         self.selection.clear();
                         self.history.clear();
                         self.status = "New document".to_string();
                     }
-                    if ui.button("Save").clicked() && !self.save_path.is_empty() {
-                        match serialization::save_to_file(
-                            &self.document,
-                            std::path::Path::new(&self.save_path),
-                        ) {
-                            Ok(()) => self.status = format!("Saved to {}", self.save_path),
-                            Err(e) => self.status = format!("Save error: {e}"),
-                        }
-                    }
-                    if ui.button("Load").clicked() && !self.load_path.is_empty() {
+                    if ui
+                        .button(format!("{} {}", Icon::FolderOpen.glyph(), "Open"))
+                        .clicked()
+                        && !self.load_path.is_empty()
+                    {
                         match serialization::load_from_file(std::path::Path::new(&self.load_path)) {
                             Ok(d) => {
                                 self.document = d;
@@ -52,16 +50,47 @@ impl eframe::App for BeamWrightApp {
                             Err(e) => self.status = format!("Load error: {e}"),
                         }
                     }
+                    if ui
+                        .button(format!("{} {}", Icon::Save.glyph(), "Save"))
+                        .clicked()
+                        && !self.save_path.is_empty()
+                    {
+                        match serialization::save_to_file(
+                            &self.document,
+                            std::path::Path::new(&self.save_path),
+                        ) {
+                            Ok(()) => self.status = format!("Saved to {}", self.save_path),
+                            Err(e) => self.status = format!("Save error: {e}"),
+                        }
+                    }
                 });
-                ui.menu_button("Edit", |ui| {
-                    if ui.button("Undo").clicked() {
+                ui.menu_button(format!("{} {}", Icon::Undo.glyph(), "Edit"), |ui| {
+                    if ui
+                        .button(format!("{} {}", Icon::Undo.glyph(), "Undo"))
+                        .clicked()
+                    {
                         self.history.undo();
                     }
-                    if ui.button("Redo").clicked() {
+                    if ui
+                        .button(format!("{} {}", Icon::Redo.glyph(), "Redo"))
+                        .clicked()
+                    {
                         self.history.redo();
                     }
+                    let _ = ui
+                        .button(format!("{} {}", Icon::Cut.glyph(), "Cut"))
+                        .clicked();
+                    let _ = ui
+                        .button(format!("{} {}", Icon::Copy.glyph(), "Copy"))
+                        .clicked();
+                    let _ = ui
+                        .button(format!("{} {}", Icon::Paste.glyph(), "Paste"))
+                        .clicked();
+                    let _ = ui
+                        .button(format!("{} {}", Icon::Delete.glyph(), "Delete"))
+                        .clicked();
                 });
-                ui.menu_button("Tools", |ui| {
+                ui.menu_button(format!("{} {}", Icon::Draw.glyph(), "Draw"), |ui| {
                     for t in [
                         Tool::Select,
                         Tool::Line,
@@ -69,9 +98,41 @@ impl eframe::App for BeamWrightApp {
                         Tool::Ellipse,
                         Tool::Pan,
                     ] {
-                        if ui.button(t.label()).clicked() {
+                        if ui
+                            .button(format!("{} {}", icon_for_tool(t).glyph(), t.label()))
+                            .clicked()
+                        {
                             self.tool = t;
                         }
+                    }
+                });
+                ui.menu_button(format!("{} {}", Icon::Arrange.glyph(), "Arrange"), |_ui| {});
+                ui.menu_button(
+                    format!("{} {}", Icon::Operations.glyph(), "Operations"),
+                    |_ui| {},
+                );
+                ui.menu_button(
+                    format!("{} {}", Icon::Materials.glyph(), "Materials"),
+                    |_ui| {},
+                );
+                ui.menu_button(format!("{} {}", Icon::View.glyph(), "View"), |ui| {
+                    if ui
+                        .button(format!("{} {}", Icon::ZoomIn.glyph(), "Zoom in"))
+                        .clicked()
+                    {
+                        self.canvas.zoom_in();
+                    }
+                    if ui
+                        .button(format!("{} {}", Icon::ZoomOut.glyph(), "Zoom out"))
+                        .clicked()
+                    {
+                        self.canvas.zoom_out();
+                    }
+                    if ui
+                        .button(format!("{} {}", Icon::Grid.glyph(), "Grid"))
+                        .clicked()
+                    {
+                        self.canvas.grid_visible = !self.canvas.grid_visible;
                     }
                 });
                 ui.label(format!("Tool: {}", self.tool.label()));
@@ -92,21 +153,38 @@ impl eframe::App for BeamWrightApp {
             }
         });
 
-        // Toolbar
+        // Toolbar with icons
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Zoom in").clicked() {
+                if ui
+                    .button(format!("{} {}", Icon::ZoomIn.glyph(), "Zoom in"))
+                    .clicked()
+                {
                     self.canvas.zoom_in();
                 }
-                if ui.button("Zoom out").clicked() {
+                if ui
+                    .button(format!("{} {}", Icon::ZoomOut.glyph(), "Zoom out"))
+                    .clicked()
+                {
                     self.canvas.zoom_out();
                 }
-                if ui.button("Reset view").clicked() {
-                    self.canvas.reset_zoom();
-                    self.canvas.reset_pan();
-                }
-                if ui.button("Grid").clicked() {
+                if ui
+                    .button(format!("{} {}", Icon::Grid.glyph(), "Grid"))
+                    .clicked()
+                {
                     self.canvas.grid_visible = !self.canvas.grid_visible;
+                }
+                if ui
+                    .button(format!("{} {}", Icon::Undo.glyph(), "Undo"))
+                    .clicked()
+                {
+                    self.history.undo();
+                }
+                if ui
+                    .button(format!("{} {}", Icon::Redo.glyph(), "Redo"))
+                    .clicked()
+                {
+                    self.history.redo();
                 }
             });
         });
@@ -117,7 +195,6 @@ impl eframe::App for BeamWrightApp {
             let painter = ui.painter_at(rect);
             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
 
-            // Mouse handling
             let response = ui.interact(rect, ui.id().with("canvas"), egui::Sense::click_and_drag());
             if response.hovered() {
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -135,7 +212,6 @@ impl eframe::App for BeamWrightApp {
             }
 
             let origin = rect.min;
-            // Grid
             if self.canvas.grid_visible {
                 let spacing = (self.canvas.grid_spacing_mm * self.canvas.zoom) as f32;
                 if spacing > 4.0 {
@@ -157,7 +233,6 @@ impl eframe::App for BeamWrightApp {
                     }
                 }
             }
-            // Axes
             let cx = origin.x + self.canvas.pan_x as f32;
             let cy = origin.y + self.canvas.pan_y as f32;
             painter.line_segment(
@@ -182,5 +257,15 @@ impl eframe::App for BeamWrightApp {
                 self.history.redo_len()
             ));
         });
+    }
+}
+
+fn icon_for_tool(t: Tool) -> Icon {
+    match t {
+        Tool::Select => Icon::Select,
+        Tool::Line => Icon::Line,
+        Tool::Rect => Icon::Rect,
+        Tool::Ellipse => Icon::Ellipse,
+        Tool::Pan => Icon::Pan,
     }
 }

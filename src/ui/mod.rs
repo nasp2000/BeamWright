@@ -1,4 +1,5 @@
 pub mod dialogs;
+pub mod icons;
 pub mod layer_panel;
 pub mod menus;
 pub mod properties;
