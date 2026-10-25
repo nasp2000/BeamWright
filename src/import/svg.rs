@@ -135,6 +135,40 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     Some(rest[1..=end].to_string())
 }
 
+/// Parse SVG path `d` attribute into a list of (command, coords).
+pub fn parse_path_commands(d: &str) -> Vec<(char, Vec<f64>)> {
+    let mut out: Vec<(char, Vec<f64>)> = Vec::new();
+    let mut current: Option<char> = None;
+    let mut nums: Vec<f64> = Vec::new();
+    let mut buf = String::new();
+    let flush_num = |buf: &mut String, nums: &mut Vec<f64>| {
+        if !buf.is_empty() {
+            if let Ok(v) = buf.trim().parse::<f64>() {
+                nums.push(v);
+            }
+            buf.clear();
+        }
+    };
+    for c in d.chars() {
+        if c.is_ascii_alphabetic() {
+            flush_num(&mut buf, &mut nums);
+            if let Some(cmd) = current {
+                out.push((cmd, std::mem::take(&mut nums)));
+            }
+            current = Some(c);
+        } else if c == ',' || c.is_whitespace() {
+            flush_num(&mut buf, &mut nums);
+        } else {
+            buf.push(c);
+        }
+    }
+    flush_num(&mut buf, &mut nums);
+    if let Some(cmd) = current {
+        out.push((cmd, nums));
+    }
+    out
+}
+
 fn find_tags(src: &str, name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let open = format!("<{name}");
@@ -183,5 +217,29 @@ mod tests {
         // minimal importer never fails on structure; empty input
         let d = import_svg("").unwrap();
         assert!(d.objects.is_empty());
+    }
+
+    #[test]
+    fn parse_path_move_line() {
+        let cmds = parse_path_commands("M 0 0 L 10 10");
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].0, 'M');
+        assert_eq!(cmds[0].1, vec![0.0, 0.0]);
+        assert_eq!(cmds[1].0, 'L');
+        assert_eq!(cmds[1].1, vec![10.0, 10.0]);
+    }
+
+    #[test]
+    fn parse_path_cubic() {
+        let cmds = parse_path_commands("M0 0 C 1 2 3 4 5 6");
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[1].0, 'C');
+        assert_eq!(cmds[1].1.len(), 6);
+    }
+
+    #[test]
+    fn parse_path_empty() {
+        let cmds = parse_path_commands("");
+        assert_eq!(cmds, [] as [(char, Vec<f64>); 0]);
     }
 }
