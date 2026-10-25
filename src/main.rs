@@ -3,6 +3,7 @@
 mod app;
 mod config;
 mod document;
+mod editor;
 mod errors;
 mod estimates;
 mod export;
