@@ -21,6 +21,7 @@ pub struct GCodeOptions {
     pub line_ending_crlf: bool,
     pub include_comments: bool,
     pub include_travel: bool,
+    pub dwell_ms: u32,
 }
 
 impl Default for GCodeOptions {
@@ -32,6 +33,7 @@ impl Default for GCodeOptions {
             line_ending_crlf: false,
             include_comments: true,
             include_travel: true,
+            dwell_ms: 0,
         }
     }
 }

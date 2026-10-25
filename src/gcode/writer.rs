@@ -30,7 +30,10 @@ impl GCodeWriter {
             if self.opts.include_comments {
                 let _ = writeln!(out, "(Operation {})", i + 1);
             }
-            for _pass in 0..tp.passes {
+            for pass in 0..tp.passes {
+                if pass > 0 && self.opts.dwell_ms > 0 {
+                    let _ = write!(out, "G4 P{}{}", self.opts.dwell_ms, nl);
+                }
                 let mut first_cut = true;
                 for m in &tp.moves {
                     match m.kind {
@@ -142,6 +145,21 @@ mod tests {
         assert!(s.contains("G1 X"));
         assert!(s.contains("F1000"));
         assert!(s.contains("S50"));
+    }
+
+    #[test]
+    fn dwell_emitted() {
+        let mut tp = Toolpath::new(1000.0, 50.0, 2);
+        tp.push(MoveKind::Cut, 1.0, 1.0);
+        let o = GCodeOptions {
+            dwell_ms: 100,
+            include_comments: false,
+            include_travel: false,
+            ..GCodeOptions::default()
+        };
+        let w = GCodeWriter::new(o);
+        let s = w.render(&[tp]);
+        assert!(s.contains("G4 P100"));
     }
 
     #[test]
