@@ -19,6 +19,11 @@ impl TextObject {
         }
         Ok(())
     }
+    /// Rough width estimate (monospace approximation).
+    #[allow(clippy::cast_precision_loss)]
+    pub fn approx_width(&self) -> f64 {
+        self.content.chars().count() as f64 * self.size * 0.5
+    }
 }
 
 #[cfg(test)]
