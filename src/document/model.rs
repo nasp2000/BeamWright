@@ -9,29 +9,7 @@ pub enum Origin {
     TopLeft,
 }
 
-/// A document layer (PLAN.md §9).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Layer {
-    pub id: String,
-    pub name: String,
-    pub color: String,
-    pub visible: bool,
-    pub locked: bool,
-    pub order: u32,
-}
-
-impl Default for Layer {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            name: "Layer 1".to_string(),
-            color: "#000000".to_string(),
-            visible: true,
-            locked: false,
-            order: 0,
-        }
-    }
-}
+use crate::layers::model::Layer;
 
 /// A vector object kind (PLAN.md §6). Geometry is stored as a placeholder
 /// in this skeleton; concrete geometry lands in `geometry/` and `objects/`.

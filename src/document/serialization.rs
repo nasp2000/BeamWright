@@ -58,7 +58,7 @@ mod tests {
             width_mm: 100.0,
             height_mm: 50.0,
             origin: crate::document::model::Origin::BottomLeft,
-            layers: vec![crate::document::model::Layer::default()],
+            layers: vec![crate::layers::model::Layer::default()],
             objects: Vec::new(),
             format_version: PROJECT_FORMAT_VERSION,
         }
