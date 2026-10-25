@@ -1,0 +1,6 @@
+/target/
+/AGENTS.md
+/opencode_task_T1.md
+*.pdb
+*.nc
+*.gcode

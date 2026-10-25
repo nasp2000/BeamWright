@@ -1,0 +1,35 @@
+[package]
+name = "beamwright"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Vector drawing, image editing and preparation of laser engraving/cutting jobs; exports G-code job files for GRBL-based senders."
+default-run = "BeamWright"
+
+[[bin]]
+name = "BeamWright"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "=0.36.2", default-features = true }
+egui = "=0.36.2"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+uuid = { version = "=1.28.0", features = ["v4", "serde"] }
+tracing = "=0.1.44"
+thiserror = "=1.0.69"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
+kurbo = "=0.13.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
