@@ -7,6 +7,7 @@ pub mod nesting;
 pub mod offset;
 pub mod path;
 pub mod point;
+pub mod polygon;
 pub mod tracing;
 pub mod transform;
 
