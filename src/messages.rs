@@ -13,6 +13,11 @@ impl MessageCatalog {
         c.entries.insert("app.title", "BeamWright");
         c.entries.insert("menu.file", "File");
         c.entries.insert("menu.edit", "Edit");
+        c.entries.insert("menu.draw", "Draw");
+        c.entries.insert("menu.view", "View");
+        c.entries.insert("status.ready", "Ready");
+        c.entries.insert("dialog.ok", "OK");
+        c.entries.insert("dialog.cancel", "Cancel");
         c
     }
     pub fn get(&self, key: &'static str) -> &'static str {
