@@ -116,10 +116,31 @@ impl Ellipse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Polygon {
+    pub points: Vec<Point2>,
+}
+
+impl Polygon {
+    pub fn vertex_count(&self) -> usize {
+        self.points.len()
+    }
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        for p in &mut self.points {
+            p.x += dx;
+            p.y += dy;
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VectorObject {
     Line(Line),
     Rect(Rect),
     Ellipse(Ellipse),
+    Polygon(Polygon),
 }
 
 #[cfg(test)]
@@ -188,5 +209,35 @@ mod tests {
             VectorObject::Line(l) => assert!((l.length() - 1.0).abs() < EPS),
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn polygon_vertex_count() {
+        let pg = Polygon {
+            points: vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(1.0, 0.0),
+                Point2::new(0.0, 1.0),
+            ],
+        };
+        assert_eq!(pg.vertex_count(), 3);
+        assert!(!pg.is_empty());
+    }
+
+    #[test]
+    fn polygon_translate() {
+        let mut pg = Polygon {
+            points: vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)],
+        };
+        pg.translate(2.0, 3.0);
+        assert!((pg.points[0].x - 2.0).abs() < EPS);
+        assert!((pg.points[0].y - 3.0).abs() < EPS);
+    }
+
+    #[test]
+    fn polygon_empty() {
+        let pg = Polygon { points: vec![] };
+        assert!(pg.is_empty());
+        assert_eq!(pg.vertex_count(), 0);
     }
 }

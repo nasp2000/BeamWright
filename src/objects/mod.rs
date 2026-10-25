@@ -10,4 +10,4 @@ pub use image::ImageObject;
 #[allow(unused_imports)]
 pub use text::TextObject;
 #[allow(unused_imports)]
-pub use vector::{Ellipse, Line, Rect, VectorObject};
+pub use vector::{Ellipse, Line, Polygon, Rect, VectorObject};
