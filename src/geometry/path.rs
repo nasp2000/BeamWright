@@ -28,6 +28,15 @@ impl Path {
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
+    pub fn approximate_length(&self) -> f64 {
+        self.segments
+            .iter()
+            .map(|s| match s {
+                Segment::Line { from, to } => from.distance(*to),
+                Segment::Cubic(c) => c.start().distance(c.end()),
+            })
+            .sum()
+    }
 }
 
 impl Default for Path {
