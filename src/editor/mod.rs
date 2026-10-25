@@ -1,5 +1,6 @@
 pub mod alignment;
 pub mod canvas;
+pub mod hit_test;
 pub mod node_editor;
 pub mod search;
 pub mod selection;

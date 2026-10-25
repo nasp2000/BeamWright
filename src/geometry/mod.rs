@@ -3,6 +3,7 @@ pub mod boolean;
 pub mod distribution;
 pub mod grid;
 pub mod intersection;
+pub mod nesting;
 pub mod offset;
 pub mod path;
 pub mod point;

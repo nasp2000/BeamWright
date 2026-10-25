@@ -29,6 +29,8 @@ pub fn restore_file(src: &std::path::Path, dst: &std::path::Path) -> crate::erro
 pub use database::Database;
 #[allow(unused_imports)]
 pub use migrations::Migration;
+#[allow(unused_imports)]
+pub use migrations::MigrationRunner;
 
 #[cfg(test)]
 mod tests {
