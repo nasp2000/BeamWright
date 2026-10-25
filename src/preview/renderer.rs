@@ -30,9 +30,20 @@ impl PreviewData {
     }
 }
 
+
+/// Build a simple preview from a document's objects (one segment per object).
+#[allow(clippy::cast_precision_loss)]
+pub fn build_preview(object_count: usize) -> PreviewData {
+    let mut p = PreviewData::default();
+    for i in 0..object_count {
+        p.add_segment(i as f64 * 10.0, 0.0, i as f64 * 10.0 + 5.0, 0.0, "#00ff00".to_string());
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PreviewData;
+    use super::{PreviewData, build_preview};
 
     #[test]
     fn empty() {
@@ -56,5 +67,17 @@ mod tests {
             p.add_segment(f64::from(i), 0.0, f64::from(i + 1), 0.0, "#000".to_string());
         }
         assert_eq!(p.segment_count(), 5);
+    }
+
+    #[test]
+    fn build_preview_empty() {
+        let p = build_preview(0);
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn build_preview_count() {
+        let p = build_preview(3);
+        assert_eq!(p.segment_count(), 3);
     }
 }

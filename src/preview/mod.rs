@@ -5,3 +5,5 @@ pub mod renderer;
 pub use ordering::order_indices;
 #[allow(unused_imports)]
 pub use renderer::PreviewData;
+#[allow(unused_imports)]
+pub use renderer::build_preview;
