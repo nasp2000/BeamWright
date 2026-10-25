@@ -7,6 +7,10 @@ license = "MIT"
 description = "Vector drawing, image editing and preparation of laser engraving/cutting jobs; exports G-code job files for GRBL-based senders."
 default-run = "BeamWright"
 
+[lib]
+name = "beamwright"
+path = "src/lib.rs"
+
 [[bin]]
 name = "BeamWright"
 path = "src/main.rs"

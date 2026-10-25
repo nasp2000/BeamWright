@@ -17,28 +17,7 @@ fn load_icon() -> egui::IconData {
     }
 }
 
-mod app;
-mod config;
-mod document;
-mod editor;
-mod errors;
-mod estimates;
-mod export;
-mod gcode;
-mod geometry;
-mod history;
-mod import;
-mod layers;
-mod materials;
-mod messages;
-mod objects;
-mod operations;
-mod preview;
-mod profiles;
-mod storage;
-mod ui;
-
-use app::BeamWrightApp;
+use beamwright::app::BeamWrightApp;
 
 fn main() -> eframe::Result<()> {
     tracing::info!("starting BeamWright");
