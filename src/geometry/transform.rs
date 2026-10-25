@@ -32,6 +32,27 @@ impl Transform2 {
             ty,
         }
     }
+    pub fn scale(sx: f64, sy: f64) -> Self {
+        Self {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            tx: 0.0,
+            ty: 0.0,
+        }
+    }
+    pub fn rotate(angle_rad: f64) -> Self {
+        let (s, c) = (angle_rad.sin(), angle_rad.cos());
+        Self {
+            a: c,
+            b: s,
+            c: -s,
+            d: c,
+            tx: 0.0,
+            ty: 0.0,
+        }
+    }
     pub fn apply(&self, p: Point2) -> Point2 {
         Point2 {
             x: self.a * p.x + self.c * p.y + self.tx,
