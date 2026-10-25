@@ -10,6 +10,25 @@ pub fn invert(pixels: &[u8]) -> Vec<u8> {
     pixels.iter().map(|&v| 255 - v).collect()
 }
 
+pub fn ordered_dither(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
+    // 4x4 Bayer matrix threshold.
+    const BAYER: [[i32; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    let mut out = vec![0u8; pixels.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+            let threshold = BAYER[y % 4][x % 4] * 16;
+            let v = i32::from(pixels[idx]);
+            out[idx] = if v * 16 > threshold * 16 + 127 {
+                255
+            } else {
+                0
+            };
+        }
+    }
+    out
+}
+
 pub fn floyd_steinberg(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut buf: Vec<i32> = pixels.iter().map(|&v| i32::from(v)).collect();
     let mut out = vec![0u8; pixels.len()];
@@ -72,6 +91,22 @@ mod tests {
     fn floyd_values_binary() {
         let p = vec![128u8; 2 * 2];
         let r = floyd_steinberg(&p, 2, 2);
+        for v in r {
+            assert!(v == 0 || v == 255);
+        }
+    }
+
+    #[test]
+    fn ordered_output_size() {
+        let p = vec![128u8; 4 * 4];
+        let r = ordered_dither(&p, 4, 4);
+        assert_eq!(r.len(), 16);
+    }
+
+    #[test]
+    fn ordered_values_binary() {
+        let p = vec![128u8; 2 * 2];
+        let r = ordered_dither(&p, 2, 2);
         for v in r {
             assert!(v == 0 || v == 255);
         }
