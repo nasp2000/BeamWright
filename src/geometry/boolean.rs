@@ -132,6 +132,69 @@ pub fn intersection_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec
     convex_hull(&out)
 }
 
+/// Sutherland-Hodgman: clip `subject` polygon against a single half-plane
+/// defined by edge from `a` to `b` (keep points left of edge).
+fn clip_half_plane(subject: &[(f64, f64)], a: (f64, f64), b: (f64, f64)) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    let n = subject.len();
+    if n == 0 {
+        return out;
+    }
+    for i in 0..n {
+        let curr = subject[i];
+        let prev = subject[(i + n - 1) % n];
+        let fc = (b.0 - a.0) * (curr.1 - a.1) - (b.1 - a.1) * (curr.0 - a.0);
+        let fp = (b.0 - a.0) * (prev.1 - a.1) - (b.1 - a.1) * (prev.0 - a.0);
+        if fc >= 0.0 {
+            if fp < 0.0 {
+                if let Some(p) = intersect_segments(prev, curr, a, b) {
+                    out.push(p);
+                }
+            }
+            out.push(curr);
+        } else if fp >= 0.0 {
+            if let Some(p) = intersect_segments(prev, curr, a, b) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+fn intersect_segments(
+    p1: (f64, f64),
+    p2: (f64, f64),
+    p3: (f64, f64),
+    p4: (f64, f64),
+) -> Option<(f64, f64)> {
+    let d1 = (p2.0 - p1.0, p2.1 - p1.1);
+    let d2 = (p4.0 - p3.0, p4.1 - p3.1);
+    let cross = d1.0 * d2.1 - d1.1 * d2.0;
+    if cross.abs() < 1e-12 {
+        return None;
+    }
+    let t = ((p3.0 - p1.0) * d2.1 - (p3.1 - p1.1) * d2.0) / cross;
+    Some((p1.0 + t * d1.0, p1.1 + t * d1.1))
+}
+
+/// Clip subject polygon to convex clip polygon (Sutherland-Hodgman intersection).
+pub fn clip_polygon(subject: &[(f64, f64)], clip: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut out = subject.to_vec();
+    let n = clip.len();
+    if n < 3 {
+        return out;
+    }
+    for i in 0..n {
+        let a = clip[i];
+        let b = clip[(i + 1) % n];
+        out = clip_half_plane(&out, a, b);
+        if out.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +275,29 @@ mod tests {
         let r = intersection_sample(&a, &b, 1.0);
         // overlap region exists
         assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn clip_polygon_basic() {
+        let subject = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let clip = [(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0)];
+        let r = clip_polygon(&subject, &clip);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn clip_polygon_no_overlap() {
+        let subject = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let clip = [(5.0, 5.0), (6.0, 5.0), (6.0, 6.0), (5.0, 6.0)];
+        let r = clip_polygon(&subject, &clip);
+        assert_eq!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn clip_polygon_full_contain() {
+        let subject = [(1.0, 1.0), (2.0, 1.0), (2.0, 2.0), (1.0, 2.0)];
+        let clip = [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)];
+        let r = clip_polygon(&subject, &clip);
+        assert_eq!(r.len(), 4);
     }
 }

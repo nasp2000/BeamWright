@@ -7,6 +7,7 @@ pub mod nesting;
 pub mod offset;
 pub mod path;
 pub mod point;
+pub mod tracing;
 pub mod transform;
 
 #[allow(unused_imports)]
