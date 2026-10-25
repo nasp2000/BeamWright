@@ -13,6 +13,8 @@ pub use boolean::BooleanOp;
 #[allow(unused_imports)]
 pub use intersection::Segment;
 #[allow(unused_imports)]
+pub use offset::offset_polygon;
+#[allow(unused_imports)]
 pub use path::Path;
 #[allow(unused_imports)]
 pub use path::Segment as PathSegment;
