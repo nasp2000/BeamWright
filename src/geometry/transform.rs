@@ -99,4 +99,20 @@ mod tests {
         assert!((r.x - 6.0).abs() < EPS);
         assert!((r.y - 8.0).abs() < EPS);
     }
+
+    #[test]
+    fn scale_factory() {
+        let t = Transform2::scale(2.0, 3.0);
+        let r = t.apply(Point2::new(1.0, 1.0));
+        assert!((r.x - 2.0).abs() < EPS);
+        assert!((r.y - 3.0).abs() < EPS);
+    }
+
+    #[test]
+    fn rotate_factory() {
+        let t = Transform2::rotate(std::f64::consts::FRAC_PI_2);
+        let r = t.apply(Point2::new(1.0, 0.0));
+        assert!(r.x.abs() < 1e-9);
+        assert!((r.y - 1.0).abs() < 1e-9);
+    }
 }
