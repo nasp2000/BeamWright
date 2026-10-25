@@ -1,5 +1,6 @@
 pub mod database;
 pub mod migrations;
+pub mod recovery;
 
 pub fn backup_file(src: &std::path::Path, dst: &std::path::Path) -> crate::errors::Result<()> {
     use std::fs;
@@ -31,6 +32,9 @@ pub use database::Database;
 pub use migrations::Migration;
 #[allow(unused_imports)]
 pub use migrations::MigrationRunner;
+
+#[allow(unused_imports)]
+pub use recovery::{RecoveryInfo, has_backup, recover, recovery_backup_path};
 
 #[cfg(test)]
 mod tests {
