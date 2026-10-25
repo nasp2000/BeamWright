@@ -30,6 +30,13 @@ impl eframe::App for BeamWrightApp {
         } else {
             ui.ctx().set_visuals(egui::Visuals::light());
         }
+        // Keyboard shortcuts
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
+            self.history.undo();
+        }
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y)) {
+            self.history.redo();
+        }
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 icon_label(ui, Icon::File, "");
@@ -43,7 +50,17 @@ impl eframe::App for BeamWrightApp {
                     if icon_button(ui, Icon::FolderOpen, "Open").clicked()
                         && !self.load_path.is_empty()
                     {
-                        match serialization::load_from_file(std::path::Path::new(&self.load_path)) {
+                        let path = std::path::Path::new(&self.load_path);
+                        let res = if path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case("bwp"))
+                        {
+                            serialization::load_from_file(path)
+                        } else {
+                            crate::import::format::import_by_extension(path)
+                        };
+                        match res {
                             Ok(d) => {
                                 self.document = d;
                                 self.status = format!("Loaded {}", self.load_path);
@@ -124,6 +141,11 @@ impl eframe::App for BeamWrightApp {
             });
             if !self.status.is_empty() {
                 ui.label(&self.status);
+            }
+            if !self.load_path.is_empty() {
+                let fmt =
+                    crate::import::format::detect_format(std::path::Path::new(&self.load_path));
+                ui.label(format!("Detected format: {fmt}"));
             }
         });
 
