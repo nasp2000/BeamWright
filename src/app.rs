@@ -6,6 +6,7 @@ use egui::Ui;
 use crate::document::{Document, serialization};
 use crate::editor::{CanvasState, Selection, Tool};
 use crate::history::UndoStack;
+use crate::messages::MessageCatalog;
 
 #[derive(Default)]
 pub struct BeamWrightApp {
@@ -14,6 +15,7 @@ pub struct BeamWrightApp {
     tool: Tool,
     selection: Selection,
     history: UndoStack,
+    messages: MessageCatalog,
     // File I/O state
     save_path: String,
     load_path: String,
