@@ -8,6 +8,10 @@ pub enum BeamError {
     Io(#[from] std::io::Error),
     #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 pub type Result<T> = std::result::Result<T, BeamError>;
