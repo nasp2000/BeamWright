@@ -15,6 +15,21 @@ impl Segment {
     }
 }
 
+#[allow(clippy::many_single_char_names)]
+pub fn segment_intersection_point(a: &Segment, b: &Segment) -> Option<(f64, f64)> {
+    let d1 = cross(b, a.x1, a.y1);
+    let d2 = cross(b, a.x2, a.y2);
+    let d3 = cross(a, b.x1, b.y1);
+    let d4 = cross(a, b.x2, b.y2);
+    if ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0)) {
+        let t = d3 / (d3 - d4);
+        let x = a.x1 + t * (a.x2 - a.x1);
+        let y = a.y1 + t * (a.y2 - a.y1);
+        return Some((x, y));
+    }
+    None
+}
+
 pub fn segments_intersect(a: &Segment, b: &Segment) -> bool {
     // Cross-product based segment intersection test.
     let d1 = cross(b, a.x1, a.y1);
@@ -78,5 +93,41 @@ mod tests {
             y2: 6.0,
         };
         assert!(!segments_intersect(&a, &b));
+    }
+
+    #[test]
+    fn intersection_point() {
+        let a = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 10.0,
+            y2: 10.0,
+        };
+        let b = Segment {
+            x1: 0.0,
+            y1: 10.0,
+            x2: 10.0,
+            y2: 0.0,
+        };
+        let p = segment_intersection_point(&a, &b).unwrap();
+        assert!((p.0 - 5.0).abs() < 1e-9);
+        assert!((p.1 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn no_intersection_point() {
+        let a = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let b = Segment {
+            x1: 5.0,
+            y1: 5.0,
+            x2: 6.0,
+            y2: 6.0,
+        };
+        assert!(segment_intersection_point(&a, &b).is_none());
     }
 }
