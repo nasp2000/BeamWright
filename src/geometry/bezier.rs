@@ -32,6 +32,34 @@ impl CubicBezier {
     pub fn end(&self) -> Point2 {
         self.p3
     }
+    /// Split at parameter t using de Casteljau.
+    #[allow(clippy::similar_names)]
+    pub fn split(&self, t: f64) -> (CubicBezier, CubicBezier) {
+        let p01 = lerp(self.p0, self.p1, t);
+        let p12 = lerp(self.p1, self.p2, t);
+        let p23 = lerp(self.p2, self.p3, t);
+        let p012 = lerp(p01, p12, t);
+        let p123 = lerp(p12, p23, t);
+        let mid = lerp(p012, p123, t);
+        (
+            CubicBezier {
+                p0: self.p0,
+                p1: p01,
+                p2: p012,
+                p3: mid,
+            },
+            CubicBezier {
+                p0: mid,
+                p1: p123,
+                p2: p23,
+                p3: self.p3,
+            },
+        )
+    }
+}
+
+fn lerp(a: Point2, b: Point2, t: f64) -> Point2 {
+    Point2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
 }
 
 #[cfg(test)]
@@ -76,5 +104,34 @@ mod tests {
         };
         assert_eq!(b.start(), b.p0);
         assert_eq!(b.end(), b.p3);
+    }
+
+    #[test]
+    fn split_midpoint() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let (left, right) = b.split(0.5);
+        // mid point should match eval(0.5)
+        let mid = b.eval(0.5);
+        assert!((left.end().x - mid.x).abs() < 1e-9);
+        assert!((left.end().y - mid.y).abs() < 1e-9);
+        assert!((right.start().x - mid.x).abs() < 1e-9);
+    }
+
+    #[test]
+    fn split_endpoints() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let (left, right) = b.split(0.0);
+        assert_eq!(left.start(), b.p0);
+        assert_eq!(right.end(), b.p3);
     }
 }
