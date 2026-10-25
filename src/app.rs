@@ -17,6 +17,7 @@ pub struct BeamWrightApp {
     selection: Selection,
     history: UndoStack,
     messages: MessageCatalog,
+    dark_mode: bool,
     save_path: String,
     load_path: String,
     status: String,
@@ -24,6 +25,11 @@ pub struct BeamWrightApp {
 
 impl eframe::App for BeamWrightApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        if self.dark_mode {
+            ui.ctx().set_visuals(egui::Visuals::dark());
+        } else {
+            ui.ctx().set_visuals(egui::Visuals::light());
+        }
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 icon_label(ui, Icon::File, "");
@@ -131,6 +137,9 @@ impl eframe::App for BeamWrightApp {
                 }
                 if icon_button(ui, Icon::Grid, "Grid").clicked() {
                     self.canvas.grid_visible = !self.canvas.grid_visible;
+                }
+                if icon_button(ui, Icon::View, "Dark mode").clicked() {
+                    self.dark_mode = !self.dark_mode;
                 }
                 if icon_button(ui, Icon::Undo, "Undo").clicked() {
                     self.history.undo();

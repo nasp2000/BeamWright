@@ -30,13 +30,18 @@ impl PreviewData {
     }
 }
 
-
 /// Build a simple preview from a document's objects (one segment per object).
 #[allow(clippy::cast_precision_loss)]
 pub fn build_preview(object_count: usize) -> PreviewData {
     let mut p = PreviewData::default();
     for i in 0..object_count {
-        p.add_segment(i as f64 * 10.0, 0.0, i as f64 * 10.0 + 5.0, 0.0, "#00ff00".to_string());
+        p.add_segment(
+            i as f64 * 10.0,
+            0.0,
+            i as f64 * 10.0 + 5.0,
+            0.0,
+            "#00ff00".to_string(),
+        );
     }
     p
 }
