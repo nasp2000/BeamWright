@@ -1,1 +1,4 @@
-//! profiles module (stub, Phase 1).
+pub mod model;
+
+#[allow(unused_imports)]
+pub use model::Profile;
