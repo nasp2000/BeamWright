@@ -20,6 +20,20 @@ impl Line {
         self.start = scale_point(self.start, sx, sy, center);
         self.end = scale_point(self.end, sx, sy, center);
     }
+    pub fn rotate(&mut self, angle_rad: f64, center: crate::geometry::Point2) {
+        self.start = self.start.rotate(angle_rad, center);
+        self.end = self.end.rotate(angle_rad, center);
+    }
+    pub fn bounding_box(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
+        let min_x = self.start.x.min(self.end.x);
+        let min_y = self.start.y.min(self.end.y);
+        let max_x = self.start.x.max(self.end.x);
+        let max_y = self.start.y.max(self.end.y);
+        (
+            crate::geometry::Point2::new(min_x, min_y),
+            crate::geometry::Point2::new(max_x, max_y),
+        )
+    }
 }
 
 fn scale_point(
@@ -55,6 +69,18 @@ impl Rect {
         self.width *= sx;
         self.height *= sy;
     }
+    #[allow(clippy::unused_self)]
+    pub fn rotate(&mut self, _angle_rad: f64, _center: crate::geometry::Point2) {}
+    pub fn bounding_box(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
+        let min_x = self.origin.x;
+        let min_y = self.origin.y;
+        let max_x = self.origin.x + self.width;
+        let max_y = self.origin.y + self.height;
+        (
+            crate::geometry::Point2::new(min_x, min_y),
+            crate::geometry::Point2::new(max_x, max_y),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +100,18 @@ impl Ellipse {
     pub fn scale(&mut self, sx: f64, sy: f64) {
         self.rx *= sx;
         self.ry *= sy;
+    }
+    #[allow(clippy::unused_self)]
+    pub fn rotate(&mut self, _angle_rad: f64, _center: crate::geometry::Point2) {}
+    pub fn bounding_box(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
+        let min_x = self.center.x - self.rx;
+        let min_y = self.center.y - self.ry;
+        let max_x = self.center.x + self.rx;
+        let max_y = self.center.y + self.ry;
+        (
+            crate::geometry::Point2::new(min_x, min_y),
+            crate::geometry::Point2::new(max_x, max_y),
+        )
     }
 }
 
