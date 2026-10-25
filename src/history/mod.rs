@@ -1,1 +1,4 @@
-//! history module (stub, Phase 1).
+pub mod commands;
+
+#[allow(unused_imports)]
+pub use commands::{Command, UndoStack};

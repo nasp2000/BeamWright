@@ -1,1 +1,4 @@
-//! objects module (stub, Phase 1).
+pub mod vector;
+
+#[allow(unused_imports)]
+pub use vector::{Ellipse, Line, Rect, VectorObject};
