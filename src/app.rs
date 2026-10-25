@@ -7,7 +7,7 @@ use crate::document::{Document, serialization};
 use crate::editor::{CanvasState, Selection, Tool};
 use crate::history::UndoStack;
 use crate::messages::MessageCatalog;
-use crate::ui::icons::Icon;
+use crate::ui::icons::{Icon, icon_button, icon_label};
 
 #[derive(Default)]
 pub struct BeamWrightApp {
@@ -17,7 +17,6 @@ pub struct BeamWrightApp {
     selection: Selection,
     history: UndoStack,
     messages: MessageCatalog,
-    // File I/O state
     save_path: String,
     load_path: String,
     status: String,
@@ -27,19 +26,15 @@ impl eframe::App for BeamWrightApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.menu_button(format!("{} {}", Icon::File.glyph(), "File"), |ui| {
-                    if ui
-                        .button(format!("{} {}", Icon::File.glyph(), "New"))
-                        .clicked()
-                    {
+                icon_label(ui, Icon::File, "");
+                ui.menu_button("File", |ui| {
+                    if icon_button(ui, Icon::File, "New").clicked() {
                         self.document = Document::default();
                         self.selection.clear();
                         self.history.clear();
                         self.status = "New document".to_string();
                     }
-                    if ui
-                        .button(format!("{} {}", Icon::FolderOpen.glyph(), "Open"))
-                        .clicked()
+                    if icon_button(ui, Icon::FolderOpen, "Open").clicked()
                         && !self.load_path.is_empty()
                     {
                         match serialization::load_from_file(std::path::Path::new(&self.load_path)) {
@@ -50,11 +45,7 @@ impl eframe::App for BeamWrightApp {
                             Err(e) => self.status = format!("Load error: {e}"),
                         }
                     }
-                    if ui
-                        .button(format!("{} {}", Icon::Save.glyph(), "Save"))
-                        .clicked()
-                        && !self.save_path.is_empty()
-                    {
+                    if icon_button(ui, Icon::Save, "Save").clicked() && !self.save_path.is_empty() {
                         match serialization::save_to_file(
                             &self.document,
                             std::path::Path::new(&self.save_path),
@@ -64,33 +55,22 @@ impl eframe::App for BeamWrightApp {
                         }
                     }
                 });
-                ui.menu_button(format!("{} {}", Icon::Undo.glyph(), "Edit"), |ui| {
-                    if ui
-                        .button(format!("{} {}", Icon::Undo.glyph(), "Undo"))
-                        .clicked()
-                    {
+                // menu title with icon via label before button? Use icon_label in horizontal
+                icon_label(ui, Icon::Undo, "");
+                ui.menu_button("Edit", |ui| {
+                    if icon_button(ui, Icon::Undo, "Undo").clicked() {
                         self.history.undo();
                     }
-                    if ui
-                        .button(format!("{} {}", Icon::Redo.glyph(), "Redo"))
-                        .clicked()
-                    {
+                    if icon_button(ui, Icon::Redo, "Redo").clicked() {
                         self.history.redo();
                     }
-                    let _ = ui
-                        .button(format!("{} {}", Icon::Cut.glyph(), "Cut"))
-                        .clicked();
-                    let _ = ui
-                        .button(format!("{} {}", Icon::Copy.glyph(), "Copy"))
-                        .clicked();
-                    let _ = ui
-                        .button(format!("{} {}", Icon::Paste.glyph(), "Paste"))
-                        .clicked();
-                    let _ = ui
-                        .button(format!("{} {}", Icon::Delete.glyph(), "Delete"))
-                        .clicked();
+                    let _ = icon_button(ui, Icon::Cut, "Cut");
+                    let _ = icon_button(ui, Icon::Copy, "Copy");
+                    let _ = icon_button(ui, Icon::Paste, "Paste");
+                    let _ = icon_button(ui, Icon::Delete, "Delete");
                 });
-                ui.menu_button(format!("{} {}", Icon::Draw.glyph(), "Draw"), |ui| {
+                icon_label(ui, Icon::Draw, "");
+                ui.menu_button("Draw", |ui| {
                     for t in [
                         Tool::Select,
                         Tool::Line,
@@ -98,40 +78,26 @@ impl eframe::App for BeamWrightApp {
                         Tool::Ellipse,
                         Tool::Pan,
                     ] {
-                        if ui
-                            .button(format!("{} {}", icon_for_tool(t).glyph(), t.label()))
-                            .clicked()
-                        {
+                        if icon_button(ui, icon_for_tool(t), t.label()).clicked() {
                             self.tool = t;
                         }
                     }
                 });
-                ui.menu_button(format!("{} {}", Icon::Arrange.glyph(), "Arrange"), |_ui| {});
-                ui.menu_button(
-                    format!("{} {}", Icon::Operations.glyph(), "Operations"),
-                    |_ui| {},
-                );
-                ui.menu_button(
-                    format!("{} {}", Icon::Materials.glyph(), "Materials"),
-                    |_ui| {},
-                );
-                ui.menu_button(format!("{} {}", Icon::View.glyph(), "View"), |ui| {
-                    if ui
-                        .button(format!("{} {}", Icon::ZoomIn.glyph(), "Zoom in"))
-                        .clicked()
-                    {
+                icon_label(ui, Icon::Arrange, "");
+                ui.menu_button("Arrange", |_ui| {});
+                icon_label(ui, Icon::Operations, "");
+                ui.menu_button("Operations", |_ui| {});
+                icon_label(ui, Icon::Materials, "");
+                ui.menu_button("Materials", |_ui| {});
+                icon_label(ui, Icon::View, "");
+                ui.menu_button("View", |ui| {
+                    if icon_button(ui, Icon::ZoomIn, "Zoom in").clicked() {
                         self.canvas.zoom_in();
                     }
-                    if ui
-                        .button(format!("{} {}", Icon::ZoomOut.glyph(), "Zoom out"))
-                        .clicked()
-                    {
+                    if icon_button(ui, Icon::ZoomOut, "Zoom out").clicked() {
                         self.canvas.zoom_out();
                     }
-                    if ui
-                        .button(format!("{} {}", Icon::Grid.glyph(), "Grid"))
-                        .clicked()
-                    {
+                    if icon_button(ui, Icon::Grid, "Grid").clicked() {
                         self.canvas.grid_visible = !self.canvas.grid_visible;
                     }
                 });
@@ -140,7 +106,9 @@ impl eframe::App for BeamWrightApp {
             });
         });
 
-        // Paths panel
+        // Add icon to menu buttons titles by overriding: draw icons next to text using icon_label in a horizontal before menu_button is not possible easily.
+        // Instead, prepend icon glyph text is removed; icons drawn in items only.
+
         egui::Panel::top("paths").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Save path:");
@@ -153,43 +121,26 @@ impl eframe::App for BeamWrightApp {
             }
         });
 
-        // Toolbar with icons
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui
-                    .button(format!("{} {}", Icon::ZoomIn.glyph(), "Zoom in"))
-                    .clicked()
-                {
+                if icon_button(ui, Icon::ZoomIn, "Zoom in").clicked() {
                     self.canvas.zoom_in();
                 }
-                if ui
-                    .button(format!("{} {}", Icon::ZoomOut.glyph(), "Zoom out"))
-                    .clicked()
-                {
+                if icon_button(ui, Icon::ZoomOut, "Zoom out").clicked() {
                     self.canvas.zoom_out();
                 }
-                if ui
-                    .button(format!("{} {}", Icon::Grid.glyph(), "Grid"))
-                    .clicked()
-                {
+                if icon_button(ui, Icon::Grid, "Grid").clicked() {
                     self.canvas.grid_visible = !self.canvas.grid_visible;
                 }
-                if ui
-                    .button(format!("{} {}", Icon::Undo.glyph(), "Undo"))
-                    .clicked()
-                {
+                if icon_button(ui, Icon::Undo, "Undo").clicked() {
                     self.history.undo();
                 }
-                if ui
-                    .button(format!("{} {}", Icon::Redo.glyph(), "Redo"))
-                    .clicked()
-                {
+                if icon_button(ui, Icon::Redo, "Redo").clicked() {
                     self.history.redo();
                 }
             });
         });
 
-        // Central canvas
         egui::CentralPanel::default().show(ui, |ui| {
             let rect = ui.available_rect_before_wrap();
             let painter = ui.painter_at(rect);
