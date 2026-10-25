@@ -87,6 +87,51 @@ fn cross(o: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
     (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
 }
 
+/// Sample points inside `poly` on a grid (approximation of area).
+pub fn sample_points(poly: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    if poly.is_empty() || step <= 0.0 {
+        return Vec::new();
+    }
+    let mut xs: Vec<f64> = poly.iter().map(|p| p.0).collect();
+    let mut ys: Vec<f64> = poly.iter().map(|p| p.1).collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let (xmin, xmax) = (xs[0], xs[xs.len() - 1]);
+    let (ymin, ymax) = (ys[0], ys[ys.len() - 1]);
+    let mut out = Vec::new();
+    let mut x = xmin;
+    while x <= xmax {
+        let mut y = ymin;
+        while y <= ymax {
+            if point_in_polygon(x, y, poly) {
+                out.push((x, y));
+            }
+            y += step;
+        }
+        x += step;
+    }
+    out
+}
+
+/// Union of two polygons approximated by sampling.
+pub fn union_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    let mut pts = sample_points(a, step);
+    pts.extend(sample_points(b, step));
+    convex_hull(&pts)
+}
+
+/// Intersection of two polygons approximated by sampling.
+pub fn intersection_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    let sa = sample_points(a, step);
+    let mut out = Vec::new();
+    for p in sa {
+        if point_in_polygon(p.0, p.1, b) {
+            out.push(p);
+        }
+    }
+    convex_hull(&out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +188,29 @@ mod tests {
         let pts = [(1.0, 2.0)];
         let h = convex_hull(&pts);
         assert_eq!(h.len(), 1);
+    }
+
+    #[test]
+    fn sample_points_square() {
+        let sq = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let pts = sample_points(&sq, 1.0);
+        assert_ne!(pts, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn union_sample_nonempty() {
+        let a = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = union_sample(&a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn intersection_sample_basic() {
+        let a = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = intersection_sample(&a, &b, 1.0);
+        // overlap region exists
+        assert_ne!(r, [] as [(f64, f64); 0]);
     }
 }
