@@ -18,9 +18,18 @@ fn load_icon() -> egui::IconData {
 }
 
 use beamwright::app::BeamWrightApp;
+use clap::Parser;
 
 fn main() -> eframe::Result<()> {
     tracing::info!("starting BeamWright");
+    let cli = beamwright::cli::Cli::parse();
+    if cli.command.is_some() {
+        if let Err(e) = beamwright::cli::run(cli) {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let icon_data = load_icon();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

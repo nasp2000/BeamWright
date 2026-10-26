@@ -7,6 +7,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod app;
+pub mod cli;
 pub mod config;
 pub mod document;
 pub mod editor;
