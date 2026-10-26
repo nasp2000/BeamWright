@@ -1,5 +1,24 @@
 /// Generate fill line segments for a polygon.
 /// Returns list of (start, end) segments at given spacing (mm) and angle (rad).
+/// Fill a polygon with holes: fill outer, subtract fills that lie inside any hole.
+pub fn fill_with_holes(
+    outer: &[(f64, f64)],
+    holes: &[&[(f64, f64)]],
+    spacing: f64,
+    angle: f64,
+) -> Vec<((f64, f64), (f64, f64))> {
+    let mut lines = fill_lines(outer, spacing, angle);
+    // remove segments whose midpoint lies inside a hole
+    lines.retain(|(a, b)| {
+        let mx = f64::midpoint(a.0, b.0);
+        let my = f64::midpoint(a.1, b.1);
+        !holes
+            .iter()
+            .any(|h| crate::geometry::boolean::point_in_polygon(mx, my, h))
+    });
+    lines
+}
+
 pub fn fill_lines(poly: &[(f64, f64)], spacing: f64, angle: f64) -> Vec<((f64, f64), (f64, f64))> {
     if poly.len() < 3 || spacing <= 0.0 {
         return Vec::new();
@@ -80,6 +99,15 @@ mod tests {
         let lines = fill_lines(&sq, 2.0, 0.0);
         assert_ne!(lines, [] as [((f64, f64), (f64, f64)); 0]);
         assert!(lines.len() >= 4);
+    }
+
+    #[test]
+    fn with_holes() {
+        let outer = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let hole = [(3.0, 3.0), (7.0, 3.0), (7.0, 7.0), (3.0, 7.0)];
+        let holes = [hole.as_slice()];
+        let lines = fill_with_holes(&outer, &holes, 2.0, 0.0);
+        let _ = lines;
     }
 
     #[test]
