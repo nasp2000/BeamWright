@@ -51,6 +51,54 @@ pub fn floyd_steinberg(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
     crate::gcode::raster::floyd_steinberg(pixels, width, height)
 }
 
+/// Ordered dithering (Bayer 2x2) for grayscale.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
+pub fn ordered_dither(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let bayer: [[u8; 2]; 2] = [[0, 2], [3, 1]];
+    let mut out = vec![0u8; pixels.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+            let v = pixels.get(idx).copied().unwrap_or(0);
+            let threshold = (u16::from(bayer[y % 2][x % 2]) * 255 / 4) as u8;
+            out[idx] = if v > threshold { 255 } else { 0 };
+        }
+    }
+    out
+}
+
+/// Sobel edge detection (grayscale input).
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
+pub fn sobel(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut out = vec![0u8; pixels.len()];
+    for y in 1..height.saturating_sub(1) {
+        for x in 1..width.saturating_sub(1) {
+            let idx = |dx: i32, dy: i32| -> u8 {
+                let xx = (x as i32 + dx) as usize;
+                let yy = (y as i32 + dy) as usize;
+                pixels.get(yy * width + xx).copied().unwrap_or(0)
+            };
+            let gx = (i32::from(idx(-1, -1)) + 2 * i32::from(idx(-1, 0)) + i32::from(idx(-1, 1)))
+                - (i32::from(idx(1, -1)) + 2 * i32::from(idx(1, 0)) + i32::from(idx(1, 1)));
+            let gy = (i32::from(idx(-1, -1)) + 2 * i32::from(idx(0, -1)) + i32::from(idx(1, -1)))
+                - (i32::from(idx(-1, 1)) + 2 * i32::from(idx(0, 1)) + i32::from(idx(1, 1)));
+            let mag = f64::from(gx * gx + gy * gy).sqrt().min(255.0) as u8;
+            out[y * width + x] = mag;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +171,26 @@ mod tests {
         for v in r {
             assert!(v == 0 || v == 255);
         }
+    }
+
+    #[test]
+    fn ordered_dither_size() {
+        let p = vec![128u8; 4 * 4];
+        let r = ordered_dither(&p, 4, 4);
+        assert_eq!(r.len(), 16);
+    }
+
+    #[test]
+    fn sobel_size() {
+        let p = vec![128u8; 4 * 4];
+        let r = sobel(&p, 4, 4);
+        assert_eq!(r.len(), 16);
+    }
+
+    #[test]
+    fn sobel_empty() {
+        let p = vec![];
+        let r = sobel(&p, 0, 0);
+        assert_eq!(r, [] as [u8; 0]);
     }
 }
