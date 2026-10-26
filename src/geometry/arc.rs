@@ -55,6 +55,22 @@ pub fn arc_from_points(p0: (f64, f64), p1: (f64, f64), p2: (f64, f64)) -> Option
     })
 }
 
+/// Circumference of a circle.
+pub fn circle_circumference(radius: f64) -> f64 {
+    2.0 * std::f64::consts::PI * radius
+}
+
+/// Area of a circle.
+pub fn circle_area(radius: f64) -> f64 {
+    std::f64::consts::PI * radius * radius
+}
+
+/// Approximate perimeter of an ellipse (Ramanujan).
+pub fn ellipse_perimeter(a: f64, b: f64) -> f64 {
+    let h = ((a - b).powi(2)) / ((a + b).powi(2));
+    std::f64::consts::PI * (a + b) * (1.0 + 3.0 * h / (10.0 + (4.0 - 3.0 * h).sqrt()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +124,33 @@ mod tests {
     #[test]
     fn collinear_returns_none() {
         assert!(arc_from_points((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod circle_tests {
+    use super::*;
+
+    #[test]
+    fn circumference() {
+        assert!((circle_circumference(1.0) - 2.0 * std::f64::consts::PI).abs() < 1e-9);
+    }
+
+    #[test]
+    fn area() {
+        assert!((circle_area(2.0) - std::f64::consts::PI * 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ellipse_perimeter_circle() {
+        // circle is ellipse with a=b
+        let p = ellipse_perimeter(5.0, 5.0);
+        assert!((p - circle_circumference(5.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_radius() {
+        assert_eq!(circle_circumference(0.0), 0.0);
+        assert_eq!(circle_area(0.0), 0.0);
     }
 }
