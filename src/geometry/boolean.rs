@@ -243,6 +243,31 @@ pub fn clip_polygon(subject: &[(f64, f64)], clip: &[(f64, f64)]) -> Vec<(f64, f6
     out
 }
 
+/// Alias: polygon area (shoelace).
+pub fn polygon_area_alias(poly: &[(f64, f64)]) -> f64 {
+    polygon_area(poly)
+}
+
+/// Polygon union (sampling-based).
+pub fn polygon_union(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    union_sample(a, b, step)
+}
+
+/// Polygon intersection (sampling-based).
+pub fn polygon_intersection(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    intersection_sample(a, b, step)
+}
+
+/// Polygon difference (sampling-based).
+pub fn polygon_difference(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    difference_sample(a, b, step)
+}
+
+/// Polygon xor (sampling-based).
+pub fn polygon_xor(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    xor_sample(a, b, step)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +419,20 @@ mod tests {
         let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
         let b = [(2.0, 2.0), (6.0, 2.0), (6.0, 6.0), (2.0, 6.0)];
         let r = boolean_op(BooleanOp::Xor, &a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn aliases() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        assert!((polygon_area_alias(&sq) - 16.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn polygon_union_basic() {
+        let a = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = polygon_union(&a, &b, 1.0);
         assert_ne!(r, [] as [(f64, f64); 0]);
     }
 }
