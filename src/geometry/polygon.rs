@@ -348,3 +348,46 @@ mod area_tests {
         assert_eq!(area(&[]), 0.0);
     }
 }
+
+/// Bounding box of a polygon.
+pub fn bounding_box(poly: &[(f64, f64)]) -> Option<((f64, f64), (f64, f64))> {
+    if poly.is_empty() {
+        return None;
+    }
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for (x, y) in poly {
+        min_x = min_x.min(*x);
+        min_y = min_y.min(*y);
+        max_x = max_x.max(*x);
+        max_y = max_y.max(*y);
+    }
+    Some(((min_x, min_y), (max_x, max_y)))
+}
+
+#[cfg(test)]
+mod bbox_tests {
+    use super::*;
+
+    #[test]
+    fn square() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let (mn, mx) = bounding_box(&sq).unwrap();
+        assert_eq!(mn, (0.0, 0.0));
+        assert_eq!(mx, (4.0, 4.0));
+    }
+
+    #[test]
+    fn empty() {
+        assert_eq!(bounding_box(&[]), None);
+    }
+
+    #[test]
+    fn single() {
+        let (mn, mx) = bounding_box(&[(1.0, 2.0)]).unwrap();
+        assert_eq!(mn, (1.0, 2.0));
+        assert_eq!(mx, (1.0, 2.0));
+    }
+}
