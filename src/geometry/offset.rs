@@ -158,6 +158,7 @@ pub fn offset_polygon_round(
             a2 -= 2.0 * std::f64::consts::PI;
         }
         for k in 0..=segments {
+            #[allow(clippy::cast_precision_loss)]
             let t = k as f64 / segments as f64;
             let a = a1 + (a2 - a1) * t;
             let r = (r1.0 * r1.0 + r1.1 * r1.1).sqrt();
