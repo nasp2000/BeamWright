@@ -116,20 +116,51 @@ fn intersect_lines(
     Some((a1.0 + t * d1.0, a1.1 + t * d1.1))
 }
 
-/// Offset polygon with round joins (approximates arcs with `segments` per corner).
-pub fn offset_polygon_round(
-    poly: &[(f64, f64)],
-    distance: f64,
-    segments: usize,
-) -> Vec<(f64, f64)> {
+/// Offset polygon with round joins (inserts arc points at each vertex).
+pub fn offset_polygon_round(poly: &[(f64, f64)], distance: f64, segments: usize) -> Vec<(f64, f64)> {
     let n = poly.len();
     if n < 3 || segments == 0 {
         return offset_polygon_miter(poly, distance);
     }
-    // Use miter as base, then (placeholder) return miter result.
-    // Round joins require arc insertion; keep miter for now but smooth via
-    // sampling: this is a simplified stand-in.
-    offset_polygon_miter(poly, distance)
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for i in 0..n {
+        let prev = poly[(i + n - 1) % n];
+        let curr = poly[i];
+        let next = poly[(i + 1) % n];
+        // edge directions
+        let e1 = (curr.0 - prev.0, curr.1 - prev.1);
+        let e2 = (next.0 - curr.0, next.1 - curr.1);
+        let l1 = (e1.0 * e1.0 + e1.1 * e1.1).sqrt();
+        let l2 = (e2.0 * e2.0 + e2.1 * e2.1).sqrt();
+        if l1 == 0.0 || l2 == 0.0 {
+            out.push(curr);
+            continue;
+        }
+        let n1 = (-e1.1 / l1 * distance, e1.0 / l1 * distance);
+        let n2 = (-e2.1 / l2 * distance, e2.0 / l2 * distance);
+        let p1 = (curr.0 + n1.0, curr.1 + n1.1);
+        let p2 = (curr.0 + n2.0, curr.1 + n2.1);
+        // insert arc from p1 to p2 around curr offset
+        let center = curr;
+        let r1 = (p1.0 - center.0, p1.1 - center.1);
+        let r2 = (p2.0 - center.0, p2.1 - center.1);
+        let a1 = r1.1.atan2(r1.0);
+        let mut a2 = r2.1.atan2(r2.0);
+        // ensure shortest path
+        if a2 < a1 {
+            a2 += 2.0 * std::f64::consts::PI;
+        }
+        if a2 - a1 > std::f64::consts::PI {
+            a2 -= 2.0 * std::f64::consts::PI;
+        }
+        for k in 0..=segments {
+            let t = k as f64 / segments as f64;
+            let a = a1 + (a2 - a1) * t;
+            let r = (r1.0 * r1.0 + r1.1 * r1.1).sqrt();
+            out.push((center.0 + r * a.cos(), center.1 + r * a.sin()));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -212,5 +243,32 @@ mod miter_tests {
         let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
         let r = offset_polygon_miter(&tri, 0.1);
         assert_eq!(r.len(), 3);
+    }
+}
+
+
+#[cfg(test)]
+mod round_tests {
+    use super::offset_polygon_round;
+
+    #[test]
+    fn square_round() {
+        let sq = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let r = offset_polygon_round(&sq, 1.0, 4);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn zero_segments_fallback() {
+        let sq = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let r = offset_polygon_round(&sq, 1.0, 0);
+        assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn small_poly() {
+        let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
+        let r = offset_polygon_round(&tri, 0.1, 2);
+        assert_ne!(r, [] as [(f64, f64); 0]);
     }
 }
