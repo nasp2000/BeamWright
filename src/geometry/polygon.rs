@@ -295,6 +295,11 @@ mod simple_tests {
     }
 }
 
+/// Area of a polygon (shoelace).
+pub fn area(poly: &[(f64, f64)]) -> f64 {
+    crate::geometry::boolean::polygon_area(poly)
+}
+
 /// Check if a point is inside a polygon (ray casting, reuses boolean logic).
 pub fn contains_point(poly: &[(f64, f64)], px: f64, py: f64) -> bool {
     crate::geometry::boolean::point_in_polygon(px, py, poly)
@@ -319,5 +324,27 @@ mod contains_tests {
     #[test]
     fn empty() {
         assert!(!contains_point(&[], 0.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod area_tests {
+    use super::*;
+
+    #[test]
+    fn square() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        assert!((area(&sq) - 16.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn triangle() {
+        let tri = [(0.0, 0.0), (6.0, 0.0), (0.0, 6.0)];
+        assert!((area(&tri) - 18.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty() {
+        assert_eq!(area(&[]), 0.0);
     }
 }
