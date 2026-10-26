@@ -53,6 +53,36 @@ impl Transform2 {
             ty: 0.0,
         }
     }
+    pub fn mirror_x() -> Self {
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: -1.0,
+            tx: 0.0,
+            ty: 0.0,
+        }
+    }
+    pub fn mirror_y() -> Self {
+        Self {
+            a: -1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+        }
+    }
+    pub fn compose(&self, other: &Self) -> Self {
+        Self {
+            a: self.a * other.a + self.c * other.b,
+            b: self.b * other.a + self.d * other.b,
+            c: self.a * other.c + self.c * other.d,
+            d: self.b * other.c + self.d * other.d,
+            tx: self.a * other.tx + self.c * other.ty + self.tx,
+            ty: self.b * other.tx + self.d * other.ty + self.ty,
+        }
+    }
     pub fn apply(&self, p: Point2) -> Point2 {
         Point2 {
             x: self.a * p.x + self.c * p.y + self.tx,
@@ -114,5 +144,29 @@ mod tests {
         let r = t.apply(Point2::new(1.0, 0.0));
         assert!(r.x.abs() < 1e-9);
         assert!((r.y - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mirror_x() {
+        let t = Transform2::mirror_x();
+        let r = t.apply(Point2::new(1.0, 2.0));
+        assert!((r.x - 1.0).abs() < 1e-9);
+        assert!((r.y + 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mirror_y() {
+        let t = Transform2::mirror_y();
+        let r = t.apply(Point2::new(1.0, 2.0));
+        assert!((r.x + 1.0).abs() < 1e-9);
+        assert!((r.y - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compose_translate() {
+        let t = Transform2::translate(1.0, 2.0).compose(&Transform2::translate(3.0, 4.0));
+        let r = t.apply(Point2::origin());
+        assert!((r.x - 4.0).abs() < 1e-9);
+        assert!((r.y - 6.0).abs() < 1e-9);
     }
 }
