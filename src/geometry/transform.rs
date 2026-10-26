@@ -221,3 +221,38 @@ mod tests {
         assert!((r.y - 6.0).abs() < 1e-9);
     }
 }
+
+/// Mirror a list of points across a vertical axis x = mx.
+pub fn mirror_points_vertical(pts: &[(f64, f64)], mx: f64) -> Vec<(f64, f64)> {
+    pts.iter().map(|(x, y)| (2.0 * mx - x, *y)).collect()
+}
+
+/// Mirror a list of points across a horizontal axis y = my.
+pub fn mirror_points_horizontal(pts: &[(f64, f64)], my: f64) -> Vec<(f64, f64)> {
+    pts.iter().map(|(x, y)| (*x, 2.0 * my - y)).collect()
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+
+    #[test]
+    fn mirror_vertical() {
+        let pts = [(0.0, 0.0), (2.0, 3.0)];
+        let r = mirror_points_vertical(&pts, 1.0);
+        assert_eq!(r, vec![(2.0, 0.0), (0.0, 3.0)]);
+    }
+
+    #[test]
+    fn mirror_horizontal() {
+        let pts = [(0.0, 0.0), (2.0, 3.0)];
+        let r = mirror_points_horizontal(&pts, 1.0);
+        assert_eq!(r, vec![(0.0, 2.0), (2.0, -1.0)]);
+    }
+
+    #[test]
+    fn mirror_empty() {
+        assert_eq!(mirror_points_vertical(&[], 0.0), [] as [(f64, f64); 0]);
+        assert_eq!(mirror_points_horizontal(&[], 0.0), [] as [(f64, f64); 0]);
+    }
+}
