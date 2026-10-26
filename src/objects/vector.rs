@@ -70,7 +70,15 @@ impl Rect {
         self.height *= sy;
     }
     #[allow(clippy::unused_self)]
-    pub fn rotate(&mut self, _angle_rad: f64, _center: crate::geometry::Point2) {}
+    pub fn rotate(&mut self, angle_rad: f64, center: crate::geometry::Point2) {
+        let c = self.center();
+        let new_origin = c.rotate(angle_rad, center);
+        // adjust origin back by half dimensions (approx, axis-aligned bbox)
+        self.origin = crate::geometry::Point2::new(
+            new_origin.x - self.width / 2.0,
+            new_origin.y - self.height / 2.0,
+        );
+    }
     pub fn bounding_box(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
         let min_x = self.origin.x;
         let min_y = self.origin.y;
@@ -102,7 +110,9 @@ impl Ellipse {
         self.ry *= sy;
     }
     #[allow(clippy::unused_self)]
-    pub fn rotate(&mut self, _angle_rad: f64, _center: crate::geometry::Point2) {}
+    pub fn rotate(&mut self, angle_rad: f64, center: crate::geometry::Point2) {
+        self.center = self.center.rotate(angle_rad, center);
+    }
     pub fn bounding_box(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
         let min_x = self.center.x - self.rx;
         let min_y = self.center.y - self.ry;
@@ -197,6 +207,18 @@ mod tests {
             ry: 3.0,
         };
         assert!((e.area() - std::f64::consts::PI * 6.0).abs() < EPS);
+    }
+
+    #[test]
+    fn ellipse_rotate() {
+        let mut e = Ellipse {
+            center: Point2::new(1.0, 0.0),
+            rx: 2.0,
+            ry: 1.0,
+        };
+        e.rotate(std::f64::consts::FRAC_PI_2, Point2::origin());
+        assert!(e.center.x.abs() < EPS);
+        assert!((e.center.y - 1.0).abs() < EPS);
     }
 
     #[test]
