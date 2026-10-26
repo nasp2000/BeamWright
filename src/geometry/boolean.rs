@@ -132,6 +132,36 @@ pub fn intersection_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec
     convex_hull(&out)
 }
 
+/// Difference (a - b) approximated by sampling.
+pub fn difference_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    let sa = sample_points(a, step);
+    let mut out = Vec::new();
+    for p in sa {
+        if !point_in_polygon(p.0, p.1, b) {
+            out.push(p);
+        }
+    }
+    convex_hull(&out)
+}
+
+/// Xor of two polygons approximated by sampling.
+pub fn xor_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    let sa = sample_points(a, step);
+    let sb = sample_points(b, step);
+    let mut out = Vec::new();
+    for p in &sa {
+        if !point_in_polygon(p.0, p.1, b) {
+            out.push(*p);
+        }
+    }
+    for p in &sb {
+        if !point_in_polygon(p.0, p.1, a) {
+            out.push(*p);
+        }
+    }
+    convex_hull(&out)
+}
+
 /// Sutherland-Hodgman: clip `subject` polygon against a single half-plane
 /// defined by edge from `a` to `b` (keep points left of edge).
 fn clip_half_plane(subject: &[(f64, f64)], a: (f64, f64), b: (f64, f64)) -> Vec<(f64, f64)> {
@@ -299,5 +329,21 @@ mod tests {
         let clip = [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)];
         let r = clip_polygon(&subject, &clip);
         assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn difference_sample_basic() {
+        let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = difference_sample(&a, &b, 1.0);
+        let _ = r;
+    }
+
+    #[test]
+    fn xor_sample_basic() {
+        let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let b = [(2.0, 2.0), (6.0, 2.0), (6.0, 6.0), (2.0, 6.0)];
+        let r = xor_sample(&a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
     }
 }
