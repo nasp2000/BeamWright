@@ -18,6 +18,28 @@ pub fn estimate_duration(toolpaths: &[Toolpath]) -> f64 {
     total
 }
 
+/// Estimate duration with explicit travel speed (mm/s). Travel distance estimated
+/// as 10% of cut length at travel speed.
+pub fn estimate_duration_with_travel(toolpaths: &[Toolpath], travel_speed: f64) -> f64 {
+    let mut total = 0.0;
+    for tp in toolpaths {
+        let pass_len = tp.total_length();
+        let cut_time = if tp.speed > 0.0 {
+            pass_len / tp.speed
+        } else {
+            0.0
+        };
+        total += cut_time * f64::from(tp.passes);
+        let travel_time = if travel_speed > 0.0 {
+            pass_len * 0.1 / travel_speed
+        } else {
+            0.0
+        };
+        total += travel_time * f64::from(tp.passes);
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,6 +67,25 @@ mod tests {
         tp.push(MoveKind::Cut, 10.0, 0.0);
         let d = estimate_duration(&[tp]);
         assert!((d - 2.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn with_travel() {
+        let mut tp = Toolpath::new(10.0, 50.0, 1);
+        tp.push(MoveKind::Travel, 0.0, 0.0);
+        tp.push(MoveKind::Cut, 10.0, 0.0);
+        let d = estimate_duration_with_travel(&[tp], 50.0);
+        // cut 1s + travel 0.1s (10*0.1/50=0.02? wait 10*0.1=1, /50=0.02) -> 1.02
+        assert!((d - 1.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn with_travel_zero_speed() {
+        let mut tp = Toolpath::new(10.0, 50.0, 1);
+        tp.push(MoveKind::Travel, 0.0, 0.0);
+        tp.push(MoveKind::Cut, 10.0, 0.0);
+        let d = estimate_duration_with_travel(&[tp], 0.0);
+        assert!((d - 1.0).abs() < 1e-9);
     }
 
     #[test]
