@@ -99,6 +99,67 @@ pub fn sobel(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
     out
 }
 
+/// Flip image horizontally.
+pub fn flip_horizontal(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut out = vec![0u8; pixels.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let src = y * width + (width - 1 - x);
+            let dst = y * width + x;
+            if src < pixels.len() && dst < out.len() {
+                out[dst] = pixels[src];
+            }
+        }
+    }
+    out
+}
+
+/// Flip image vertically.
+pub fn flip_vertical(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut out = vec![0u8; pixels.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let src = (height - 1 - y) * width + x;
+            let dst = y * width + x;
+            if src < pixels.len() && dst < out.len() {
+                out[dst] = pixels[src];
+            }
+        }
+    }
+    out
+}
+
+/// Nearest-neighbor resize.
+pub fn resize_nearest(
+    pixels: &[u8],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) -> Vec<u8> {
+    if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
+        return Vec::new();
+    }
+    let mut out = vec![0u8; dst_w * dst_h];
+    for y in 0..dst_h {
+        for x in 0..dst_w {
+            let sx = x * src_w / dst_w;
+            let sy = y * src_h / dst_h;
+            out[y * dst_w + x] = pixels.get(sy * src_w + sx).copied().unwrap_or(0);
+        }
+    }
+    out
+}
+
+/// Compute histogram (256 bins).
+pub fn histogram(pixels: &[u8]) -> [u32; 256] {
+    let mut h = [0u32; 256];
+    for &v in pixels {
+        h[v as usize] += 1;
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +253,43 @@ mod tests {
         let p = vec![];
         let r = sobel(&p, 0, 0);
         assert_eq!(r, [] as [u8; 0]);
+    }
+
+    #[test]
+    fn flip_horizontal_size() {
+        let p = vec![1u8, 2, 3, 4];
+        let r = flip_horizontal(&p, 2, 2);
+        assert_eq!(r.len(), 4);
+        assert_eq!(r[0], 2);
+        assert_eq!(r[1], 1);
+    }
+
+    #[test]
+    fn flip_vertical_size() {
+        let p = vec![1u8, 2, 3, 4];
+        let r = flip_vertical(&p, 2, 2);
+        assert_eq!(r.len(), 4);
+        assert_eq!(r[0], 3);
+    }
+
+    #[test]
+    fn resize_nearest_up() {
+        let p = vec![1u8, 2, 3, 4];
+        let r = resize_nearest(&p, 2, 2, 4, 4);
+        assert_eq!(r.len(), 16);
+    }
+
+    #[test]
+    fn resize_zero() {
+        let p = vec![1u8; 4];
+        assert_eq!(resize_nearest(&p, 2, 2, 0, 2), [] as [u8; 0]);
+    }
+
+    #[test]
+    fn histogram_basic() {
+        let p = vec![0u8, 0, 255];
+        let h = histogram(&p);
+        assert_eq!(h[0], 2);
+        assert_eq!(h[255], 1);
     }
 }
