@@ -46,6 +46,35 @@ fn cross(s: &Segment, px: f64, py: f64) -> f64 {
     (s.x2 - s.x1) * (py - s.y1) - (s.y2 - s.y1) * (px - s.x1)
 }
 
+/// Distance between two (possibly skew) line segments in 2D (min distance).
+pub fn segment_distance(a: &Segment, b: &Segment) -> f64 {
+    // check intersection first
+    if let Some(p) = segment_intersection_point(a, b) {
+        let _ = p;
+        return 0.0;
+    }
+    // min of endpoint-to-segment distances
+    let d1 = distance_point_to_segment(a.x1, a.y1, b.x1, b.y1, b.x2, b.y2);
+    let d2 = distance_point_to_segment(a.x2, a.y2, b.x1, b.y1, b.x2, b.y2);
+    let d3 = distance_point_to_segment(b.x1, b.y1, a.x1, a.y1, a.x2, a.y2);
+    let d4 = distance_point_to_segment(b.x2, b.y2, a.x1, a.y1, a.x2, a.y2);
+    d1.min(d2).min(d3).min(d4)
+}
+
+fn distance_point_to_segment(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len2 = dx * dx + dy * dy;
+    if len2 == 0.0 {
+        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
+    }
+    let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+    let t = t.clamp(0.0, 1.0);
+    let cx = x1 + t * dx;
+    let cy = y1 + t * dy;
+    ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +158,59 @@ mod tests {
             y2: 6.0,
         };
         assert!(segment_intersection_point(&a, &b).is_none());
+    }
+
+    #[test]
+    fn distance_parallel() {
+        let a = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 10.0,
+            y2: 0.0,
+        };
+        let b = Segment {
+            x1: 0.0,
+            y1: 5.0,
+            x2: 10.0,
+            y2: 5.0,
+        };
+        let d = segment_distance(&a, &b);
+        assert!((d - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn distance_intersecting() {
+        let a = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 10.0,
+            y2: 10.0,
+        };
+        let b = Segment {
+            x1: 0.0,
+            y1: 10.0,
+            x2: 10.0,
+            y2: 0.0,
+        };
+        let d = segment_distance(&a, &b);
+        assert!(d.abs() < 1e-9);
+    }
+
+    #[test]
+    fn distance_point() {
+        let a = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+        };
+        let b = Segment {
+            x1: 3.0,
+            y1: 4.0,
+            x2: 3.0,
+            y2: 4.0,
+        };
+        let d = segment_distance(&a, &b);
+        assert!((d - 5.0).abs() < 1e-9);
     }
 }
