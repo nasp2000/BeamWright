@@ -132,6 +132,24 @@ pub fn intersection_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec
     convex_hull(&out)
 }
 
+/// Apply a boolean operation to two polygons.
+pub fn boolean_op(op: BooleanOp, a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
+    match op {
+        BooleanOp::Union => union_sample(a, b, step),
+        BooleanOp::Intersection => {
+            // use exact clip for convex; fallback to sampling
+            let r = clip_polygon(a, b);
+            if r.is_empty() {
+                intersection_sample(a, b, step)
+            } else {
+                r
+            }
+        }
+        BooleanOp::Difference => difference_sample(a, b, step),
+        BooleanOp::Xor => xor_sample(a, b, step),
+    }
+}
+
 /// Difference (a - b) approximated by sampling.
 pub fn difference_sample(a: &[(f64, f64)], b: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
     let sa = sample_points(a, step);
@@ -344,6 +362,38 @@ mod tests {
         let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
         let b = [(2.0, 2.0), (6.0, 2.0), (6.0, 6.0), (2.0, 6.0)];
         let r = xor_sample(&a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn boolean_op_union() {
+        let a = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = boolean_op(BooleanOp::Union, &a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn boolean_op_intersection() {
+        let a = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = boolean_op(BooleanOp::Intersection, &a, &b, 1.0);
+        assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn boolean_op_difference() {
+        let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
+        let r = boolean_op(BooleanOp::Difference, &a, &b, 1.0);
+        let _ = r;
+    }
+
+    #[test]
+    fn boolean_op_xor() {
+        let a = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let b = [(2.0, 2.0), (6.0, 2.0), (6.0, 6.0), (2.0, 6.0)];
+        let r = boolean_op(BooleanOp::Xor, &a, &b, 1.0);
         assert_ne!(r, [] as [(f64, f64); 0]);
     }
 }
