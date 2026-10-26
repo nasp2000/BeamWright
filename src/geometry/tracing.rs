@@ -52,6 +52,16 @@ pub fn trace_contour(grid: &[u8], width: usize, height: usize) -> Vec<(f64, f64)
     crate::geometry::boolean::convex_hull(&pts)
 }
 
+/// Trace all contours: returns one convex hull per connected component
+/// (approximated by treating all boundary points as one contour).
+pub fn trace_all(grid: &[u8], width: usize, height: usize) -> Vec<Vec<(f64, f64)>> {
+    let pts = boundary_points(grid, width, height);
+    if pts.is_empty() {
+        return Vec::new();
+    }
+    vec![crate::geometry::boolean::convex_hull(&pts)]
+}
+
 /// Count foreground pixels.
 pub fn foreground_count(grid: &[u8]) -> usize {
     grid.iter().filter(|&&v| v != 0).count()
@@ -92,5 +102,29 @@ mod tests {
         assert_eq!(bp.len(), 1);
         let c = trace_contour(&g, 3, 3);
         assert_ne!(c, [] as [(f64, f64); 0]);
+    }
+}
+
+#[cfg(test)]
+mod trace_all_tests {
+    use super::*;
+
+    #[test]
+    fn empty() {
+        let g = vec![0u8; 4 * 4];
+        assert_eq!(trace_all(&g, 4, 4), [] as [Vec<(f64, f64)>; 0]);
+    }
+
+    #[test]
+    fn one_contour() {
+        let mut g = vec![0u8; 6 * 6];
+        for y in 1..5 {
+            for x in 1..5 {
+                g[y * 6 + x] = 255;
+            }
+        }
+        let c = trace_all(&g, 6, 6);
+        assert_eq!(c.len(), 1);
+        assert!(c[0].len() >= 3);
     }
 }
