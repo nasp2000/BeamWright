@@ -42,6 +42,10 @@ impl CubicBezier {
         let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         (Point2::new(min_x, min_y), Point2::new(max_x, max_y))
     }
+    /// Alias for `approx_length` with default 20 steps.
+    pub fn length(&self) -> f64 {
+        self.approx_length(20)
+    }
     /// Approximate arc length by sampling.
     #[allow(clippy::cast_precision_loss)]
     pub fn approx_length(&self, steps: usize) -> f64 {
@@ -166,6 +170,18 @@ mod tests {
         assert!((left.end().x - mid.x).abs() < 1e-9);
         assert!((left.end().y - mid.y).abs() < 1e-9);
         assert!((right.start().x - mid.x).abs() < 1e-9);
+    }
+
+    #[test]
+    fn length_alias() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        assert!((b.length() - b.approx_length(20)).abs() < 1e-12);
+        assert!(b.length() > 0.0);
     }
 
     #[test]
