@@ -12,6 +12,19 @@ pub struct Placement {
     pub item: usize,
 }
 
+/// Nest with rotation: try original and rotated (90°) orientation, pick best fit.
+pub fn nest_with_rotation(items: &[RectItem], bin_w: f64, bin_h: f64) -> Vec<Placement> {
+    // try original
+    let p0 = nest_shelf(items, bin_w, bin_h);
+    // try rotated items
+    let rotated: Vec<RectItem> = items
+        .iter()
+        .map(|it| RectItem { w: it.h, h: it.w })
+        .collect();
+    let p1 = nest_shelf(&rotated, bin_w, bin_h);
+    if p1.len() > p0.len() { p1 } else { p0 }
+}
+
 pub fn nest_shelf(items: &[RectItem], bin_w: f64, bin_h: f64) -> Vec<Placement> {
     let mut placements = Vec::new();
     let mut x = 0.0;
@@ -68,5 +81,23 @@ mod tests {
     #[test]
     fn empty() {
         assert!(nest_shelf(&[], 10.0, 10.0).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rot_tests {
+    use super::*;
+
+    #[test]
+    fn rotation_helps() {
+        let items = [RectItem { w: 9.0, h: 1.0 }];
+        let p = nest_with_rotation(&items, 2.0, 10.0);
+        // rotated (1x9) fits in 2-wide bin
+        assert_eq!(p.len(), 1);
+    }
+
+    #[test]
+    fn empty() {
+        assert_eq!(nest_with_rotation(&[], 10.0, 10.0).len(), 0);
     }
 }
