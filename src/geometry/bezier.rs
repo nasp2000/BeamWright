@@ -32,6 +32,22 @@ impl CubicBezier {
     pub fn end(&self) -> Point2 {
         self.p3
     }
+    /// Approximate arc length by sampling.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn approx_length(&self, steps: usize) -> f64 {
+        if steps == 0 {
+            return self.start().distance(self.end());
+        }
+        let mut total = 0.0;
+        let mut prev = self.eval(0.0);
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let curr = self.eval(t);
+            total += prev.distance(curr);
+            prev = curr;
+        }
+        total
+    }
     /// Split at parameter t using de Casteljau.
     #[allow(clippy::similar_names)]
     pub fn split(&self, t: f64) -> (CubicBezier, CubicBezier) {
@@ -120,6 +136,19 @@ mod tests {
         assert!((left.end().x - mid.x).abs() < 1e-9);
         assert!((left.end().y - mid.y).abs() < 1e-9);
         assert!((right.start().x - mid.x).abs() < 1e-9);
+    }
+
+    #[test]
+    fn approx_length_positive() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let l = b.approx_length(20);
+        assert!(l > 0.0);
+        assert!(l >= b.start().distance(b.end()));
     }
 
     #[test]
