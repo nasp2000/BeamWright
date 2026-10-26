@@ -19,6 +19,45 @@ impl Path {
             closed: false,
         }
     }
+    /// Build a path from a list of points (connected by lines).
+    pub fn from_points(points: &[(f64, f64)], closed: bool) -> Self {
+        let mut p = Path::new();
+        p.closed = closed;
+        for i in 1..points.len() {
+            p.push(Segment::Line {
+                from: Point2::new(points[i - 1].0, points[i - 1].1),
+                to: Point2::new(points[i].0, points[i].1),
+            });
+        }
+        if closed && points.len() >= 2 {
+            p.push(Segment::Line {
+                from: Point2::new(points[points.len() - 1].0, points[points.len() - 1].1),
+                to: Point2::new(points[0].0, points[0].1),
+            });
+        }
+        p
+    }
+    /// Extract endpoints of line segments.
+    pub fn to_points(&self) -> Vec<(f64, f64)> {
+        let mut pts = Vec::new();
+        for seg in &self.segments {
+            match seg {
+                Segment::Line { from, .. } => {
+                    pts.push((from.x, from.y));
+                }
+                Segment::Cubic(c) => {
+                    pts.push((c.p0.x, c.p0.y));
+                }
+            }
+        }
+        if let Some(last) = self.segments.last() {
+            match last {
+                Segment::Line { to, .. } => pts.push((to.x, to.y)),
+                Segment::Cubic(c) => pts.push((c.p3.x, c.p3.y)),
+            }
+        }
+        pts
+    }
     pub fn push(&mut self, seg: Segment) {
         self.segments.push(seg);
     }
@@ -220,6 +259,33 @@ mod tests {
             }
             Segment::Cubic(_) => panic!("wrong segment"),
         }
+    }
+
+    #[test]
+    fn from_points() {
+        let pts = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)];
+        let p = Path::from_points(&pts, false);
+        assert_eq!(p.segment_count(), 2);
+        assert!(!p.closed);
+    }
+
+    #[test]
+    fn from_points_closed() {
+        let pts = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)];
+        let p = Path::from_points(&pts, true);
+        assert_eq!(p.segment_count(), 3);
+        assert!(p.closed);
+    }
+
+    #[test]
+    fn to_points() {
+        let mut p = Path::new();
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(1.0, 0.0),
+        });
+        let pts = p.to_points();
+        assert_eq!(pts.len(), 2);
     }
 
     #[test]
