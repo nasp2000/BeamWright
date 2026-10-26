@@ -90,6 +90,26 @@ pub fn point_segment_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f
     ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
 }
 
+/// Intersection of two infinite lines (not segments).
+#[allow(clippy::too_many_arguments)]
+pub fn line_intersection(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x3: f64,
+    y3: f64,
+    x4: f64,
+    y4: f64,
+) -> Option<(f64, f64)> {
+    let d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+    Some((x1 + t * (x2 - x1), y1 + t * (y2 - y1)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +265,26 @@ mod tests {
     fn point_seg_dist_degenerate() {
         let d = point_segment_distance(3.0, 4.0, 0.0, 0.0, 0.0, 0.0);
         assert!((d - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn line_intersection_cross() {
+        let p = line_intersection(0.0, 0.0, 10.0, 10.0, 0.0, 10.0, 10.0, 0.0);
+        assert!(p.is_some());
+        let (x, y) = p.unwrap();
+        assert!((x - 5.0).abs() < 1e-9);
+        assert!((y - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn line_intersection_parallel() {
+        let p = line_intersection(0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        assert!(p.is_none());
+    }
+
+    #[test]
+    fn line_intersection_same() {
+        let p = line_intersection(0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 3.0, 0.0);
+        assert!(p.is_none());
     }
 }
