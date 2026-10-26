@@ -25,6 +25,18 @@ impl Path {
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
+    pub fn reverse(&mut self) {
+        self.segments.reverse();
+    }
+    pub fn close(&mut self) {
+        self.closed = true;
+    }
+    pub fn last_point(&self) -> Option<Point2> {
+        self.segments.last().map(|s| match s {
+            Segment::Line { to, .. } => *to,
+            Segment::Cubic(c) => c.end(),
+        })
+    }
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
@@ -54,6 +66,34 @@ mod tests {
         let p = Path::new();
         assert!(p.is_empty());
         assert_eq!(p.segment_count(), 0);
+    }
+
+    #[test]
+    fn reverse_empty() {
+        let mut p = Path::new();
+        p.reverse();
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn close_sets_flag() {
+        let mut p = Path::new();
+        assert!(!p.closed);
+        p.close();
+        assert!(p.closed);
+    }
+
+    #[test]
+    fn last_point() {
+        let mut p = Path::new();
+        assert!(p.last_point().is_none());
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(1.0, 1.0),
+        });
+        let lp = p.last_point().unwrap();
+        assert!((lp.x - 1.0).abs() < 1e-9);
+        assert!((lp.y - 1.0).abs() < 1e-9);
     }
 
     #[test]
