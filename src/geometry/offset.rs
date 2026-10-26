@@ -168,6 +168,44 @@ pub fn offset_polygon_round(
     out
 }
 
+/// Offset an open polyline by `distance` (left normal).
+pub fn offset_polyline(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64)> {
+    let n = poly.len();
+    if n < 2 {
+        return poly.to_vec();
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let prev = if i > 0 { poly[i - 1] } else { poly[0] };
+        let curr = poly[i];
+        let next = if i + 1 < n { poly[i + 1] } else { poly[n - 1] };
+        let e1 = (curr.0 - prev.0, curr.1 - prev.1);
+        let e2 = (next.0 - curr.0, next.1 - curr.1);
+        let l1 = (e1.0 * e1.0 + e1.1 * e1.1).sqrt();
+        let l2 = (e2.0 * e2.0 + e2.1 * e2.1).sqrt();
+        let n1 = if l1 > 0.0 {
+            (-e1.1 / l1 * distance, e1.0 / l1 * distance)
+        } else {
+            (0.0, 0.0)
+        };
+        let n2 = if l2 > 0.0 {
+            (-e2.1 / l2 * distance, e2.0 / l2 * distance)
+        } else {
+            (0.0, 0.0)
+        };
+        let nx = f64::midpoint(n1.0, n2.0);
+        let ny = f64::midpoint(n1.1, n2.1);
+        let len = (nx * nx + ny * ny).sqrt();
+        let (nx, ny) = if len > 0.0 {
+            (nx / len * distance, ny / len * distance)
+        } else {
+            (0.0, 0.0)
+        };
+        out.push((curr.0 + nx, curr.1 + ny));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +312,39 @@ mod round_tests {
         let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
         let r = offset_polygon_round(&tri, 0.1, 2);
         assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+}
+
+#[cfg(test)]
+mod polyline_tests {
+    use super::offset_polyline;
+
+    #[test]
+    fn empty() {
+        assert_eq!(offset_polyline(&[], 1.0), [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn single() {
+        let p = [(0.0, 0.0)];
+        let r = offset_polyline(&p, 1.0);
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn two_points() {
+        let p = [(0.0, 0.0), (10.0, 0.0)];
+        let r = offset_polyline(&p, 1.0);
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn zero() {
+        let p = [(0.0, 0.0), (10.0, 0.0)];
+        let r = offset_polyline(&p, 0.0);
+        for (a, b) in p.iter().zip(r.iter()) {
+            assert!((a.0 - b.0).abs() < 1e-9);
+            assert!((a.1 - b.1).abs() < 1e-9);
+        }
     }
 }
