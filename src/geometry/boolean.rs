@@ -87,6 +87,13 @@ fn cross(o: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
     (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
 }
 
+/// Point in circle test.
+pub fn point_in_circle(px: f64, py: f64, cx: f64, cy: f64, r: f64) -> bool {
+    let dx = px - cx;
+    let dy = py - cy;
+    dx * dx + dy * dy <= r * r
+}
+
 /// Sample points inside `poly` on a grid (approximation of area).
 pub fn sample_points(poly: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
     if poly.is_empty() || step <= 0.0 {
@@ -434,5 +441,20 @@ mod tests {
         let b = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)];
         let r = polygon_union(&a, &b, 1.0);
         assert_ne!(r, [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn point_in_circle_true() {
+        assert!(point_in_circle(1.0, 1.0, 0.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn point_in_circle_false() {
+        assert!(!point_in_circle(5.0, 5.0, 0.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn point_in_circle_boundary() {
+        assert!(point_in_circle(5.0, 0.0, 0.0, 0.0, 5.0));
     }
 }
