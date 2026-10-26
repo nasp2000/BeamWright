@@ -45,6 +45,28 @@ impl Transform2 {
     pub fn scale_uniform(s: f64) -> Self {
         Self::scale(s, s)
     }
+    pub fn scale_around(sx: f64, sy: f64, cx: f64, cy: f64) -> Self {
+        Self {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            tx: cx * (1.0 - sx),
+            ty: cy * (1.0 - sy),
+        }
+    }
+    pub fn rotate_around(angle_rad: f64, cx: f64, cy: f64) -> Self {
+        let t = Self::rotate(angle_rad);
+        // translate to origin, rotate, translate back
+        Self {
+            a: t.a,
+            b: t.b,
+            c: t.c,
+            d: t.d,
+            tx: cx - t.a * cx - t.c * cy,
+            ty: cy - t.b * cx - t.d * cy,
+        }
+    }
     pub fn rotate(angle_rad: f64) -> Self {
         let (s, c) = (angle_rad.sin(), angle_rad.cos());
         Self {
@@ -153,6 +175,24 @@ mod tests {
         let r = t.apply(Point2::new(3.0, 4.0));
         assert!((r.x - 6.0).abs() < EPS);
         assert!((r.y - 8.0).abs() < EPS);
+    }
+
+    #[test]
+    fn scale_around() {
+        let t = Transform2::scale_around(2.0, 2.0, 5.0, 5.0);
+        let r = t.apply(Point2::new(5.0, 5.0));
+        assert!((r.x - 5.0).abs() < 1e-9);
+        assert!((r.y - 5.0).abs() < 1e-9);
+        let r2 = t.apply(Point2::new(6.0, 5.0));
+        assert!((r2.x - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotate_around() {
+        let t = Transform2::rotate_around(std::f64::consts::FRAC_PI_2, 0.0, 0.0);
+        let r = t.apply(Point2::new(1.0, 0.0));
+        assert!(r.x.abs() < 1e-9);
+        assert!((r.y - 1.0).abs() < 1e-9);
     }
 
     #[test]
