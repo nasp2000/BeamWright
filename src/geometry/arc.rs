@@ -24,6 +24,19 @@ impl Arc {
     pub fn is_full_circle(&self) -> bool {
         (self.end_angle - self.start_angle).abs() >= 2.0 * PI - 1e-9
     }
+    /// Convert arc to polyline points.
+    pub fn to_polyline(&self, segments: usize) -> Vec<(f64, f64)> {
+        if segments == 0 {
+            return vec![];
+        }
+        let mut pts = Vec::with_capacity(segments + 1);
+        for i in 0..=segments {
+            #[allow(clippy::cast_precision_loss)]
+            let t = i as f64 / segments as f64;
+            pts.push(self.point_at(t));
+        }
+        pts
+    }
 }
 
 pub fn arc_from_points(p0: (f64, f64), p1: (f64, f64), p2: (f64, f64)) -> Option<Arc> {
@@ -152,5 +165,50 @@ mod circle_tests {
     fn zero_radius() {
         assert_eq!(circle_circumference(0.0), 0.0);
         assert_eq!(circle_area(0.0), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod polyline_tests {
+    use super::Arc;
+
+    #[test]
+    fn count() {
+        let a = Arc {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::FRAC_PI_2,
+        };
+        assert_eq!(a.to_polyline(4).len(), 5);
+    }
+
+    #[test]
+    fn zero() {
+        let a = Arc {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::FRAC_PI_2,
+        };
+        assert_eq!(a.to_polyline(0), [] as [(f64, f64); 0]);
+    }
+
+    #[test]
+    fn endpoints() {
+        let a = Arc {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::FRAC_PI_2,
+        };
+        let pts = a.to_polyline(4);
+        assert!((pts[0].0 - 5.0).abs() < 1e-9);
+        let last = pts.last().unwrap();
+        assert!(last.0.abs() < 1e-9);
+        assert!((last.1 - 5.0).abs() < 1e-9);
     }
 }
