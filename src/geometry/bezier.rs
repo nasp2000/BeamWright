@@ -82,6 +82,26 @@ impl CubicBezier {
             },
         )
     }
+    /// Subdivide into `n` equal segments (by parameter).
+    pub fn subdivide(&self, n: usize) -> Vec<CubicBezier> {
+        if n == 0 {
+            return vec![];
+        }
+        if n == 1 {
+            return vec![*self];
+        }
+        let mut out = Vec::with_capacity(n);
+        let mut current = *self;
+        for i in 1..n {
+            #[allow(clippy::cast_precision_loss)]
+            let t = 1.0 / (n - i + 1) as f64;
+            let (left, right) = current.split(t);
+            out.push(left);
+            current = right;
+        }
+        out.push(current);
+        out
+    }
 }
 
 fn lerp(a: Point2, b: Point2, t: f64) -> Point2 {
@@ -174,6 +194,41 @@ mod tests {
         assert!((max.x - 5.0).abs() < 1e-9);
         assert!((min.y - 0.0).abs() < 1e-9);
         assert!((max.y - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn subdivide_count() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let parts = b.subdivide(4);
+        assert_eq!(parts.len(), 4);
+    }
+
+    #[test]
+    fn subdivide_one() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let parts = b.subdivide(1);
+        assert_eq!(parts.len(), 1);
+    }
+
+    #[test]
+    fn subdivide_zero() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        assert!(b.subdivide(0).is_empty());
     }
 
     #[test]
