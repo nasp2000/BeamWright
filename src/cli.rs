@@ -22,6 +22,8 @@ pub enum Commands {
     ExportGcode { input: PathBuf, output: PathBuf },
     /// List layers in a project
     ListLayers { path: PathBuf },
+    /// Run MCP server (stdio JSON-RPC)
+    Mcp,
 }
 
 pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -61,6 +63,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let s = w.render(&tps);
             std::fs::write(&output, s)?;
             println!("Exported G-code -> {}", output.display());
+            Ok(())
+        }
+        Some(Commands::Mcp) => {
+            crate::mcp::run_mcp_server();
             Ok(())
         }
         Some(Commands::ListLayers { path }) => {

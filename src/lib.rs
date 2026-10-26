@@ -20,6 +20,7 @@ pub mod history;
 pub mod import;
 pub mod layers;
 pub mod materials;
+pub mod mcp;
 pub mod messages;
 pub mod objects;
 pub mod operations;
