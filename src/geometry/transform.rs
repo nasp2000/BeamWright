@@ -42,6 +42,9 @@ impl Transform2 {
             ty: 0.0,
         }
     }
+    pub fn scale_uniform(s: f64) -> Self {
+        Self::scale(s, s)
+    }
     pub fn rotate(angle_rad: f64) -> Self {
         let (s, c) = (angle_rad.sin(), angle_rad.cos());
         Self {
@@ -150,6 +153,14 @@ mod tests {
         let r = t.apply(Point2::new(3.0, 4.0));
         assert!((r.x - 6.0).abs() < EPS);
         assert!((r.y - 8.0).abs() < EPS);
+    }
+
+    #[test]
+    fn scale_uniform() {
+        let t = Transform2::scale_uniform(2.0);
+        let r = t.apply(Point2::new(3.0, 4.0));
+        assert!((r.x - 6.0).abs() < 1e-9);
+        assert!((r.y - 8.0).abs() < 1e-9);
     }
 
     #[test]
