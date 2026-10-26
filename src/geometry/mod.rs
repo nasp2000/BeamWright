@@ -11,6 +11,7 @@ pub mod offset;
 pub mod path;
 pub mod point;
 pub mod polygon;
+pub mod spiral;
 pub mod tracing;
 pub mod transform;
 
