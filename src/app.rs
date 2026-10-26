@@ -7,7 +7,7 @@ use crate::document::{Document, serialization};
 use crate::editor::{CanvasState, Selection, Tool};
 use crate::history::UndoStack;
 use crate::messages::MessageCatalog;
-use crate::ui::icons::{Icon, icon_button, icon_label};
+use crate::ui::icons::{Icon, icon_button};
 
 #[derive(Default)]
 pub struct BeamWrightApp {
@@ -39,98 +39,84 @@ impl eframe::App for BeamWrightApp {
         }
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                icon_label(ui, Icon::File, "");
-                ui.menu_button("File", |ui| {
-                    if icon_button(ui, Icon::File, "New").clicked() {
-                        self.document = Document::default();
-                        self.selection.clear();
-                        self.history.clear();
-                        self.status = "New document".to_string();
-                    }
-                    if icon_button(ui, Icon::FolderOpen, "Open").clicked()
-                        && !self.load_path.is_empty()
-                    {
-                        let path = std::path::Path::new(&self.load_path);
-                        let res = if path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .is_some_and(|e| e.eq_ignore_ascii_case("bwp"))
-                        {
-                            serialization::load_from_file(path)
-                        } else {
-                            crate::import::format::import_by_extension(path)
-                        };
-                        match res {
-                            Ok(d) => {
-                                self.document = d;
-                                self.status = format!("Loaded {}", self.load_path);
+                let bar = crate::ui::menus::default_menu_bar();
+                for menu in &bar.menus {
+                    crate::ui::icons::icon_label(ui, menu.icon, "");
+                    ui.menu_button(menu.title, |ui| {
+                        for item in &menu.items {
+                            if !item.enabled {
+                                continue;
                             }
-                            Err(e) => self.status = format!("Load error: {e}"),
+                            let icon = item.action.icon();
+                            let label = item.action.label();
+                            if crate::ui::icons::icon_button(ui, icon, label).clicked() {
+                                match item.action {
+                                    crate::ui::menus::MenuAction::New => {
+                                        self.document = Document::default();
+                                        self.selection.clear();
+                                        self.history.clear();
+                                        self.status = "New document".to_string();
+                                    }
+                                    crate::ui::menus::MenuAction::Undo => {
+                                        self.history.undo();
+                                    }
+                                    crate::ui::menus::MenuAction::Redo => {
+                                        self.history.redo();
+                                    }
+                                    crate::ui::menus::MenuAction::ZoomIn => {
+                                        self.canvas.zoom_in();
+                                    }
+                                    crate::ui::menus::MenuAction::ZoomOut => {
+                                        self.canvas.zoom_out();
+                                    }
+                                    crate::ui::menus::MenuAction::Grid => {
+                                        self.canvas.grid_visible = !self.canvas.grid_visible;
+                                    }
+                                    crate::ui::menus::MenuAction::Open
+                                        if !self.load_path.is_empty() =>
+                                    {
+                                        let path = std::path::Path::new(&self.load_path);
+                                        let res = if path
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .is_some_and(|e| e.eq_ignore_ascii_case("bwp"))
+                                        {
+                                            serialization::load_from_file(path)
+                                        } else {
+                                            crate::import::format::import_by_extension(path)
+                                        };
+                                        match res {
+                                            Ok(d) => {
+                                                self.document = d;
+                                                self.status = format!("Loaded {}", self.load_path);
+                                            }
+                                            Err(e) => self.status = format!("Load error: {e}"),
+                                        }
+                                    }
+                                    crate::ui::menus::MenuAction::Save
+                                        if !self.save_path.is_empty() =>
+                                    {
+                                        match serialization::save_to_file(
+                                            &self.document,
+                                            std::path::Path::new(&self.save_path),
+                                        ) {
+                                            Ok(()) => {
+                                                self.status =
+                                                    format!("Saved to {}", self.save_path);
+                                            }
+                                            Err(e) => self.status = format!("Save error: {e}"),
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
-                    }
-                    if icon_button(ui, Icon::Save, "Save").clicked() && !self.save_path.is_empty() {
-                        match serialization::save_to_file(
-                            &self.document,
-                            std::path::Path::new(&self.save_path),
-                        ) {
-                            Ok(()) => self.status = format!("Saved to {}", self.save_path),
-                            Err(e) => self.status = format!("Save error: {e}"),
-                        }
-                    }
-                });
-                // menu title with icon via label before button? Use icon_label in horizontal
-                icon_label(ui, Icon::Undo, "");
-                ui.menu_button("Edit", |ui| {
-                    if icon_button(ui, Icon::Undo, "Undo").clicked() {
-                        self.history.undo();
-                    }
-                    if icon_button(ui, Icon::Redo, "Redo").clicked() {
-                        self.history.redo();
-                    }
-                    let _ = icon_button(ui, Icon::Cut, "Cut");
-                    let _ = icon_button(ui, Icon::Copy, "Copy");
-                    let _ = icon_button(ui, Icon::Paste, "Paste");
-                    let _ = icon_button(ui, Icon::Delete, "Delete");
-                });
-                icon_label(ui, Icon::Draw, "");
-                ui.menu_button("Draw", |ui| {
-                    for t in [
-                        Tool::Select,
-                        Tool::Line,
-                        Tool::Rect,
-                        Tool::Ellipse,
-                        Tool::Pan,
-                    ] {
-                        if icon_button(ui, icon_for_tool(t), t.label()).clicked() {
-                            self.tool = t;
-                        }
-                    }
-                });
-                icon_label(ui, Icon::Arrange, "");
-                ui.menu_button("Arrange", |_ui| {});
-                icon_label(ui, Icon::Operations, "");
-                ui.menu_button("Operations", |_ui| {});
-                icon_label(ui, Icon::Materials, "");
-                ui.menu_button("Materials", |_ui| {});
-                icon_label(ui, Icon::View, "");
-                ui.menu_button("View", |ui| {
-                    if icon_button(ui, Icon::ZoomIn, "Zoom in").clicked() {
-                        self.canvas.zoom_in();
-                    }
-                    if icon_button(ui, Icon::ZoomOut, "Zoom out").clicked() {
-                        self.canvas.zoom_out();
-                    }
-                    if icon_button(ui, Icon::Grid, "Grid").clicked() {
-                        self.canvas.grid_visible = !self.canvas.grid_visible;
-                    }
-                });
+                    });
+                }
                 ui.label(format!("Tool: {}", self.tool.label()));
                 ui.label(format!("Zoom: {:.2}", self.canvas.zoom));
             });
         });
-
-        // Add icon to menu buttons titles by overriding: draw icons next to text using icon_label in a horizontal before menu_button is not possible easily.
-        // Instead, prepend icon glyph text is removed; icons drawn in items only.
 
         egui::Panel::top("paths").show(ui, |ui| {
             ui.horizontal(|ui| {
