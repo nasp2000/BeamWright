@@ -32,6 +32,31 @@ impl CubicBezier {
     pub fn end(&self) -> Point2 {
         self.p3
     }
+    /// Tangent vector at parameter t.
+    pub fn tangent(&self, t: f64) -> Point2 {
+        let dt = 1e-6;
+        let t0 = (t - dt).clamp(0.0, 1.0);
+        let t1 = (t + dt).clamp(0.0, 1.0);
+        let p0 = self.eval(t0);
+        let p1 = self.eval(t1);
+        Point2::new(p1.x - p0.x, p1.y - p0.y)
+    }
+    /// Curvature (approximate) at parameter t.
+    pub fn curvature(&self, t: f64) -> f64 {
+        let eps = 1e-5;
+        let t0 = (t - eps).clamp(0.0, 1.0);
+        let t1 = (t + eps).clamp(0.0, 1.0);
+        let p0 = self.eval(t0);
+        let p1 = self.eval(t);
+        let p2 = self.eval(t1);
+        let dx1 = p1.x - p0.x;
+        let dy1 = p1.y - p0.y;
+        let dx2 = p2.x - p1.x;
+        let dy2 = p2.y - p1.y;
+        let cross = dx1 * dy2 - dy1 * dx2;
+        let denom = (dx1 * dx1 + dy1 * dy1).powf(1.5);
+        if denom == 0.0 { 0.0 } else { cross / denom }
+    }
     /// Bounding box of the bezier (approximated by control points).
     pub fn bounding_box(&self) -> (Point2, Point2) {
         let xs = [self.p0.x, self.p1.x, self.p2.x, self.p3.x];
@@ -245,6 +270,30 @@ mod tests {
             p3: Point2::new(5.0, 0.0),
         };
         assert!(b.subdivide(0).is_empty());
+    }
+
+    #[test]
+    fn tangent_nonzero() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let tg = b.tangent(0.5);
+        assert!(tg.x != 0.0 || tg.y != 0.0);
+    }
+
+    #[test]
+    fn curvature_finite() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let k = b.curvature(0.5);
+        assert!(k.is_finite());
     }
 
     #[test]
