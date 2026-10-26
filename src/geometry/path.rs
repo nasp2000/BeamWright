@@ -112,6 +112,14 @@ impl Path {
             })
             .sum()
     }
+    /// Alias for `approximate_length`.
+    pub fn length(&self) -> f64 {
+        self.approximate_length()
+    }
+    /// Check if path is closed.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
 }
 
 impl Default for Path {
@@ -175,6 +183,25 @@ mod tests {
     fn bounding_box_empty() {
         let p = Path::new();
         assert!(p.bounding_box().is_none());
+    }
+
+    #[test]
+    fn length_alias() {
+        let mut p = Path::new();
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(3.0, 4.0),
+        });
+        assert!((p.length() - 5.0).abs() < 1e-9);
+        assert!((p.approximate_length() - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn is_closed() {
+        let mut p = Path::new();
+        assert!(!p.is_closed());
+        p.close();
+        assert!(p.is_closed());
     }
 
     #[test]
