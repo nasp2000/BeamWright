@@ -63,6 +63,59 @@ fn normalize(x: f64, y: f64) -> (f64, f64) {
     }
 }
 
+/// Offset a polygon outward by `distance` using edge-normal (miter) method.
+pub fn offset_polygon_miter(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64)> {
+    let n = poly.len();
+    if n < 3 {
+        return poly.to_vec();
+    }
+    // compute offset edges
+    let mut edges: Vec<((f64, f64), (f64, f64))> = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let dx = b.0 - a.0;
+        let dy = b.1 - a.1;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len == 0.0 {
+            edges.push((a, b));
+            continue;
+        }
+        // left normal (outward for CCW)
+        let nx = -dy / len * distance;
+        let ny = dx / len * distance;
+        edges.push(((a.0 + nx, a.1 + ny), (b.0 + nx, b.1 + ny)));
+    }
+    // intersect consecutive offset edges
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let (a1, b1) = edges[(i + n - 1) % n];
+        let (a2, b2) = edges[i];
+        if let Some(p) = intersect_lines(a1, b1, a2, b2) {
+            out.push(p);
+        } else {
+            out.push(poly[i]);
+        }
+    }
+    out
+}
+
+fn intersect_lines(
+    a1: (f64, f64),
+    b1: (f64, f64),
+    a2: (f64, f64),
+    b2: (f64, f64),
+) -> Option<(f64, f64)> {
+    let d1 = (b1.0 - a1.0, b1.1 - a1.1);
+    let d2 = (b2.0 - a2.0, b2.1 - a2.1);
+    let cross = d1.0 * d2.1 - d1.1 * d2.0;
+    if cross.abs() < 1e-12 {
+        return None;
+    }
+    let t = ((a2.0 - a1.0) * d2.1 - (a2.1 - a1.1) * d2.0) / cross;
+    Some((a1.0 + t * d1.0, a1.1 + t * d1.1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +166,35 @@ mod offset_tests {
     fn small_polygon() {
         let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
         let r = offset_polygon(&tri, 0.1);
+        assert_eq!(r.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod miter_tests {
+    use super::offset_polygon_miter;
+
+    #[test]
+    fn square() {
+        let sq = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let r = offset_polygon_miter(&sq, 1.0);
+        assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn zero() {
+        let sq = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let r = offset_polygon_miter(&sq, 0.0);
+        for (a, b) in sq.iter().zip(r.iter()) {
+            assert!((a.0 - b.0).abs() < 1e-9);
+            assert!((a.1 - b.1).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn small() {
+        let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
+        let r = offset_polygon_miter(&tri, 0.1);
         assert_eq!(r.len(), 3);
     }
 }
