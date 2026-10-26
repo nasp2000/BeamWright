@@ -37,6 +37,29 @@ impl Path {
             Segment::Cubic(c) => c.end(),
         })
     }
+    pub fn transform(&self, t: &crate::geometry::transform::Transform2) -> Path {
+        let mut p = Path::new();
+        p.closed = self.closed;
+        for seg in &self.segments {
+            match seg {
+                Segment::Line { from, to } => {
+                    p.push(Segment::Line {
+                        from: t.apply(*from),
+                        to: t.apply(*to),
+                    });
+                }
+                Segment::Cubic(c) => {
+                    p.push(Segment::Cubic(crate::geometry::bezier::CubicBezier {
+                        p0: t.apply(c.p0),
+                        p1: t.apply(c.p1),
+                        p2: t.apply(c.p2),
+                        p3: t.apply(c.p3),
+                    }));
+                }
+            }
+        }
+        p
+    }
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
@@ -95,6 +118,24 @@ mod tests {
         let lp = p.last_point().unwrap();
         assert!((lp.x - 1.0).abs() < 1e-9);
         assert!((lp.y - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn transform_path() {
+        let mut p = Path::new();
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(1.0, 0.0),
+        });
+        let t = crate::geometry::transform::Transform2::translate(5.0, 3.0);
+        let r = p.transform(&t);
+        match &r.segments[0] {
+            Segment::Line { from, to } => {
+                assert!((from.x - 5.0).abs() < 1e-9);
+                assert!((to.x - 6.0).abs() < 1e-9);
+            }
+            Segment::Cubic(_) => panic!("wrong segment"),
+        }
     }
 
     #[test]
