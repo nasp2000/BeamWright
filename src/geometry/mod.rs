@@ -2,6 +2,7 @@ pub mod arc;
 pub mod bezier;
 pub mod boolean;
 pub mod distribution;
+pub mod fill;
 pub mod grid;
 pub mod intersection;
 pub mod nesting;
