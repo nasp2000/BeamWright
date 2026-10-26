@@ -200,3 +200,97 @@ mod simplify_tests {
         assert!(!is_convex(&[(0.0, 0.0), (1.0, 0.0)]));
     }
 }
+
+/// Check if polygon is simple (no self-intersections).
+pub fn is_simple(poly: &[(f64, f64)]) -> bool {
+    let n = poly.len();
+    if n < 3 {
+        return true;
+    }
+    for i in 0..n {
+        let a1 = poly[i];
+        let a2 = poly[(i + 1) % n];
+        for j in (i + 2)..n {
+            if j == n - 1 && i == 0 {
+                continue; // adjacent edge
+            }
+            let b1 = poly[j];
+            let b2 = poly[(j + 1) % n];
+            if segments_intersect(a1, a2, b1, b2) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn segments_intersect(a1: (f64, f64), a2: (f64, f64), b1: (f64, f64), b2: (f64, f64)) -> bool {
+    let d1 = (a2.0 - a1.0, a2.1 - a1.1);
+    let d2 = (b2.0 - b1.0, b2.1 - b1.1);
+    let cross = d1.0 * d2.1 - d1.1 * d2.0;
+    if cross.abs() < 1e-12 {
+        return false;
+    }
+    let t = ((b1.0 - a1.0) * d2.1 - (b1.1 - a1.1) * d2.0) / cross;
+    let u = ((b1.0 - a1.0) * d1.1 - (b1.1 - a1.1) * d1.0) / cross;
+    (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
+}
+
+/// Ensure polygon is counter-clockwise; reverse if needed.
+pub fn ensure_ccw(poly: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut p = poly.to_vec();
+    // compute signed area
+    let n = p.len();
+    if n < 3 {
+        return p;
+    }
+    let mut area = 0.0;
+    for i in 0..n {
+        let (x0, y0) = p[i];
+        let (x1, y1) = p[(i + 1) % n];
+        area += x0 * y1 - x1 * y0;
+    }
+    if area < 0.0 {
+        p.reverse();
+    }
+    p
+}
+
+#[cfg(test)]
+mod simple_tests {
+    use super::*;
+
+    #[test]
+    fn simple_square() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        assert!(is_simple(&sq));
+    }
+
+    #[test]
+    fn self_intersecting() {
+        let bowtie = [(0.0, 0.0), (4.0, 4.0), (4.0, 0.0), (0.0, 4.0)];
+        assert!(!is_simple(&bowtie));
+    }
+
+    #[test]
+    fn ensure_ccw_reverses() {
+        // clockwise square
+        let cw = [(0.0, 0.0), (0.0, 4.0), (4.0, 4.0), (4.0, 0.0)];
+        let r = ensure_ccw(&cw);
+        // area should be positive
+        let mut area = 0.0;
+        for i in 0..r.len() {
+            let (x0, y0) = r[i];
+            let (x1, y1) = r[(i + 1) % r.len()];
+            area += x0 * y1 - x1 * y0;
+        }
+        assert!(area > 0.0);
+    }
+
+    #[test]
+    fn ensure_ccw_keeps() {
+        let ccw = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let r = ensure_ccw(&ccw);
+        assert_eq!(r, ccw.to_vec());
+    }
+}
