@@ -117,7 +117,11 @@ fn intersect_lines(
 }
 
 /// Offset polygon with round joins (inserts arc points at each vertex).
-pub fn offset_polygon_round(poly: &[(f64, f64)], distance: f64, segments: usize) -> Vec<(f64, f64)> {
+pub fn offset_polygon_round(
+    poly: &[(f64, f64)],
+    distance: f64,
+    segments: usize,
+) -> Vec<(f64, f64)> {
     let n = poly.len();
     if n < 3 || segments == 0 {
         return offset_polygon_miter(poly, distance);
@@ -245,7 +249,6 @@ mod miter_tests {
         assert_eq!(r.len(), 3);
     }
 }
-
 
 #[cfg(test)]
 mod round_tests {
