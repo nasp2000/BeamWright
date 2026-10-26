@@ -37,6 +37,29 @@ impl Arc {
         }
         pts
     }
+    /// Approximate arc as a single cubic bezier.
+    pub fn to_cubic_bezier(&self) -> crate::geometry::bezier::CubicBezier {
+        let (s, e) = (self.start_angle, self.end_angle);
+        let (sc, ec) = (s.cos(), e.cos());
+        let (ss, es) = (s.sin(), e.sin());
+        let p0 = (self.cx + self.radius * sc, self.cy + self.radius * ss);
+        let p3 = (self.cx + self.radius * ec, self.cy + self.radius * es);
+        let kappa = (4.0 / 3.0) * ((e - s) / 4.0).tan();
+        let p1 = (
+            p0.0 - kappa * self.radius * ss,
+            p0.1 + kappa * self.radius * sc,
+        );
+        let p2 = (
+            p3.0 + kappa * self.radius * es,
+            p3.1 - kappa * self.radius * ec,
+        );
+        crate::geometry::bezier::CubicBezier {
+            p0: crate::geometry::Point2::new(p0.0, p0.1),
+            p1: crate::geometry::Point2::new(p1.0, p1.1),
+            p2: crate::geometry::Point2::new(p2.0, p2.1),
+            p3: crate::geometry::Point2::new(p3.0, p3.1),
+        }
+    }
 }
 
 pub fn arc_from_points(p0: (f64, f64), p1: (f64, f64), p2: (f64, f64)) -> Option<Arc> {
@@ -210,5 +233,24 @@ mod polyline_tests {
         let last = pts.last().unwrap();
         assert!(last.0.abs() < 1e-9);
         assert!((last.1 - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod bezier_conv_tests {
+    use super::Arc;
+
+    #[test]
+    fn to_cubic_bezier() {
+        let a = Arc {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::FRAC_PI_2,
+        };
+        let b = a.to_cubic_bezier();
+        assert!((b.start().x - 5.0).abs() < 1e-9);
+        assert!((b.end().y - 5.0).abs() < 1e-9);
     }
 }
