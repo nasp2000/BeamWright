@@ -107,6 +107,13 @@ pub fn ellipse_perimeter(a: f64, b: f64) -> f64 {
     std::f64::consts::PI * (a + b) * (1.0 + 3.0 * h / (10.0 + (4.0 - 3.0 * h).sqrt()))
 }
 
+/// Check if a point is inside a circle.
+pub fn circle_contains(cx: f64, cy: f64, r: f64, px: f64, py: f64) -> bool {
+    let dx = px - cx;
+    let dy = py - cy;
+    dx * dx + dy * dy <= r * r
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +259,25 @@ mod bezier_conv_tests {
         let b = a.to_cubic_bezier();
         assert!((b.start().x - 5.0).abs() < 1e-9);
         assert!((b.end().y - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod circle_contains_tests {
+    use super::circle_contains;
+
+    #[test]
+    fn inside() {
+        assert!(circle_contains(0.0, 0.0, 5.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn outside() {
+        assert!(!circle_contains(0.0, 0.0, 5.0, 10.0, 10.0));
+    }
+
+    #[test]
+    fn on_boundary() {
+        assert!(circle_contains(0.0, 0.0, 5.0, 5.0, 0.0));
     }
 }
