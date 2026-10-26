@@ -110,6 +110,11 @@ pub fn line_intersection(
     Some((x1 + t * (x2 - x1), y1 + t * (y2 - y1)))
 }
 
+/// Midpoint of a segment.
+pub fn segment_midpoint(s: &Segment) -> (f64, f64) {
+    (f64::midpoint(s.x1, s.x2), f64::midpoint(s.y1, s.y2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +291,31 @@ mod tests {
     fn line_intersection_same() {
         let p = line_intersection(0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 3.0, 0.0);
         assert!(p.is_none());
+    }
+
+    #[test]
+    fn midpoint() {
+        let s = Segment {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 10.0,
+            y2: 4.0,
+        };
+        let (mx, my) = segment_midpoint(&s);
+        assert!((mx - 5.0).abs() < 1e-9);
+        assert!((my - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn midpoint_degenerate() {
+        let s = Segment {
+            x1: 3.0,
+            y1: 4.0,
+            x2: 3.0,
+            y2: 4.0,
+        };
+        let (mx, my) = segment_midpoint(&s);
+        assert!((mx - 3.0).abs() < 1e-9);
+        assert!((my - 4.0).abs() < 1e-9);
     }
 }
