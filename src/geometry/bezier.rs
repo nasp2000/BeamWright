@@ -32,6 +32,16 @@ impl CubicBezier {
     pub fn end(&self) -> Point2 {
         self.p3
     }
+    /// Bounding box of the bezier (approximated by control points).
+    pub fn bounding_box(&self) -> (Point2, Point2) {
+        let xs = [self.p0.x, self.p1.x, self.p2.x, self.p3.x];
+        let ys = [self.p0.y, self.p1.y, self.p2.y, self.p3.y];
+        let min_x = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_x = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let min_y = ys.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        (Point2::new(min_x, min_y), Point2::new(max_x, max_y))
+    }
     /// Approximate arc length by sampling.
     #[allow(clippy::cast_precision_loss)]
     pub fn approx_length(&self, steps: usize) -> f64 {
@@ -149,6 +159,21 @@ mod tests {
         let l = b.approx_length(20);
         assert!(l > 0.0);
         assert!(l >= b.start().distance(b.end()));
+    }
+
+    #[test]
+    fn bounding_box() {
+        let b = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 4.0),
+            p3: Point2::new(5.0, 0.0),
+        };
+        let (min, max) = b.bounding_box();
+        assert!((min.x - 0.0).abs() < 1e-9);
+        assert!((max.x - 5.0).abs() < 1e-9);
+        assert!((min.y - 0.0).abs() < 1e-9);
+        assert!((max.y - 4.0).abs() < 1e-9);
     }
 
     #[test]
