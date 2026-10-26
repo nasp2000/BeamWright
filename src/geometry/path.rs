@@ -37,6 +37,36 @@ impl Path {
             Segment::Cubic(c) => c.end(),
         })
     }
+    /// Bounding box of the path.
+    pub fn bounding_box(&self) -> Option<(Point2, Point2)> {
+        if self.segments.is_empty() {
+            return None;
+        }
+        let mut min_x = f64::INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        for seg in &self.segments {
+            match seg {
+                Segment::Line { from, to } => {
+                    for p in [from, to] {
+                        min_x = min_x.min(p.x);
+                        min_y = min_y.min(p.y);
+                        max_x = max_x.max(p.x);
+                        max_y = max_y.max(p.y);
+                    }
+                }
+                Segment::Cubic(c) => {
+                    let (mn, mx) = c.bounding_box();
+                    min_x = min_x.min(mn.x);
+                    min_y = min_y.min(mn.y);
+                    max_x = max_x.max(mx.x);
+                    max_y = max_y.max(mx.y);
+                }
+            }
+        }
+        Some((Point2::new(min_x, min_y), Point2::new(max_x, max_y)))
+    }
     pub fn transform(&self, t: &crate::geometry::transform::Transform2) -> Path {
         let mut p = Path::new();
         p.closed = self.closed;
@@ -118,6 +148,24 @@ mod tests {
         let lp = p.last_point().unwrap();
         assert!((lp.x - 1.0).abs() < 1e-9);
         assert!((lp.y - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bounding_box_path() {
+        let mut p = Path::new();
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(10.0, 5.0),
+        });
+        let (mn, mx) = p.bounding_box().unwrap();
+        assert!((mn.x - 0.0).abs() < 1e-9);
+        assert!((mx.x - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bounding_box_empty() {
+        let p = Path::new();
+        assert!(p.bounding_box().is_none());
     }
 
     #[test]
