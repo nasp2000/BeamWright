@@ -294,3 +294,30 @@ mod simple_tests {
         assert_eq!(r, ccw.to_vec());
     }
 }
+
+/// Check if a point is inside a polygon (ray casting, reuses boolean logic).
+pub fn contains_point(poly: &[(f64, f64)], px: f64, py: f64) -> bool {
+    crate::geometry::boolean::point_in_polygon(px, py, poly)
+}
+
+#[cfg(test)]
+mod contains_tests {
+    use super::*;
+
+    #[test]
+    fn inside() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        assert!(contains_point(&sq, 2.0, 2.0));
+    }
+
+    #[test]
+    fn outside() {
+        let sq = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        assert!(!contains_point(&sq, 5.0, 5.0));
+    }
+
+    #[test]
+    fn empty() {
+        assert!(!contains_point(&[], 0.0, 0.0));
+    }
+}
