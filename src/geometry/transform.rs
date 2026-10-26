@@ -83,6 +83,28 @@ impl Transform2 {
             ty: self.b * other.tx + self.d * other.ty + self.ty,
         }
     }
+    pub fn invert(&self) -> Option<Self> {
+        let det = self.a * self.d - self.b * self.c;
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        Some(Self {
+            a: self.d / det,
+            b: -self.b / det,
+            c: -self.c / det,
+            d: self.a / det,
+            tx: (self.c * self.ty - self.d * self.tx) / det,
+            ty: (self.b * self.tx - self.a * self.ty) / det,
+        })
+    }
+    pub fn apply_to_points(&self, pts: &[(f64, f64)]) -> Vec<(f64, f64)> {
+        pts.iter()
+            .map(|(x, y)| {
+                let p = self.apply(Point2::new(*x, *y));
+                (p.x, p.y)
+            })
+            .collect()
+    }
     pub fn apply(&self, p: Point2) -> Point2 {
         Point2 {
             x: self.a * p.x + self.c * p.y + self.tx,
@@ -160,6 +182,35 @@ mod tests {
         let r = t.apply(Point2::new(1.0, 2.0));
         assert!((r.x + 1.0).abs() < 1e-9);
         assert!((r.y - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn invert_identity() {
+        let t = Transform2::identity();
+        let inv = t.invert().unwrap();
+        let r = inv.apply(Point2::new(3.0, 4.0));
+        assert!((r.x - 3.0).abs() < 1e-9);
+        assert!((r.y - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn invert_singular() {
+        let t = Transform2 {
+            a: 0.0,
+            b: 0.0,
+            c: 0.0,
+            d: 0.0,
+            tx: 0.0,
+            ty: 0.0,
+        };
+        assert!(t.invert().is_none());
+    }
+
+    #[test]
+    fn apply_to_points() {
+        let t = Transform2::translate(1.0, 2.0);
+        let r = t.apply_to_points(&[(0.0, 0.0), (1.0, 1.0)]);
+        assert_eq!(r, vec![(1.0, 2.0), (2.0, 3.0)]);
     }
 
     #[test]
