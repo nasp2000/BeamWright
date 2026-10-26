@@ -22,6 +22,15 @@ impl Path {
     pub fn push(&mut self, seg: Segment) {
         self.segments.push(seg);
     }
+    pub fn append(&mut self, other: &Path) {
+        self.segments.extend(other.segments.clone());
+        if other.closed {
+            self.closed = true;
+        }
+    }
+    pub fn pop(&mut self) -> Option<Segment> {
+        self.segments.pop()
+    }
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
@@ -184,6 +193,34 @@ mod tests {
             }
             Segment::Cubic(_) => panic!("wrong segment"),
         }
+    }
+
+    #[test]
+    fn append() {
+        let mut a = Path::new();
+        a.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(1.0, 0.0),
+        });
+        let mut b = Path::new();
+        b.push(Segment::Line {
+            from: Point2::new(1.0, 0.0),
+            to: Point2::new(2.0, 0.0),
+        });
+        a.append(&b);
+        assert_eq!(a.segment_count(), 2);
+    }
+
+    #[test]
+    fn pop() {
+        let mut p = Path::new();
+        p.push(Segment::Line {
+            from: Point2::new(0.0, 0.0),
+            to: Point2::new(1.0, 0.0),
+        });
+        let popped = p.pop();
+        assert!(popped.is_some());
+        assert!(p.is_empty());
     }
 
     #[test]
