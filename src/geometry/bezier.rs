@@ -140,6 +140,7 @@ fn lerp(a: Point2, b: Point2, t: f64) -> Point2 {
 }
 
 #[cfg(test)]
+#[allow(clippy::assert_is_empty)]
 mod tests {
     use super::*;
 

@@ -1,49 +1,42 @@
-use crate::document::Document;
-use crate::errors::Result;
 use std::path::Path;
 
+use crate::document::Document;
+use crate::errors::{BeamError, Result};
+
+/// Format detected from a file extension.
 pub fn detect_format(path: &Path) -> &'static str {
     match path
         .extension()
-        .and_then(|e| e.to_str())
+        .and_then(|extension| extension.to_str())
         .map(str::to_lowercase)
         .as_deref()
     {
         Some("svg") => "svg",
-        Some("dxf") => "dxf",
-        Some("nc" | "gcode") => "gcode",
-        Some("png" | "jpg" | "jpeg" | "bmp" | "tiff") => "raster",
-        Some("hp" | "hpgl" | "plt") => "hpgl",
-        Some("pdf") => "pdf",
+        Some("bwp") => "bwp",
         _ => "unknown",
     }
 }
 
+/// Import a vector file into a new document.
+///
+/// Only SVG is supported for import. Other formats return an explicit error
+/// instead of silently producing an empty document.
 pub fn import_by_extension(path: &Path) -> Result<Document> {
-    let fmt = detect_format(path);
-    match fmt {
+    match detect_format(path) {
         "svg" => {
-            let src = std::fs::read_to_string(path)?;
-            crate::import::svg::import_svg(&src)
+            let source = std::fs::read_to_string(path)?;
+            crate::import::svg::import_svg(&source)
         }
-        "dxf" => {
-            let src = std::fs::read_to_string(path)?;
-            crate::import::dxf::import_dxf(&src)
-        }
-        "gcode" => {
-            let src = std::fs::read_to_string(path)?;
-            crate::import::gcode::import_gcode(&src)
-        }
-        "hpgl" => {
-            let src = std::fs::read_to_string(path)?;
-            crate::import::hpgl::import_hpgl(&src)
-        }
-        "raster" => crate::import::raster::import_raster(path),
-        "pdf" => crate::import::pdf::import_pdf(path),
-        _ => Err(crate::errors::BeamError::InvalidInput(
-            "unsupported format".into(),
-        )),
+        "bwp" => crate::document::serialization::load_from_file(path),
+        other => Err(BeamError::Unsupported(format!(
+            "cannot import '{other}' files; supported formats: .svg, .bwp"
+        ))),
     }
+}
+
+/// Open either a native project or an importable vector file.
+pub fn open_document(path: &Path) -> Result<Document> {
+    import_by_extension(path)
 }
 
 #[cfg(test)]
@@ -57,22 +50,31 @@ mod tests {
     }
 
     #[test]
-    fn detect_dxf() {
-        assert_eq!(detect_format(Path::new("a.DXF")), "dxf");
+    fn detect_bwp_case_insensitive() {
+        assert_eq!(detect_format(Path::new("a.BWP")), "bwp");
     }
 
     #[test]
     fn detect_unknown() {
-        assert_eq!(detect_format(Path::new("a.xyz")), "unknown");
+        assert_eq!(detect_format(Path::new("a.dxf")), "unknown");
     }
 
     #[test]
-    fn import_svg_by_ext() {
-        let dir = temp_dir();
-        let p = dir.join("bw_fmt.svg");
-        std::fs::write(&p, "<svg width=\"10\" height=\"10\"><rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/></svg>").unwrap();
-        let d = import_by_extension(&p).unwrap();
-        assert_eq!(d.objects.len(), 1);
-        let _ = std::fs::remove_file(&p);
+    fn unsupported_format_is_an_error() {
+        let error = import_by_extension(Path::new("a.dxf")).unwrap_err();
+        assert!(matches!(error, BeamError::Unsupported(_)));
+    }
+
+    #[test]
+    fn import_svg_by_extension() {
+        let path = temp_dir().join("beamwright_format_test.svg");
+        std::fs::write(
+            &path,
+            r#"<svg width="10" height="10"><rect x="0" y="0" width="1" height="1"/></svg>"#,
+        )
+        .unwrap();
+        let document = import_by_extension(&path).unwrap();
+        assert_eq!(document.objects.len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

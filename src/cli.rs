@@ -1,5 +1,11 @@
-use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+
+use crate::document::{Document, serialization};
+use crate::errors::Result;
+use crate::export::export_svg;
+use crate::import::format::open_document;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -8,73 +14,67 @@ use std::path::PathBuf;
     about = "Vector drawing and laser job preparation"
 )]
 pub struct Cli {
+    /// Project or SVG file to open in the editor.
+    pub file: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Print document info
+    /// Print document information
     Info { path: PathBuf },
-    /// Import a file and save as .bwp
+    /// Import an SVG and save it as a native .bwp project
     Import { input: PathBuf, output: PathBuf },
-    /// Export G-code from a project
-    ExportGcode { input: PathBuf, output: PathBuf },
+    /// Export a project or SVG as SVG
+    ExportSvg { input: PathBuf, output: PathBuf },
     /// List layers in a project
     ListLayers { path: PathBuf },
-    /// Run MCP server (stdio JSON-RPC)
-    Mcp,
 }
 
-pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        None => Ok(()), // GUI mode handled by caller
+        None => Ok(()),
         Some(Commands::Info { path }) => {
-            let doc = crate::document::serialization::load_from_file(&path)?;
-            println!("Name: {}", doc.name);
-            println!(
-                "Size: {}x{} {}",
-                doc.width_mm,
-                doc.height_mm,
-                doc.unit.label()
-            );
-            println!("Layers: {}", doc.layers.len());
-            println!("Objects: {}", doc.objects.len());
+            let document = open_document(&path)?;
+            print_info(&document);
             Ok(())
         }
         Some(Commands::Import { input, output }) => {
-            let doc = crate::import::format::import_by_extension(&input)?;
-            crate::document::serialization::save_to_file(&doc, &output)?;
+            let document = open_document(&input)?;
+            serialization::save_to_file(&document, &output)?;
             println!("Imported {} -> {}", input.display(), output.display());
             Ok(())
         }
-        Some(Commands::ExportGcode { input, output }) => {
-            let doc = crate::document::serialization::load_from_file(&input)?;
-            // build a simple toolpath per object
-            let mut tps = Vec::new();
-            for _ in &doc.objects {
-                let mut tp = crate::gcode::toolpath::Toolpath::new(1000.0, 50.0, 1);
-                tp.push(crate::gcode::toolpath::MoveKind::Cut, 10.0, 0.0);
-                tps.push(tp);
-            }
-            let w = crate::gcode::writer::GCodeWriter::new(
-                crate::gcode::dialect::GCodeOptions::default(),
-            );
-            let s = w.render(&tps);
-            std::fs::write(&output, s)?;
-            println!("Exported G-code -> {}", output.display());
-            Ok(())
-        }
-        Some(Commands::Mcp) => {
-            crate::mcp::run_mcp_server();
+        Some(Commands::ExportSvg { input, output }) => {
+            let document = open_document(&input)?;
+            let svg = export_svg(&document)?;
+            std::fs::write(&output, svg)?;
+            println!("Exported SVG -> {}", output.display());
             Ok(())
         }
         Some(Commands::ListLayers { path }) => {
-            let doc = crate::document::serialization::load_from_file(&path)?;
-            for l in &doc.layers {
-                println!("{}: {} (visible={})", l.id, l.name, l.visible);
+            let document = open_document(&path)?;
+            for layer in &document.layers {
+                println!(
+                    "{}: {} (visible={}, locked={}, objects={})",
+                    layer.id,
+                    layer.name,
+                    layer.visible,
+                    layer.locked,
+                    document.objects_on_layer(&layer.id).len()
+                );
             }
             Ok(())
         }
     }
+}
+
+fn print_info(document: &Document) {
+    println!("Name: {}", document.name);
+    println!("Size: {} x {} mm", document.width_mm, document.height_mm);
+    println!("Layers: {}", document.layers.len());
+    println!("Objects: {}", document.objects.len());
+    println!("Format version: {}", document.format_version);
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-description = "Vector drawing, image editing and preparation of laser engraving/cutting jobs; exports G-code job files for GRBL-based senders."
+description = "Vector drawing, image editing and preparation of laser engraving/cutting jobs."
 default-run = "BeamWright"
 
 [lib]
@@ -26,6 +26,7 @@ clap = { version = "=4.5.23", features = ["derive"] }
 thiserror = "=1.0.69"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
 kurbo = "=0.13.1"
+quick-xml = "=0.38.4"
 
 [profile.release]
 lto = "thin"

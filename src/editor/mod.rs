@@ -1,15 +1,13 @@
 pub mod alignment;
 pub mod canvas;
 pub mod hit_test;
-pub mod node_editor;
-pub mod search;
+pub mod renderer;
 pub mod selection;
 pub mod snapping;
+pub mod state;
 pub mod tools;
 
-#[allow(unused_imports)]
 pub use canvas::CanvasState;
-#[allow(unused_imports)]
 pub use selection::Selection;
-#[allow(unused_imports)]
+pub use state::EditorState;
 pub use tools::Tool;

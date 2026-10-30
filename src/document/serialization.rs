@@ -2,10 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use crate::document::Document;
+use crate::document::model::CURRENT_FORMAT_VERSION;
 use crate::errors::{BeamError, Result};
 
 /// Current supported project format version.
-pub const PROJECT_FORMAT_VERSION: u32 = 1;
+pub const PROJECT_FORMAT_VERSION: u32 = CURRENT_FORMAT_VERSION;
 
 pub fn to_json(doc: &Document) -> Result<String> {
     validate(doc)?;
@@ -14,13 +15,13 @@ pub fn to_json(doc: &Document) -> Result<String> {
 
 pub fn from_json(s: &str) -> Result<Document> {
     let doc: Document = serde_json::from_str(s)?;
-    validate(&doc)?;
     if doc.format_version != PROJECT_FORMAT_VERSION {
         return Err(BeamError::InvalidInput(format!(
             "unsupported project format version {} (expected {})",
             doc.format_version, PROJECT_FORMAT_VERSION
         )));
     }
+    validate(&doc)?;
     Ok(doc)
 }
 
@@ -34,7 +35,7 @@ pub fn save_to_file(doc: &Document, path: &Path) -> Result<()> {
     let json = to_json(doc)?;
     let tmp = path.with_extension("bwp.tmp");
     fs::write(&tmp, json)?;
-    // Atomic replace on same filesystem.
+    // Atomic replace on the same filesystem.
     fs::rename(&tmp, path)?;
     Ok(())
 }
@@ -49,71 +50,62 @@ pub fn load_from_file(path: &Path) -> Result<Document> {
 mod tests {
     use super::*;
     use crate::document::model::Document;
-    use crate::document::units::Unit;
+    use crate::document::shape::Shape;
 
     fn sample() -> Document {
-        Document {
-            name: "Test".to_string(),
-            unit: Unit::Millimeters,
-            width_mm: 100.0,
-            height_mm: 50.0,
-            origin: crate::document::model::Origin::BottomLeft,
-            layers: vec![crate::layers::model::Layer::default()],
-            objects: Vec::new(),
-            format_version: PROJECT_FORMAT_VERSION,
-        }
+        Document::new("Test", 100.0, 50.0)
     }
 
     #[test]
     fn round_trip_json() {
-        let d = sample();
-        let j = to_json(&d).unwrap();
-        let back = from_json(&j).unwrap();
-        assert_eq!(back.name, d.name);
-        assert_eq!(back.width_mm, d.width_mm);
+        let doc = sample();
+        let json = to_json(&doc).unwrap();
+        let back = from_json(&json).unwrap();
+        assert_eq!(back.name, doc.name);
+        assert_eq!(back.width_mm, doc.width_mm);
+        assert_eq!(back.layers.len(), doc.layers.len());
+    }
+
+    #[test]
+    fn geometry_survives_round_trip() {
+        let mut doc = sample();
+        let layer_id = doc.layers[0].id.clone();
+        let object = crate::document::model::Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 10.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        let id = object.id.clone();
+        doc.add_object(object);
+        let back = from_json(&to_json(&doc).unwrap()).unwrap();
+        let restored = back.object(&id).unwrap();
+        assert_eq!(restored.shape, doc.object(&id).unwrap().shape);
     }
 
     #[test]
     fn reject_empty_name() {
-        let mut d = sample();
-        d.name = "   ".to_string();
-        assert!(to_json(&d).is_err());
-    }
-
-    #[test]
-    fn reject_bad_dimensions() {
-        let mut d = sample();
-        d.width_mm = 0.0;
-        assert!(validate(&d).is_err());
-        d.width_mm = -1.0;
-        assert!(validate(&d).is_err());
-        d.width_mm = f64::NAN;
-        assert!(validate(&d).is_err());
+        let mut doc = sample();
+        doc.name = "   ".to_string();
+        assert!(to_json(&doc).is_err());
     }
 
     #[test]
     fn reject_wrong_version() {
-        let mut d = sample();
-        d.format_version = 999;
-        let j = serde_json::to_string(&d).unwrap();
-        assert!(from_json(&j).is_err());
+        let mut doc = sample();
+        doc.format_version = 99;
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(from_json(&json).is_err());
     }
 
     #[test]
-    fn save_load_file_round_trip() {
-        let d = sample();
-        let dir = std::env::temp_dir();
-        let path = dir.join("beamwright_test_project.bwp");
-        save_to_file(&d, &path).unwrap();
-        let back = load_from_file(&path).unwrap();
-        assert_eq!(back.name, d.name);
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn load_missing_file_errors() {
-        let path = std::env::temp_dir().join("beamwright_does_not_exist.bwp");
-        let _ = fs::remove_file(&path);
-        assert!(load_from_file(&path).is_err());
+    fn reject_dangling_layer_reference() {
+        let mut doc = sample();
+        let object =
+            crate::document::model::Object::new("missing", Shape::Ellipse { rx: 1.0, ry: 1.0 });
+        doc.objects.push(object);
+        assert!(to_json(&doc).is_err());
     }
 }

@@ -1,12 +1,3 @@
-pub mod dialogs;
-pub mod icons;
-pub mod layer_panel;
-pub mod menus;
-pub mod preview_panel;
-pub mod properties;
-pub mod toolbar;
+pub mod file_dialog;
 
-#[allow(unused_imports)]
-pub use layer_panel::LayerPanel;
-#[allow(unused_imports)]
-pub use properties::PropertiesPanel;
+pub use file_dialog::{DialogResult, FileDialog, FileMode};

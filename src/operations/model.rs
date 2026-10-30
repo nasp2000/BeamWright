@@ -12,7 +12,7 @@ pub enum OperationType {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperationParams {
     pub speed: f64,
     pub power: f64,
@@ -31,7 +31,7 @@ impl Default for OperationParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Operation {
     pub id: String,
     pub name: String,

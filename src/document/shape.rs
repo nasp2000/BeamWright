@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::geometry::{CubicBezier, Path, Point2, Transform2, path::Segment};
 use crate::objects::{ImageObject, TextObject};
 
-use super::color::normalize_hex_color;
+use crate::color::normalize_hex_color;
 
 /// Geometric content of an object, in its own local coordinate system.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,7 +17,10 @@ pub enum Shape {
         corner_radius: f64,
     },
     /// Ellipse centred on the local origin.
-    Ellipse { rx: f64, ry: f64 },
+    Ellipse {
+        rx: f64,
+        ry: f64,
+    },
     Text(TextObject),
     Image(ImageObject),
 }
@@ -54,10 +57,9 @@ impl Shape {
     pub fn bounds(&self) -> Option<(Point2, Point2)> {
         match self {
             Shape::Path(p) => p.bounding_box(),
-            Shape::Rect { width, height, .. } => Some((
-                Point2::origin(),
-                Point2::new(width.abs(), height.abs()),
-            )),
+            Shape::Rect { width, height, .. } => {
+                Some((Point2::origin(), Point2::new(width.abs(), height.abs())))
+            }
             Shape::Ellipse { rx, ry } => Some((
                 Point2::new(-rx.abs(), -ry.abs()),
                 Point2::new(rx.abs(), ry.abs()),
@@ -109,8 +111,8 @@ impl Shape {
                 }
                 Ok(())
             }
-            Shape::Text(t) => t.validate().map_err(|e| e.to_string()),
-            Shape::Image(i) => i.validate().map_err(|e| e.to_string()),
+            Shape::Text(t) => t.validate(),
+            Shape::Image(i) => i.validate(),
         }
     }
 
@@ -143,10 +145,30 @@ fn ellipse_path(rx: f64, ry: f64) -> Path {
     let mut path = Path::new();
     path.closed = true;
     let points = [
-        (Point2::new(rx, 0.0), Point2::new(rx, ry * K), Point2::new(rx * K, ry), Point2::new(0.0, ry)),
-        (Point2::new(0.0, ry), Point2::new(-rx * K, ry), Point2::new(-rx, ry * K), Point2::new(-rx, 0.0)),
-        (Point2::new(-rx, 0.0), Point2::new(-rx, -ry * K), Point2::new(-rx * K, -ry), Point2::new(0.0, -ry)),
-        (Point2::new(0.0, -ry), Point2::new(rx * K, -ry), Point2::new(rx, -ry * K), Point2::new(rx, 0.0)),
+        (
+            Point2::new(rx, 0.0),
+            Point2::new(rx, ry * K),
+            Point2::new(rx * K, ry),
+            Point2::new(0.0, ry),
+        ),
+        (
+            Point2::new(0.0, ry),
+            Point2::new(-rx * K, ry),
+            Point2::new(-rx, ry * K),
+            Point2::new(-rx, 0.0),
+        ),
+        (
+            Point2::new(-rx, 0.0),
+            Point2::new(-rx, -ry * K),
+            Point2::new(-rx * K, -ry),
+            Point2::new(0.0, -ry),
+        ),
+        (
+            Point2::new(0.0, -ry),
+            Point2::new(rx * K, -ry),
+            Point2::new(rx, -ry * K),
+            Point2::new(rx, 0.0),
+        ),
     ];
     for (p0, p1, p2, p3) in points {
         path.push(Segment::Cubic(CubicBezier { p0, p1, p2, p3 }));
@@ -154,6 +176,7 @@ fn ellipse_path(rx: f64, ry: f64) -> Path {
     path
 }
 
+#[allow(clippy::items_after_statements)]
 fn rect_path(width: f64, height: f64, corner_radius: f64) -> Path {
     let width = width.abs();
     let height = height.abs();
@@ -179,10 +202,26 @@ fn rect_path(width: f64, height: f64, corner_radius: f64) -> Path {
     // Start at the bottom edge, just after the bottom-left corner.
     let mut current = Point2::new(radius, 0.0);
     let corners = [
-        (Point2::new(width - radius, 0.0), Point2::new(width, 0.0), Point2::new(width, radius)),
-        (Point2::new(width, height - radius), Point2::new(width, height), Point2::new(width - radius, height)),
-        (Point2::new(radius, height), Point2::new(0.0, height), Point2::new(0.0, height - radius)),
-        (Point2::new(0.0, radius), Point2::origin(), Point2::new(radius, 0.0)),
+        (
+            Point2::new(width - radius, 0.0),
+            Point2::new(width, 0.0),
+            Point2::new(width, radius),
+        ),
+        (
+            Point2::new(width, height - radius),
+            Point2::new(width, height),
+            Point2::new(width - radius, height),
+        ),
+        (
+            Point2::new(radius, height),
+            Point2::new(0.0, height),
+            Point2::new(0.0, height - radius),
+        ),
+        (
+            Point2::new(0.0, radius),
+            Point2::origin(),
+            Point2::new(radius, 0.0),
+        ),
     ];
     for (line_end, corner, next) in corners {
         path.push(Segment::Line {

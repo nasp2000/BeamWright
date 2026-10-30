@@ -119,7 +119,11 @@ impl Path {
     }
     /// Flatten the path into a polyline. `tolerance` is in document units and
     /// controls how many samples each cubic segment receives.
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     pub fn flatten(&self, tolerance: f64) -> Vec<Point2> {
         let tolerance = tolerance.max(0.001);
         let mut points = Vec::new();

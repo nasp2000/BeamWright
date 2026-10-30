@@ -29,6 +29,8 @@ pub use path::Path;
 pub use path::Segment as PathSegment;
 #[allow(unused_imports)]
 pub use point::Point2;
+#[allow(unused_imports)]
+pub use transform::Transform2;
 
 #[allow(unused_imports)]
 pub use grid::grid_positions;

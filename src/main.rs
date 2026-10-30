@@ -41,9 +41,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "BeamWright",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::light());
-            Ok(Box::new(BeamWrightApp::default()))
+            Ok(Box::new(BeamWrightApp::new(cli.file)))
         }),
     )
 }
