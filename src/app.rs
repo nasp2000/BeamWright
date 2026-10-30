@@ -539,6 +539,44 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
+                ui.menu_button("Align", |ui| {
+                    use crate::editor::alignment::AlignMode;
+                    let enabled = !self.editor.selection.is_empty();
+                    for (mode, label) in [
+                        (AlignMode::Left, "Align left"),
+                        (AlignMode::CenterH, "Align centre horizontally"),
+                        (AlignMode::Right, "Align right"),
+                        (AlignMode::Top, "Align top"),
+                        (AlignMode::CenterV, "Align centre vertically"),
+                        (AlignMode::Bottom, "Align bottom"),
+                    ] {
+                        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                            self.editor.align_selection(mode);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 3,
+                            egui::Button::new("Distribute horizontally"),
+                        )
+                        .clicked()
+                    {
+                        self.editor.distribute_selection(true);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 3,
+                            egui::Button::new("Distribute vertically"),
+                        )
+                        .clicked()
+                    {
+                        self.editor.distribute_selection(false);
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Profiles", |ui| {
                     if ui.button("Materials and operations...").clicked() {
                         self.profiles_open = true;

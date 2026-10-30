@@ -341,6 +341,110 @@ impl EditorState {
         self.transform_selection(transform)
     }
 
+    /// Align the selection. A single object aligns to the work area; several
+    /// objects align to the selection bounds.
+    pub fn align_selection(&mut self, mode: super::alignment::AlignMode) -> bool {
+        use super::alignment::AlignMode;
+        let ids = self.selection.ids().to_vec();
+        if ids.is_empty() {
+            return false;
+        }
+        let bounds: Vec<(String, Point2, Point2)> = ids
+            .iter()
+            .filter_map(|id| {
+                self.document
+                    .object(id)
+                    .and_then(|object| object.bounds().map(|(min, max)| (id.clone(), min, max)))
+            })
+            .collect();
+        if bounds.is_empty() {
+            return false;
+        }
+        let (target_min, target_max) = if bounds.len() == 1 {
+            (
+                Point2::origin(),
+                Point2::new(self.document.width_mm, self.document.height_mm),
+            )
+        } else {
+            self.selected_bounds()
+                .unwrap_or((Point2::origin(), Point2::origin()))
+        };
+        let delta = |min: Point2, max: Point2| -> (f64, f64) {
+            match mode {
+                AlignMode::Left => (target_min.x - min.x, 0.0),
+                AlignMode::Right => (target_max.x - max.x, 0.0),
+                AlignMode::Top => (0.0, target_max.y - max.y),
+                AlignMode::Bottom => (0.0, target_min.y - min.y),
+                AlignMode::CenterH => (
+                    f64::midpoint(target_min.x, target_max.x) - f64::midpoint(min.x, max.x),
+                    0.0,
+                ),
+                AlignMode::CenterV => (
+                    0.0,
+                    f64::midpoint(target_min.y, target_max.y) - f64::midpoint(min.y, max.y),
+                ),
+            }
+        };
+        self.record();
+        for (id, min, max) in bounds {
+            let (dx, dy) = delta(min, max);
+            if dx.abs() < 1e-9 && dy.abs() < 1e-9 {
+                continue;
+            }
+            if let Some(object) = self.document.object_mut(&id) {
+                object.translate(dx, dy);
+            }
+        }
+        true
+    }
+
+    /// Distribute three or more objects evenly by centre.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn distribute_selection(&mut self, horizontal: bool) -> bool {
+        let ids = self.selection.ids().to_vec();
+        if ids.len() < 3 {
+            return false;
+        }
+        let mut items: Vec<(String, f64)> = ids
+            .iter()
+            .filter_map(|id| {
+                self.document.object(id).and_then(|object| {
+                    object.bounds().map(|(min, max)| {
+                        let center = if horizontal {
+                            f64::midpoint(min.x, max.x)
+                        } else {
+                            f64::midpoint(min.y, max.y)
+                        };
+                        (id.clone(), center)
+                    })
+                })
+            })
+            .collect();
+        if items.len() < 3 {
+            return false;
+        }
+        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let first = items[0].1;
+        let last = items[items.len() - 1].1;
+        let step = (last - first) / (items.len() - 1) as f64;
+        self.record();
+        for (index, (id, center)) in items.iter().enumerate() {
+            let target = first + step * index as f64;
+            let delta = target - center;
+            if delta.abs() < 1e-9 {
+                continue;
+            }
+            if let Some(object) = self.document.object_mut(id) {
+                if horizontal {
+                    object.translate(delta, 0.0);
+                } else {
+                    object.translate(0.0, delta);
+                }
+            }
+        }
+        true
+    }
+
     pub fn delete_selection(&mut self) {
         if self.selection.is_empty() {
             return;
@@ -852,6 +956,66 @@ mod tests {
         let mut editor = editor();
         assert!(!editor.rotate_selection(1.0));
         assert!(!editor.flip_selection(false));
+    }
+
+    #[test]
+    fn align_left_matches_selection_bounds() {
+        use crate::editor::alignment::AlignMode;
+
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.add_rectangle(Point2::new(30.0, 20.0), Point2::new(40.0, 30.0));
+        editor.select_all();
+        assert!(editor.align_selection(AlignMode::Left));
+        for object in &editor.document.objects {
+            let (min, _) = object.bounds().unwrap();
+            assert!((min.x).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn single_object_aligns_to_page() {
+        use crate::editor::alignment::AlignMode;
+
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(30.0, 20.0), Point2::new(40.0, 30.0));
+        assert!(editor.align_selection(AlignMode::Left));
+        let (min, _) = editor.selected_bounds().unwrap();
+        assert!((min.x).abs() < 1e-9);
+        assert!(editor.align_selection(AlignMode::Top));
+        let (_, max) = editor.selected_bounds().unwrap();
+        assert!((max.y - editor.document.height_mm).abs() < 1e-9);
+    }
+
+    #[test]
+    fn distribute_evens_centres() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0));
+        editor.add_rectangle(Point2::new(80.0, 0.0), Point2::new(90.0, 10.0));
+        editor.select_all();
+        assert!(editor.distribute_selection(true));
+        let mut centers: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .map(|object| {
+                let (min, max) = object.bounds().unwrap();
+                f64::midpoint(min.x, max.x)
+            })
+            .collect();
+        centers.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((centers[1] - centers[0] - (centers[2] - centers[1])).abs() < 1e-9);
+    }
+
+    #[test]
+    fn distribute_requires_three_objects() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0));
+        editor.select_all();
+        assert!(!editor.distribute_selection(true));
+        assert!(!editor.distribute_selection(false));
     }
 
     #[test]
