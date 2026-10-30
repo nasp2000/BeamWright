@@ -490,6 +490,53 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
+                ui.menu_button("Arrange", |ui| {
+                    let enabled = !self.editor.selection.is_empty();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Rotate 90° left"))
+                        .clicked()
+                    {
+                        self.editor.rotate_selection(std::f64::consts::FRAC_PI_2);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Rotate 90° right"))
+                        .clicked()
+                    {
+                        self.editor.rotate_selection(-std::f64::consts::FRAC_PI_2);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Flip horizontal"))
+                        .clicked()
+                    {
+                        self.editor.flip_selection(true);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Flip vertical"))
+                        .clicked()
+                    {
+                        self.editor.flip_selection(false);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Scale up 10 %"))
+                        .clicked()
+                    {
+                        self.editor.scale_selection(1.1, 1.1);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Scale down 10 %"))
+                        .clicked()
+                    {
+                        self.editor.scale_selection(1.0 / 1.1, 1.0 / 1.1);
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Profiles", |ui| {
                     if ui.button("Materials and operations...").clicked() {
                         self.profiles_open = true;

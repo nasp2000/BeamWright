@@ -283,6 +283,64 @@ impl EditorState {
         }
     }
 
+    /// Apply a transform around the selection centre.
+    fn transform_selection(&mut self, transform: Transform2) -> bool {
+        if self.selection.is_empty() {
+            return false;
+        }
+        let Some((min, max)) = self.selected_bounds() else {
+            return false;
+        };
+        let center = Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
+        let moved = Transform2::translate(-center.x, -center.y);
+        let back = Transform2::translate(center.x, center.y);
+        let combined = back.compose(&transform.compose(&moved));
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        let mut changed = false;
+        for id in ids {
+            let layer_locked = self
+                .document
+                .object(&id)
+                .and_then(|object| self.document.layer(&object.layer_id))
+                .is_some_and(|layer| layer.locked);
+            if layer_locked {
+                continue;
+            }
+            if let Some(object) = self.document.object_mut(&id) {
+                if object.locked {
+                    continue;
+                }
+                object.transform = combined.compose(&object.transform);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Rotate the selection by `radians` around its centre.
+    pub fn rotate_selection(&mut self, radians: f64) -> bool {
+        self.transform_selection(Transform2::rotate(radians))
+    }
+
+    /// Scale the selection around its centre.
+    pub fn scale_selection(&mut self, sx: f64, sy: f64) -> bool {
+        if sx <= 0.0 || sy <= 0.0 {
+            return false;
+        }
+        self.transform_selection(Transform2::scale(sx, sy))
+    }
+
+    /// Mirror the selection around its centre.
+    pub fn flip_selection(&mut self, horizontal: bool) -> bool {
+        let transform = if horizontal {
+            Transform2::scale(-1.0, 1.0)
+        } else {
+            Transform2::scale(1.0, -1.0)
+        };
+        self.transform_selection(transform)
+    }
+
     pub fn delete_selection(&mut self) {
         if self.selection.is_empty() {
             return;
@@ -743,6 +801,57 @@ mod tests {
         let profile = OperationProfile::new("Cut", crate::operations::OperationType::Line);
         assert_eq!(editor.apply_operation_profile(&profile), 0);
         assert!(editor.document.operations.is_empty());
+    }
+
+    #[test]
+    fn rotate_quarter_turn_swaps_bounds() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(10.0, 10.0), Point2::new(20.0, 15.0));
+        assert!(editor.rotate_selection(std::f64::consts::FRAC_PI_2));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 5.0).abs() < 1e-6);
+        assert!((max.y - min.y - 10.0).abs() < 1e-6);
+        // The centre is preserved.
+        assert!((f64::midpoint(min.x, max.x) - 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scale_doubles_size() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 5.0));
+        assert!(editor.scale_selection(2.0, 2.0));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 20.0).abs() < 1e-6);
+        assert!((max.y - min.y - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn invalid_scale_is_ignored() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 5.0));
+        assert!(!editor.scale_selection(0.0, 1.0));
+        assert!(!editor.scale_selection(-1.0, 1.0));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn flip_keeps_bounds_and_can_be_undone() {
+        let mut editor = editor();
+        editor.add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0));
+        assert!(editor.flip_selection(true));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 10.0).abs() < 1e-6);
+        assert!(editor.undo());
+        let (min, _max) = editor.selected_bounds().unwrap();
+        assert!((min.x).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transforms_require_a_selection() {
+        let mut editor = editor();
+        assert!(!editor.rotate_selection(1.0));
+        assert!(!editor.flip_selection(false));
     }
 
     #[test]
