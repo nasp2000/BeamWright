@@ -12,6 +12,34 @@ pub enum OperationType {
     Custom,
 }
 
+impl OperationType {
+    pub fn label(self) -> &'static str {
+        match self {
+            OperationType::Line => "Line",
+            OperationType::LineEngraving => "Line engraving",
+            OperationType::Fill => "Fill",
+            OperationType::FillWithOutline => "Fill with outline",
+            OperationType::FillWithOffset => "Fill with offset",
+            OperationType::OutlineCutting => "Outline cutting",
+            OperationType::ImageProcessing => "Image processing",
+            OperationType::Custom => "Custom",
+        }
+    }
+
+    pub fn all() -> [OperationType; 8] {
+        [
+            OperationType::Line,
+            OperationType::LineEngraving,
+            OperationType::Fill,
+            OperationType::FillWithOutline,
+            OperationType::FillWithOffset,
+            OperationType::OutlineCutting,
+            OperationType::ImageProcessing,
+            OperationType::Custom,
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperationParams {
     pub speed: f64,
@@ -41,6 +69,16 @@ pub struct Operation {
 }
 
 impl Operation {
+    pub fn new(name: impl Into<String>, op_type: OperationType) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.into(),
+            op_type,
+            params: OperationParams::default(),
+            enabled: true,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("operation name must not be empty".to_string());
@@ -76,6 +114,31 @@ mod tests {
             params: OperationParams::default(),
             enabled: true,
         }
+    }
+
+    #[test]
+    fn operation_type_labels_are_unique() {
+        let labels: Vec<&str> = OperationType::all().iter().map(|t| t.label()).collect();
+        let mut sorted = labels.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len());
+        assert_eq!(OperationType::Fill.label(), "Fill");
+    }
+
+    #[test]
+    fn new_operation_is_valid_and_unique() {
+        let first = Operation::new("Cut", OperationType::OutlineCutting);
+        let second = Operation::new("Cut", OperationType::OutlineCutting);
+        assert!(first.validate().is_ok());
+        assert_ne!(first.id, second.id);
+        assert!(first.enabled);
+    }
+
+    #[test]
+    fn new_operation_uses_default_params() {
+        let operation = Operation::new("Engrave", OperationType::LineEngraving);
+        assert_eq!(operation.params, OperationParams::default());
     }
 
     #[test]

@@ -62,6 +62,7 @@ pub struct BeamWrightApp {
     needs_fit: bool,
     quit_requested: bool,
     job: Option<crate::gcode::JobReport>,
+    active_operation: Option<String>,
 }
 
 impl Default for BeamWrightApp {
@@ -87,6 +88,7 @@ impl BeamWrightApp {
             needs_fit: true,
             quit_requested: false,
             job: None,
+            active_operation: None,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -669,7 +671,168 @@ impl BeamWrightApp {
                         ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
                     }
                 }
+                ui.separator();
+                self.operations_section(ui);
             });
+    }
+
+    fn operations_section(&mut self, ui: &mut Ui) {
+        use crate::operations::OperationType;
+
+        ui.heading("Operations");
+        let before = self.editor.document.clone();
+        let operations: Vec<_> = self
+            .editor
+            .document
+            .operations
+            .iter()
+            .map(|operation| {
+                (
+                    operation.id.clone(),
+                    operation.name.clone(),
+                    operation.op_type,
+                    operation.enabled,
+                )
+            })
+            .collect();
+        ui.horizontal(|ui| {
+            if ui.button("+ Operation").clicked() {
+                let id = self.editor.add_operation(
+                    format!("Operation {}", operations.len() + 1),
+                    OperationType::OutlineCutting,
+                );
+                self.active_operation = Some(id);
+            }
+            let active = self.active_operation.clone().unwrap_or_default();
+            if ui
+                .add_enabled(
+                    operations.iter().any(|(id, ..)| *id == active),
+                    egui::Button::new("- Operation"),
+                )
+                .clicked()
+            {
+                self.editor.remove_operation(&active);
+                self.active_operation = None;
+            }
+        });
+        for (id, name, op_type, enabled) in &operations {
+            ui.horizontal(|ui| {
+                let mut is_enabled = *enabled;
+                if ui.checkbox(&mut is_enabled, "").changed() {
+                    if let Some(operation) = self
+                        .editor
+                        .document
+                        .operations
+                        .iter_mut()
+                        .find(|operation| operation.id == *id)
+                    {
+                        operation.enabled = is_enabled;
+                    }
+                }
+                let selected = self.active_operation.as_deref() == Some(id.as_str());
+                if ui
+                    .selectable_label(selected, format!("{name} ({})", op_type.label()))
+                    .clicked()
+                {
+                    self.active_operation = Some(id.clone());
+                }
+                let used = self
+                    .editor
+                    .document
+                    .objects
+                    .iter()
+                    .filter(|object| object.operation_id.as_deref() == Some(id.as_str()))
+                    .count();
+                ui.weak(format!("({used})"));
+            });
+        }
+        if let Some(active) = self.active_operation.clone() {
+            if let Some(operation) = self
+                .editor
+                .document
+                .operations
+                .iter_mut()
+                .find(|operation| operation.id == active)
+            {
+                ui.label("Name");
+                ui.text_edit_singleline(&mut operation.name);
+                let mut op_type = operation.op_type;
+                egui::ComboBox::from_label("Type")
+                    .selected_text(op_type.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in OperationType::all() {
+                            ui.selectable_value(&mut op_type, candidate, candidate.label());
+                        }
+                    });
+                operation.op_type = op_type;
+                ui.horizontal(|ui| {
+                    ui.label("Speed");
+                    ui.add(
+                        egui::DragValue::new(&mut operation.params.speed)
+                            .speed(10.0)
+                            .range(1.0..=20000.0)
+                            .suffix(" mm/min"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Power");
+                    ui.add(
+                        egui::DragValue::new(&mut operation.params.power)
+                            .speed(1.0)
+                            .range(0.0..=100.0)
+                            .suffix(" %"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Passes");
+                    ui.add(
+                        egui::DragValue::new(&mut operation.params.passes)
+                            .speed(1.0)
+                            .range(1..=100),
+                    );
+                    ui.label("Interval");
+                    ui.add(
+                        egui::DragValue::new(&mut operation.params.line_interval_mm)
+                            .speed(0.01)
+                            .range(0.01..=10.0)
+                            .suffix(" mm"),
+                    );
+                });
+                if matches!(
+                    operation.op_type,
+                    OperationType::Fill
+                        | OperationType::FillWithOutline
+                        | OperationType::FillWithOffset
+                ) {
+                    ui.weak("Fill spacing is the line interval above.");
+                }
+            }
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !self.editor.selection.is_empty(),
+                        egui::Button::new("Assign to selection"),
+                    )
+                    .clicked()
+                {
+                    let changed = self.editor.assign_operation(Some(&active));
+                    self.status = format!("Assigned operation to {changed} object(s)");
+                }
+                if ui
+                    .add_enabled(
+                        !self.editor.selection.is_empty(),
+                        egui::Button::new("Clear assignment"),
+                    )
+                    .clicked()
+                {
+                    let changed = self.editor.assign_operation(None);
+                    self.status = format!("Cleared operation on {changed} object(s)");
+                }
+            });
+        }
+        if self.editor.document != before {
+            self.editor.history.record(&before);
+        }
     }
 
     fn properties_panel(&mut self, ui: &mut Ui) {

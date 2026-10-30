@@ -404,6 +404,85 @@ impl EditorState {
             .layer(layer_id)
             .is_some_and(|layer| layer.locked)
     }
+
+    /// Create an operation and return its id.
+    pub fn add_operation(
+        &mut self,
+        name: impl Into<String>,
+        op_type: crate::operations::OperationType,
+    ) -> String {
+        self.record();
+        let operation = crate::operations::Operation::new(name, op_type);
+        let id = operation.id.clone();
+        self.document.operations.push(operation);
+        id
+    }
+
+    /// Remove an operation and clear every reference to it.
+    pub fn remove_operation(&mut self, id: &str) -> bool {
+        let Some(index) = self
+            .document
+            .operations
+            .iter()
+            .position(|operation| operation.id == id)
+        else {
+            return false;
+        };
+        self.record();
+        self.document.operations.remove(index);
+        for object in &mut self.document.objects {
+            if object.operation_id.as_deref() == Some(id) {
+                object.operation_id = None;
+            }
+        }
+        true
+    }
+
+    /// Assign an operation (or clear the assignment) on the whole selection.
+    pub fn assign_operation(&mut self, operation_id: Option<&str>) -> usize {
+        if self.selection.is_empty() {
+            return 0;
+        }
+        if let Some(id) = operation_id {
+            if self
+                .document
+                .operations
+                .iter()
+                .all(|operation| operation.id != id)
+            {
+                return 0;
+            }
+        }
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        let mut changed = 0;
+        for id in ids {
+            if let Some(object) = self.document.object_mut(&id) {
+                object.operation_id = operation_id.map(str::to_string);
+                changed += 1;
+            }
+        }
+        changed
+    }
+
+    /// The operation shared by the whole selection, when there is exactly one.
+    pub fn selection_operation(&self) -> Option<&str> {
+        let mut ids = self.selection.ids().iter().map(|id| {
+            self.document
+                .object(id)
+                .and_then(|object| object.operation_id.as_deref())
+        });
+        let first = ids.next()??;
+        if ids.all(|id| id == Some(first)) {
+            self.document
+                .operations
+                .iter()
+                .find(|operation| operation.id == first)
+                .map(|operation| operation.id.as_str())
+        } else {
+            None
+        }
+    }
 }
 
 fn point_in_polygon(point: Point2, polygon: &[Point2]) -> bool {
@@ -545,6 +624,66 @@ mod tests {
         assert_eq!(editor.object_at(Point2::new(5.0, 5.0), 0.5), None);
         editor.document.object_mut(&id).unwrap().style.fill = Some("#ff0000".to_string());
         assert_eq!(editor.object_at(Point2::new(5.0, 5.0), 0.5), Some(id));
+    }
+
+    #[test]
+    fn operation_assignment_round_trip() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let id = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let operation = editor.add_operation("Cut", OperationType::OutlineCutting);
+        assert_eq!(editor.assign_operation(Some(&operation)), 1);
+        assert_eq!(
+            editor.document.object(&id).unwrap().operation_id.as_deref(),
+            Some(operation.as_str())
+        );
+        assert_eq!(editor.selection_operation(), Some(operation.as_str()));
+        assert_eq!(editor.assign_operation(None), 1);
+        assert_eq!(editor.selection_operation(), None);
+    }
+
+    #[test]
+    fn assigning_unknown_operation_does_nothing() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        assert_eq!(editor.assign_operation(Some("missing")), 0);
+        assert!(editor.document.objects[0].operation_id.is_none());
+    }
+
+    #[test]
+    fn removing_operation_clears_references() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        let operation = editor.add_operation("Cut", OperationType::OutlineCutting);
+        editor.assign_operation(Some(&operation));
+        assert!(editor.remove_operation(&operation));
+        assert!(editor.document.operations.is_empty());
+        assert!(editor.document.objects[0].operation_id.is_none());
+        assert!(editor.document.validate().is_ok());
+        assert!(!editor.remove_operation("missing"));
+    }
+
+    #[test]
+    fn mixed_selection_has_no_shared_operation() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        let first = editor.document.objects[0].id.clone();
+        let operation = editor.add_operation("Cut", OperationType::OutlineCutting);
+        editor.document.object_mut(&first).unwrap().operation_id = Some(operation.clone());
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        assert_eq!(editor.selection_operation(), None);
     }
 
     #[test]
