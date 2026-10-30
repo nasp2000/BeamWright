@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::Point2;
 
-/// 2D affine transform (matrix + translation). Stub for Phase 2.
-#[derive(Debug, Clone, Copy)]
+/// 2D affine transform (matrix + translation).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Transform2 {
     pub a: f64,
     pub b: f64,
@@ -9,6 +11,12 @@ pub struct Transform2 {
     pub d: f64,
     pub tx: f64,
     pub ty: f64,
+}
+
+impl Default for Transform2 {
+    fn default() -> Self {
+        Self::identity()
+    }
 }
 
 impl Transform2 {
@@ -135,6 +143,11 @@ impl Transform2 {
             x: self.a * p.x + self.c * p.y + self.tx,
             y: self.b * p.x + self.d * p.y + self.ty,
         }
+    }
+    pub fn is_finite(&self) -> bool {
+        [self.a, self.b, self.c, self.d, self.tx, self.ty]
+            .iter()
+            .all(|v| v.is_finite())
     }
 }
 

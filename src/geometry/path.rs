@@ -1,12 +1,14 @@
+use serde::{Deserialize, Serialize};
+
 use super::{Point2, bezier::CubicBezier};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Segment {
     Line { from: Point2, to: Point2 },
     Cubic(CubicBezier),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Path {
     pub segments: Vec<Segment>,
     pub closed: bool,
@@ -114,6 +116,48 @@ impl Path {
             }
         }
         Some((Point2::new(min_x, min_y), Point2::new(max_x, max_y)))
+    }
+    /// Flatten the path into a polyline. `tolerance` is in document units and
+    /// controls how many samples each cubic segment receives.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn flatten(&self, tolerance: f64) -> Vec<Point2> {
+        let tolerance = tolerance.max(0.001);
+        let mut points = Vec::new();
+        for seg in &self.segments {
+            match seg {
+                Segment::Line { from, to } => {
+                    if points.is_empty() {
+                        points.push(*from);
+                    }
+                    points.push(*to);
+                }
+                Segment::Cubic(c) => {
+                    if points.is_empty() {
+                        points.push(c.p0);
+                    }
+                    let steps = ((c.approx_length(16) / tolerance).ceil() as usize).clamp(4, 512);
+                    for i in 1..=steps {
+                        let t = i as f64 / steps as f64;
+                        points.push(c.eval(t));
+                    }
+                }
+            }
+        }
+        if self.closed && points.len() > 1 {
+            let first = points[0];
+            let last = *points.last().unwrap_or(&first);
+            if first.distance(last) > 1e-9 {
+                points.push(first);
+            }
+        }
+        points
+    }
+    /// Start point of the path, if any.
+    pub fn start_point(&self) -> Option<Point2> {
+        self.segments.first().map(|s| match s {
+            Segment::Line { from, .. } => *from,
+            Segment::Cubic(c) => c.p0,
+        })
     }
     pub fn transform(&self, t: &crate::geometry::transform::Transform2) -> Path {
         let mut p = Path::new();

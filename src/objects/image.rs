@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageObject {
     pub path: String,
     pub width_px: u32,
@@ -21,6 +23,15 @@ impl ImageObject {
     }
     pub fn width_mm(&self) -> f64 {
         f64::from(self.width_px) * 25.4 / self.dpi
+    }
+    pub fn height_mm(&self) -> f64 {
+        f64::from(self.height_px) * 25.4 / self.dpi
+    }
+    pub fn bounds(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
+        (
+            crate::geometry::Point2::origin(),
+            crate::geometry::Point2::new(self.width_mm(), self.height_mm()),
+        )
     }
 }
 

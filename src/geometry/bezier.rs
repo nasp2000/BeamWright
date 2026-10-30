@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use super::Point2;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CubicBezier {
     pub p0: Point2,
     pub p1: Point2,
