@@ -63,6 +63,14 @@ pub struct BeamWrightApp {
     quit_requested: bool,
     job: Option<crate::gcode::JobReport>,
     active_operation: Option<String>,
+    profiles: crate::profiles::ProfileLibrary,
+    profiles_path: PathBuf,
+    profiles_open: bool,
+    profile_search: String,
+    selected_material: Option<String>,
+    selected_operation: Option<String>,
+    profile_message: String,
+    profile_io_path: String,
 }
 
 impl Default for BeamWrightApp {
@@ -89,6 +97,17 @@ impl BeamWrightApp {
             quit_requested: false,
             job: None,
             active_operation: None,
+            profiles: crate::profiles::load_or_default(&crate::profiles::default_path())
+                .unwrap_or_else(|_| crate::profiles::ProfileLibrary::with_builtins()),
+            profiles_path: crate::profiles::default_path(),
+            profiles_open: false,
+            profile_search: String::new(),
+            selected_material: None,
+            selected_operation: None,
+            profile_message: String::new(),
+            profile_io_path: crate::profiles::default_path()
+                .to_string_lossy()
+                .to_string(),
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -445,6 +464,12 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.delete_selection();
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Profiles", |ui| {
+                    if ui.button("Materials and operations...").clicked() {
+                        self.profiles_open = true;
                         ui.close();
                     }
                 });
@@ -1399,6 +1424,336 @@ impl BeamWrightApp {
         }
     }
 
+    fn save_profiles(&mut self) {
+        match crate::profiles::save(&self.profiles, &self.profiles_path) {
+            Ok(()) => self.profile_message = "Profiles saved".to_string(),
+            Err(error) => self.profile_message = format!("Cannot save profiles: {error}"),
+        }
+    }
+
+    fn profiles_window(&mut self, ctx: &egui::Context) {
+        use crate::operations::OperationType;
+        use crate::profiles::{MaterialProfile, OperationProfile};
+
+        let mut open = self.profiles_open;
+        let mut changed = false;
+        egui::Window::new("Materials and operations")
+            .open(&mut open)
+            .default_size([560.0, 520.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    "Values are reference starting points, not guarantees. Test on your own material.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Search");
+                    ui.text_edit_singleline(&mut self.profile_search);
+                });
+                let query = self.profile_search.trim().to_lowercase();
+                ui.separator();
+                ui.heading("Materials");
+                let materials: Vec<_> = self
+                    .profiles
+                    .materials
+                    .iter()
+                    .filter(|profile| {
+                        query.is_empty()
+                            || format!("{} {} {}", profile.name, profile.material, profile.notes)
+                                .to_lowercase()
+                                .contains(&query)
+                    })
+                    .map(|profile| {
+                        (
+                            profile.id.clone(),
+                            profile.name.clone(),
+                            profile.builtin,
+                        )
+                    })
+                    .collect();
+                for (id, name, builtin) in &materials {
+                    ui.horizontal(|ui| {
+                        let selected = self.selected_material.as_deref() == Some(id.as_str());
+                        if ui.selectable_label(selected, name).clicked() {
+                            self.selected_material = Some(id.clone());
+                        }
+                        if *builtin {
+                            ui.weak("built-in");
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("+ Material").clicked() {
+                        let profile = self
+                            .profiles
+                            .add_material(MaterialProfile::new("New material", "Material", 3.0));
+                        self.selected_material = Some(profile.id.clone());
+                        changed = true;
+                    }
+                    if ui
+                        .add_enabled(self.selected_material.is_some(), egui::Button::new("Duplicate"))
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_material.clone() {
+                            if let Some(copy) = self.profiles.duplicate_material(&id) {
+                                self.selected_material = Some(copy);
+                            }
+                        }
+                    }
+                    let removable = self
+                        .selected_material
+                        .as_deref()
+                        .and_then(|id| self.profiles.material(id))
+                        .is_some_and(|profile| !profile.builtin);
+                    if ui
+                        .add_enabled(removable, egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_material.clone() {
+                            match self.profiles.remove_material(&id) {
+                                Ok(()) => {
+                                    self.selected_material = None;
+                                    changed = true;
+                                }
+                                Err(error) => self.profile_message = error,
+                            }
+                        }
+                    }
+                });
+                if let Some(id) = self.selected_material.clone() {
+                    if let Some(profile) = self
+                        .profiles
+                        .materials
+                        .iter_mut()
+                        .find(|profile| profile.id == id)
+                    {
+                        let editable = !profile.builtin;
+                        ui.add_enabled_ui(editable, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Name");
+                                changed |= ui.text_edit_singleline(&mut profile.name).changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Material");
+                                changed |=
+                                    ui.text_edit_singleline(&mut profile.material).changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Thickness");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.thickness_mm)
+                                            .speed(0.1)
+                                            .range(0.1..=100.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Notes");
+                                changed |= ui.text_edit_singleline(&mut profile.notes).changed();
+                            });
+                        });
+                        if !editable {
+                            ui.weak("Built-in profile: duplicate it to edit.");
+                        }
+                    }
+                }
+                ui.separator();
+                ui.heading("Operation profiles");
+                let operations: Vec<_> = self
+                    .profiles
+                    .operations
+                    .iter()
+                    .filter(|profile| {
+                        query.is_empty()
+                            || format!("{} {}", profile.name, profile.notes)
+                                .to_lowercase()
+                                .contains(&query)
+                    })
+                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
+                    .collect();
+                for (id, name, builtin) in &operations {
+                    ui.horizontal(|ui| {
+                        let selected = self.selected_operation.as_deref() == Some(id.as_str());
+                        if ui.selectable_label(selected, name).clicked() {
+                            self.selected_operation = Some(id.clone());
+                        }
+                        if *builtin {
+                            ui.weak("built-in");
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("+ Operation profile").clicked() {
+                        let profile = self.profiles.add_operation(OperationProfile::new(
+                            "New operation",
+                            OperationType::OutlineCutting,
+                        ));
+                        self.selected_operation = Some(profile.id.clone());
+                        changed = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.selected_operation.is_some(),
+                            egui::Button::new("Duplicate"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_operation.clone() {
+                            if let Some(copy) = self.profiles.duplicate_operation(&id) {
+                                self.selected_operation = Some(copy);
+                            }
+                        }
+                    }
+                    let removable = self
+                        .selected_operation
+                        .as_deref()
+                        .and_then(|id| self.profiles.operation(id))
+                        .is_some_and(|profile| !profile.builtin);
+                    if ui
+                        .add_enabled(removable, egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_operation.clone() {
+                            match self.profiles.remove_operation(&id) {
+                                Ok(()) => {
+                                    self.selected_operation = None;
+                                    changed = true;
+                                }
+                                Err(error) => self.profile_message = error,
+                            }
+                        }
+                    }
+                });
+                if let Some(id) = self.selected_operation.clone() {
+                    if let Some(profile) = self
+                        .profiles
+                        .operations
+                        .iter_mut()
+                        .find(|profile| profile.id == id)
+                    {
+                        let editable = !profile.builtin;
+                        ui.add_enabled_ui(editable, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Name");
+                                changed |= ui.text_edit_singleline(&mut profile.name).changed();
+                            });
+                            let mut op_type = profile.op_type;
+                            egui::ComboBox::from_label("Type")
+                                .selected_text(op_type.label())
+                                .show_ui(ui, |ui| {
+                                    for candidate in OperationType::all() {
+                                        ui.selectable_value(
+                                            &mut op_type,
+                                            candidate,
+                                            candidate.label(),
+                                        );
+                                    }
+                                });
+                            if op_type != profile.op_type {
+                                profile.op_type = op_type;
+                                changed = true;
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label("Speed");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.params.speed)
+                                            .speed(10.0)
+                                            .range(1.0..=20000.0)
+                                            .suffix(" mm/min"),
+                                    )
+                                    .changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Power");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.params.power)
+                                            .speed(1.0)
+                                            .range(0.0..=100.0)
+                                            .suffix(" %"),
+                                    )
+                                    .changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Passes");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.params.passes)
+                                            .speed(1.0)
+                                            .range(1..=100),
+                                    )
+                                    .changed();
+                                ui.label("Interval");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(
+                                            &mut profile.params.line_interval_mm,
+                                        )
+                                        .speed(0.01)
+                                        .range(0.01..=10.0)
+                                        .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                        });
+                        if !editable {
+                            ui.weak("Built-in profile: duplicate it to edit.");
+                        }
+                        let profile_clone = profile.clone();
+                        if ui
+                            .add_enabled(
+                                !self.editor.selection.is_empty(),
+                                egui::Button::new("Apply to selection"),
+                            )
+                            .clicked()
+                        {
+                            let count = self.editor.apply_operation_profile(&profile_clone);
+                            self.status =
+                                format!("Applied '{}' to {count} object(s)", profile_clone.name);
+                        }
+                    }
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("File");
+                    ui.text_edit_singleline(&mut self.profile_io_path);
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Save profiles").clicked() {
+                        self.save_profiles();
+                    }
+                    if ui.button("Import").clicked() {
+                        let path = std::path::PathBuf::from(self.profile_io_path.trim());
+                        match crate::profiles::import_into(&mut self.profiles, &path) {
+                            Ok(added) => {
+                                self.profile_message = format!("Imported {added} profile(s)");
+                                changed = true;
+                            }
+                            Err(error) => self.profile_message = format!("Import failed: {error}"),
+                        }
+                    }
+                    if ui.button("Export").clicked() {
+                        let path = std::path::PathBuf::from(self.profile_io_path.trim());
+                        match crate::profiles::export(&self.profiles, &path) {
+                            Ok(()) => {
+                                self.profile_message =
+                                    format!("Exported profiles to {}", path.display());
+                            }
+                            Err(error) => self.profile_message = format!("Export failed: {error}"),
+                        }
+                    }
+                });
+                if !self.profile_message.is_empty() {
+                    ui.weak(&self.profile_message);
+                }
+            });
+        self.profiles_open = open;
+        if changed {
+            self.save_profiles();
+        }
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(dialog) = &mut self.dialog {
             let result = dialog.show(ctx);
@@ -1436,6 +1791,9 @@ impl BeamWrightApp {
             } else if cancel {
                 self.confirm = None;
             }
+        }
+        if self.profiles_open {
+            self.profiles_window(ctx);
         }
         if self.about_open {
             let mut open = true;

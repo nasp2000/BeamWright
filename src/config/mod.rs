@@ -1,3 +1,4 @@
+pub mod paths;
 pub mod preferences;
 #[derive(Debug, Clone)]
 pub struct AppConfig {

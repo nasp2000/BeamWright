@@ -465,6 +465,27 @@ impl EditorState {
         changed
     }
 
+    /// Create an operation from a profile and assign it to the selection.
+    pub fn apply_operation_profile(
+        &mut self,
+        profile: &crate::profiles::OperationProfile,
+    ) -> usize {
+        if self.selection.is_empty() {
+            return 0;
+        }
+        self.record();
+        let operation = crate::operations::Operation {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: profile.name.clone(),
+            op_type: profile.op_type,
+            params: profile.params.clone(),
+            enabled: true,
+        };
+        let id = operation.id.clone();
+        self.document.operations.push(operation);
+        self.assign_operation(Some(&id))
+    }
+
     /// The operation shared by the whole selection, when there is exactly one.
     pub fn selection_operation(&self) -> Option<&str> {
         let mut ids = self.selection.ids().iter().map(|id| {
@@ -684,6 +705,44 @@ mod tests {
         editor.selection.add(first);
         editor.selection.add(second);
         assert_eq!(editor.selection_operation(), None);
+    }
+
+    #[test]
+    fn applying_profile_creates_operation_and_assigns_it() {
+        use crate::profiles::OperationProfile;
+
+        let mut editor = editor();
+        let object = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let mut profile =
+            OperationProfile::new("Engrave", crate::operations::OperationType::LineEngraving);
+        profile.params.speed = 2500.0;
+        profile.params.power = 15.0;
+        assert_eq!(editor.apply_operation_profile(&profile), 1);
+        assert_eq!(editor.document.operations.len(), 1);
+        let operation = &editor.document.operations[0];
+        assert_eq!(operation.name, "Engrave");
+        assert_eq!(operation.params.speed, 2500.0);
+        assert_eq!(
+            editor
+                .document
+                .object(&object)
+                .unwrap()
+                .operation_id
+                .as_deref(),
+            Some(operation.id.as_str())
+        );
+    }
+
+    #[test]
+    fn applying_profile_without_selection_does_nothing() {
+        use crate::profiles::OperationProfile;
+
+        let mut editor = editor();
+        let profile = OperationProfile::new("Cut", crate::operations::OperationType::Line);
+        assert_eq!(editor.apply_operation_profile(&profile), 0);
+        assert!(editor.document.operations.is_empty());
     }
 
     #[test]
