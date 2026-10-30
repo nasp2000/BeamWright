@@ -87,6 +87,7 @@ pub fn paint_canvas(
     editor: &EditorState,
     theme: Theme,
     preview: Option<PreviewShape>,
+    toolpaths: Option<&[crate::gcode::Toolpath]>,
 ) {
     painter.rect_filled(rect, 0.0, theme.canvas_background());
     paint_page(painter, rect, editor, theme);
@@ -94,10 +95,45 @@ pub fn paint_canvas(
         paint_grid(painter, rect, editor, theme);
     }
     paint_objects(painter, rect, editor, theme);
+    if let Some(toolpaths) = toolpaths {
+        paint_toolpaths(painter, rect, editor, toolpaths);
+    }
     if let Some(preview) = preview {
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+fn paint_toolpaths(
+    painter: &Painter,
+    rect: Rect,
+    editor: &EditorState,
+    toolpaths: &[crate::gcode::Toolpath],
+) {
+    const PALETTE: [Color32; 6] = [
+        Color32::from_rgb(220, 80, 60),
+        Color32::from_rgb(60, 140, 220),
+        Color32::from_rgb(70, 170, 90),
+        Color32::from_rgb(200, 140, 40),
+        Color32::from_rgb(160, 90, 200),
+        Color32::from_rgb(60, 170, 170),
+    ];
+    for (index, toolpath) in toolpaths.iter().enumerate() {
+        let color = PALETTE[index % PALETTE.len()];
+        let mut previous: Option<Pos2> = None;
+        for movement in &toolpath.moves {
+            let point = screen_pos(rect, editor, Point2::new(movement.x, movement.y));
+            match movement.kind {
+                crate::gcode::MoveKind::Travel => previous = None,
+                crate::gcode::MoveKind::Cut => {
+                    if let Some(previous) = previous {
+                        painter.line_segment([previous, point], Stroke::new(1.2, color));
+                    }
+                    previous = Some(point);
+                }
+            }
+        }
+    }
 }
 
 fn page_screen_rect(rect: Rect, editor: &EditorState) -> Rect {

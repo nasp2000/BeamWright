@@ -71,6 +71,7 @@ pub struct BeamWrightApp {
     profile_message: String,
     profile_io_path: String,
     import_warnings: Vec<String>,
+    preview_toolpaths: bool,
 }
 
 impl Default for BeamWrightApp {
@@ -109,6 +110,7 @@ impl BeamWrightApp {
                 .to_string_lossy()
                 .to_string(),
             import_warnings: Vec::new(),
+            preview_toolpaths: false,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -559,6 +561,7 @@ impl BeamWrightApp {
                     ui.separator();
                     ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
                     ui.checkbox(&mut self.editor.snap_enabled, "Snap to 1 mm");
+                    ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
                     ui.checkbox(&mut self.dark_mode, "Dark mode");
                 });
                 ui.menu_button("Help", |ui| {
@@ -636,6 +639,7 @@ impl BeamWrightApp {
                 ui.separator();
                 ui.checkbox(&mut self.editor.canvas.grid_visible, "Grid");
                 ui.checkbox(&mut self.editor.snap_enabled, "Snap");
+                ui.checkbox(&mut self.preview_toolpaths, "Toolpaths");
                 ui.separator();
                 if ui.button("Open").clicked() {
                     self.request(PendingAction::Open);
@@ -1391,7 +1395,19 @@ impl BeamWrightApp {
                     dark: self.dark_mode,
                 };
                 let painter = ui.painter_at(rect);
-                paint_canvas(&painter, rect, &self.editor, theme, preview);
+                let toolpaths = if self.preview_toolpaths {
+                    Some(crate::gcode::build_toolpaths(&self.editor.document).0)
+                } else {
+                    None
+                };
+                paint_canvas(
+                    &painter,
+                    rect,
+                    &self.editor,
+                    theme,
+                    preview,
+                    toolpaths.as_deref(),
+                );
 
                 if pointer_in_canvas {
                     let cursor = match self.editor.tool {
