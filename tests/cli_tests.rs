@@ -96,3 +96,80 @@ fn cli_info_missing_file_errors() {
     let cli = Cli::try_parse_from(["BeamWright", "info", "/tmp/opencode/nope.bwp"]).unwrap();
     assert!(run(cli).is_err());
 }
+
+#[test]
+fn cli_export_gcode_command() {
+    use beamwright::document::{Document, Object, Shape};
+
+    let project = temp_dir().join("bw_cli_job.bwp");
+    let output = temp_dir().join("bw_cli_job.nc");
+    let mut document = Document::default();
+    let layer_id = document.layers[0].id.clone();
+    document.add_object(Object::new(
+        layer_id,
+        Shape::Rect {
+            width: 10.0,
+            height: 5.0,
+            corner_radius: 0.0,
+        },
+    ));
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let _ = fs::remove_file(&output);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "export-gcode",
+        project.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let text = fs::read_to_string(&output).unwrap();
+    assert!(text.contains("G21"));
+    assert!(text.contains("G1 X"));
+    assert!(text.contains("M5"));
+    let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn cli_export_gcode_out_of_bounds_errors() {
+    use beamwright::document::{Document, Object, Shape};
+
+    let project = temp_dir().join("bw_cli_job_bad.bwp");
+    let output = temp_dir().join("bw_cli_job_bad.nc");
+    let mut document = Document {
+        width_mm: 5.0,
+        height_mm: 5.0,
+        ..Document::default()
+    };
+    let layer_id = document.layers[0].id.clone();
+    document.add_object(Object::new(
+        layer_id,
+        Shape::Rect {
+            width: 10.0,
+            height: 5.0,
+            corner_radius: 0.0,
+        },
+    ));
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "export-gcode",
+        project.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ])
+    .unwrap();
+    assert!(run(cli).is_err());
+    assert!(!output.exists());
+    let _ = fs::remove_file(&project);
+}
+
+#[test]
+fn cli_estimate_command() {
+    let project = temp_dir().join("bw_cli_estimate.bwp");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let cli = Cli::try_parse_from(["BeamWright", "estimate", project.to_str().unwrap()]).unwrap();
+    run(cli).unwrap();
+    let _ = fs::remove_file(&project);
+}

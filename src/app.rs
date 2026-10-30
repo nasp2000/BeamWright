@@ -61,6 +61,7 @@ pub struct BeamWrightApp {
     cursor_doc: Option<Point2>,
     needs_fit: bool,
     quit_requested: bool,
+    job: Option<crate::gcode::JobReport>,
 }
 
 impl Default for BeamWrightApp {
@@ -85,6 +86,7 @@ impl BeamWrightApp {
             cursor_doc: None,
             needs_fit: true,
             quit_requested: false,
+            job: None,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -141,6 +143,7 @@ impl BeamWrightApp {
         let suggested = match mode {
             FileMode::ImportSvg => "drawing.svg".to_string(),
             FileMode::ExportSvg => format!("{stem}.svg"),
+            FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
         };
         self.dialog = Some(FileDialog::new(
@@ -154,6 +157,29 @@ impl BeamWrightApp {
         match mode {
             FileMode::OpenProject | FileMode::ImportSvg => self.open_path(path),
             FileMode::SaveProject => self.save_to(path),
+            FileMode::ExportGcode => {
+                match crate::gcode::export_job(
+                    &self.editor.document,
+                    path,
+                    &crate::gcode::JobOptions::default(),
+                ) {
+                    Ok(report) => {
+                        self.status = format!(
+                            "Exported G-code to {} ({} paths, {} lines, {:.1} s){}",
+                            path.display(),
+                            report.paths,
+                            report.lines,
+                            report.seconds,
+                            if report.warnings.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" — {} warning(s)", report.warnings.len())
+                            }
+                        );
+                    }
+                    Err(error) => self.status = format!("Export failed: {error}"),
+                }
+            }
             FileMode::ExportSvg => match crate::export::export_svg(&self.editor.document) {
                 Ok(svg) => match std::fs::write(path, svg) {
                     Ok(()) => self.status = format!("Exported SVG to {}", path.display()),
@@ -367,6 +393,10 @@ impl BeamWrightApp {
                     }
                     if ui.button("Export SVG...").clicked() {
                         self.open_dialog(FileMode::ExportSvg);
+                        ui.close();
+                    }
+                    if ui.button("Export G-code...").clicked() {
+                        self.open_dialog(FileMode::ExportGcode);
                         ui.close();
                     }
                     ui.separator();
@@ -612,6 +642,33 @@ impl BeamWrightApp {
                     self.editor.document.objects.len(),
                     self.editor.document.layers.len()
                 ));
+                ui.separator();
+                ui.heading("Job");
+                ui.horizontal(|ui| {
+                    if ui.button("Estimate").clicked() {
+                        match crate::gcode::render_job(
+                            &self.editor.document,
+                            &crate::gcode::JobOptions::default(),
+                        ) {
+                            Ok((_, report)) => self.job = Some(report),
+                            Err(error) => {
+                                self.job = None;
+                                self.status = format!("Job error: {error}");
+                            }
+                        }
+                    }
+                    if ui.button("Export G-code...").clicked() {
+                        self.open_dialog(FileMode::ExportGcode);
+                    }
+                });
+                if let Some(report) = &self.job {
+                    ui.label(format!("Paths: {}", report.paths));
+                    ui.label(format!("Lines: {} ({} bytes)", report.lines, report.bytes));
+                    ui.label(format!("Estimated: {:.1} s", report.seconds));
+                    for warning in &report.warnings {
+                        ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
+                    }
+                }
             });
     }
 

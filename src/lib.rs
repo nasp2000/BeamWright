@@ -14,6 +14,7 @@ pub mod document;
 pub mod editor;
 pub mod errors;
 pub mod export;
+pub mod gcode;
 pub mod geometry;
 pub mod history;
 pub mod import;

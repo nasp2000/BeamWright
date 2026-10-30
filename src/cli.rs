@@ -29,6 +29,10 @@ pub enum Commands {
     Import { input: PathBuf, output: PathBuf },
     /// Export a project or SVG as SVG
     ExportSvg { input: PathBuf, output: PathBuf },
+    /// Export a GRBL-compatible G-code job
+    ExportGcode { input: PathBuf, output: PathBuf },
+    /// Print the estimated job duration and G-code size
+    Estimate { path: PathBuf },
     /// List layers in a project
     ListLayers { path: PathBuf },
 }
@@ -52,6 +56,35 @@ pub fn run(cli: Cli) -> Result<()> {
             let svg = export_svg(&document)?;
             std::fs::write(&output, svg)?;
             println!("Exported SVG -> {}", output.display());
+            Ok(())
+        }
+        Some(Commands::ExportGcode { input, output }) => {
+            let document = open_document(&input)?;
+            let report =
+                crate::gcode::export_job(&document, &output, &crate::gcode::JobOptions::default())?;
+            println!(
+                "Exported G-code -> {} ({} paths, {} lines, {:.1} s)",
+                output.display(),
+                report.paths,
+                report.lines,
+                report.seconds
+            );
+            for warning in report.warnings {
+                eprintln!("warning: {warning}");
+            }
+            Ok(())
+        }
+        Some(Commands::Estimate { path }) => {
+            let document = open_document(&path)?;
+            let (text, report) =
+                crate::gcode::render_job(&document, &crate::gcode::JobOptions::default())?;
+            println!("Paths: {}", report.paths);
+            println!("Lines: {}", report.lines);
+            println!("Bytes: {}", text.len());
+            println!("Estimated duration: {:.1} s", report.seconds);
+            for warning in report.warnings {
+                println!("Warning: {warning}");
+            }
             Ok(())
         }
         Some(Commands::ListLayers { path }) => {

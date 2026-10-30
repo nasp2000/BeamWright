@@ -6,6 +6,7 @@ pub enum FileMode {
     SaveProject,
     ImportSvg,
     ExportSvg,
+    ExportGcode,
 }
 
 impl FileMode {
@@ -15,6 +16,7 @@ impl FileMode {
             FileMode::SaveProject => "Save project",
             FileMode::ImportSvg => "Import SVG",
             FileMode::ExportSvg => "Export SVG",
+            FileMode::ExportGcode => "Export G-code",
         }
     }
 
@@ -22,13 +24,14 @@ impl FileMode {
         match self {
             FileMode::OpenProject | FileMode::ImportSvg => "Open",
             FileMode::SaveProject => "Save",
-            FileMode::ExportSvg => "Export",
+            FileMode::ExportSvg | FileMode::ExportGcode => "Export",
         }
     }
 
     fn default_extension(self) -> &'static str {
         match self {
             FileMode::SaveProject => "bwp",
+            FileMode::ExportGcode => "nc",
             FileMode::OpenProject | FileMode::ImportSvg | FileMode::ExportSvg => "svg",
         }
     }
@@ -42,6 +45,7 @@ impl FileMode {
             FileMode::OpenProject => extension == "bwp" || extension == "svg",
             FileMode::SaveProject => extension == "bwp",
             FileMode::ImportSvg | FileMode::ExportSvg => extension == "svg",
+            FileMode::ExportGcode => extension == "nc" || extension == "gcode",
         }
     }
 }
@@ -201,7 +205,10 @@ impl FileDialog {
             path.set_extension(self.mode.default_extension());
         }
         if !self.mode.accepts(&path) {
-            if matches!(self.mode, FileMode::SaveProject | FileMode::ExportSvg) {
+            if matches!(
+                self.mode,
+                FileMode::SaveProject | FileMode::ExportSvg | FileMode::ExportGcode
+            ) {
                 path.set_extension(self.mode.default_extension());
             } else {
                 return Err(format!("Use a .{} file", self.mode.default_extension()));
@@ -213,7 +220,7 @@ impl FileDialog {
                     return Err(format!("File not found: {}", path.display()));
                 }
             }
-            FileMode::SaveProject | FileMode::ExportSvg => {
+            FileMode::SaveProject | FileMode::ExportSvg | FileMode::ExportGcode => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {
                         return Err(format!("Directory not found: {}", parent.display()));
@@ -254,6 +261,24 @@ mod tests {
             path.extension().and_then(|value| value.to_str()),
             Some("bwp")
         );
+    }
+
+    #[test]
+    fn gcode_export_uses_nc_extension() {
+        let mut dialog = FileDialog::new(
+            FileMode::ExportGcode,
+            Some(std::path::Path::new("/tmp/beamwright-job")),
+            "job",
+        );
+        dialog.directory = std::env::temp_dir();
+        dialog.file_name = "beamwright-job".to_string();
+        let path = dialog.resolve().unwrap();
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("nc")
+        );
+        assert!(FileMode::ExportGcode.accepts(std::path::Path::new("a.gcode")));
+        assert!(!FileMode::ExportGcode.accepts(std::path::Path::new("a.svg")));
     }
 
     #[test]
