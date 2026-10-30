@@ -37,6 +37,8 @@ pub enum Commands {
     Estimate { path: PathBuf },
     /// List layers in a project
     ListLayers { path: PathBuf },
+    /// Run the MCP server on stdin/stdout
+    Mcp,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -94,6 +96,11 @@ pub fn run(cli: Cli) -> Result<()> {
             for warning in report.warnings {
                 println!("Warning: {warning}");
             }
+            Ok(())
+        }
+        Some(Commands::Mcp) => {
+            let mut server = crate::mcp::McpServer::new();
+            server.serve_stdio()?;
             Ok(())
         }
         Some(Commands::ListLayers { path }) => {
