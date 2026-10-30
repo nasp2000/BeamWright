@@ -44,12 +44,16 @@ pub fn import_with_report(path: &Path) -> Result<ImportOutcome> {
                 warnings: report.warnings,
             })
         }
+        "raster" => Ok(ImportOutcome {
+            document: crate::import::raster::import_raster(path)?,
+            warnings: Vec::new(),
+        }),
         "bwp" => Ok(ImportOutcome {
             document: crate::document::serialization::load_from_file(path)?,
             warnings: Vec::new(),
         }),
         other => Err(BeamError::Unsupported(format!(
-            "cannot import '{other}' files; supported formats: .svg, .dxf and .bwp"
+            "cannot import '{other}' files; supported formats: .svg, .dxf, raster images and .bwp"
         ))),
     }
 }

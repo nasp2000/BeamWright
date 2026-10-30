@@ -15,7 +15,7 @@ impl FileMode {
         match self {
             FileMode::OpenProject => "Open project or SVG",
             FileMode::SaveProject => "Save project",
-            FileMode::ImportFile => "Import SVG or DXF",
+            FileMode::ImportFile => "Import SVG, DXF or image",
             FileMode::ExportSvg => "Export SVG",
             FileMode::ExportDxf => "Export DXF",
             FileMode::ExportGcode => "Export G-code",
@@ -47,7 +47,12 @@ impl FileMode {
         match self {
             FileMode::OpenProject => extension == "bwp" || extension == "svg",
             FileMode::SaveProject => extension == "bwp",
-            FileMode::ImportFile => extension == "svg" || extension == "dxf",
+            FileMode::ImportFile => {
+                matches!(
+                    extension.as_str(),
+                    "svg" | "dxf" | "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
+                )
+            }
             FileMode::ExportSvg => extension == "svg",
             FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportGcode => extension == "nc" || extension == "gcode",

@@ -503,12 +503,12 @@ fn import_image(
     let scale = transform_scale(&transform);
     let width_mm = width * scale;
     let height_mm = height * scale;
-    let image = ImageObject {
-        path: href,
-        width_px: (width_mm * DPI / 25.4).round().max(1.0) as u32,
-        height_px: (height_mm * DPI / 25.4).round().max(1.0) as u32,
-        dpi: DPI,
-    };
+    let image = ImageObject::new(
+        href,
+        (width_mm * DPI / 25.4).round().max(1.0) as u32,
+        (height_mm * DPI / 25.4).round().max(1.0) as u32,
+        DPI,
+    );
     let world = transform.apply(Point2::new(x, y));
     let object = Object::new(layer_id, Shape::Image(image))
         .with_transform(Transform2::translate(world.x, world.y))

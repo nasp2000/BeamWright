@@ -23,4 +23,5 @@ pub mod mcp;
 pub mod objects;
 pub mod operations;
 pub mod profiles;
+pub mod raster;
 pub mod ui;

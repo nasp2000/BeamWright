@@ -81,6 +81,8 @@ pub fn screen_pos(rect: Rect, editor: &EditorState, point: Point2) -> Pos2 {
     Pos2::new(rect.min.x + x as f32, rect.min.y + y as f32)
 }
 
+pub type ImageTextures = std::collections::HashMap<String, egui::TextureId>;
+
 pub fn paint_canvas(
     painter: &Painter,
     rect: Rect,
@@ -88,13 +90,14 @@ pub fn paint_canvas(
     theme: Theme,
     preview: Option<PreviewShape>,
     toolpaths: Option<&[crate::gcode::Toolpath]>,
+    images: &ImageTextures,
 ) {
     painter.rect_filled(rect, 0.0, theme.canvas_background());
     paint_page(painter, rect, editor, theme);
     if editor.canvas.grid_visible {
         paint_grid(painter, rect, editor, theme);
     }
-    paint_objects(painter, rect, editor, theme);
+    paint_objects(painter, rect, editor, theme, images);
     if let Some(toolpaths) = toolpaths {
         paint_toolpaths(painter, rect, editor, toolpaths);
     }
@@ -195,7 +198,13 @@ fn paint_grid(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme)
     }
 }
 
-fn paint_objects(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
+fn paint_objects(
+    painter: &Painter,
+    rect: Rect,
+    editor: &EditorState,
+    theme: Theme,
+    images: &ImageTextures,
+) {
     let document = &editor.document;
     for layer in &document.layers {
         if !layer.visible {
@@ -207,7 +216,7 @@ fn paint_objects(painter: &Painter, rect: Rect, editor: &EditorState, theme: The
             .iter()
             .filter(|object| object.layer_id == layer.id && object.visible)
         {
-            paint_object(painter, rect, editor, theme, object, layer_color);
+            paint_object(painter, rect, editor, theme, object, layer_color, images);
         }
     }
 }
@@ -219,6 +228,7 @@ fn paint_object(
     theme: Theme,
     object: &Object,
     layer_color: Color32,
+    images: &ImageTextures,
 ) {
     let stroke_color = theme.object_color(object.style.stroke.as_deref(), layer_color);
     let width = (object.style.stroke_width_mm * editor.canvas.zoom) as f32;
@@ -255,6 +265,14 @@ fn paint_object(
             let p0 = screen_pos(rect, editor, Point2::new(min.x, max.y));
             let p1 = screen_pos(rect, editor, Point2::new(max.x, min.y));
             let image_rect = Rect::from_two_pos(p0, p1);
+            if let Some(texture) = images.get(&object.id) {
+                painter.image(
+                    *texture,
+                    image_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
             painter.rect_stroke(
                 image_rect,
                 0.0,

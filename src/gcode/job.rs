@@ -98,7 +98,14 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                 continue;
             };
             match &object.shape {
-                Shape::Text(_) | Shape::Image(_) => warnings.push(format!(
+                Shape::Image(image) => match raster_toolpath(object, image, &resolved) {
+                    Ok(Some(toolpath)) => toolpaths.push(toolpath),
+                    Ok(None) => {}
+                    Err(error) => {
+                        warnings.push(format!("image '{}' was omitted: {error}", object.name));
+                    }
+                },
+                Shape::Text(_) => warnings.push(format!(
                     "{} '{}' has no vector outline and was omitted",
                     object.shape.kind_name(),
                     object.name
@@ -159,6 +166,77 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
         }
     }
     (toolpaths, warnings)
+}
+
+/// Build a raster toolpath for one image object.
+///
+/// Consecutive burned pixels in a row become one cut segment; the image's
+/// top-left pixel maps to the object's local top-left corner.
+fn raster_toolpath(
+    object: &Object,
+    image: &crate::objects::ImageObject,
+    resolved: &Resolved,
+) -> Result<Option<Toolpath>> {
+    let path = std::path::Path::new(&image.path);
+    if !path.is_file() {
+        return Err(BeamError::InvalidInput(format!(
+            "file not found: {}",
+            image.path
+        )));
+    }
+    let bitmap = crate::raster::process_file(path, &image.settings)?;
+    let mut toolpath = Toolpath::new(
+        object.name.clone(),
+        resolved.speed,
+        resolved.power,
+        resolved.passes,
+    );
+    let pixel_mm = 25.4 / image.dpi;
+    for row in 0..bitmap.height {
+        let mut run_start: Option<usize> = None;
+        for column in 0..=bitmap.width {
+            let burned = column < bitmap.width && bitmap.get(column, row);
+            match (burned, run_start) {
+                (true, None) => run_start = Some(column),
+                (false, Some(start)) => {
+                    let local = TransformBake {
+                        transform: object.transform,
+                        pixel_mm,
+                        height_px: bitmap.height,
+                    };
+                    let (x0, y0) = local.point(start, row);
+                    let (x1, y1) = local.point(column, row);
+                    toolpath.push(MoveKind::Travel, x0, y0);
+                    toolpath.push(MoveKind::Cut, x1, y1);
+                    run_start = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    if toolpath.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(toolpath))
+}
+
+struct TransformBake {
+    transform: crate::geometry::Transform2,
+    pixel_mm: f64,
+    height_px: usize,
+}
+
+impl TransformBake {
+    fn point(&self, x: usize, y: usize) -> (f64, f64) {
+        #[allow(clippy::cast_precision_loss)]
+        let local_x = x as f64 * self.pixel_mm;
+        #[allow(clippy::cast_precision_loss)]
+        let local_y = (self.height_px as f64 - y as f64) * self.pixel_mm;
+        let point = self
+            .transform
+            .apply(crate::geometry::Point2::new(local_x, local_y));
+        (point.x, point.y)
+    }
 }
 
 fn append_contour(toolpath: &mut Toolpath, points: &[Point2]) {
@@ -456,6 +534,76 @@ mod tests {
         let (toolpaths, warnings) = build_toolpaths(&document);
         assert_eq!(toolpaths.len(), 0);
         assert_eq!(warnings.len(), 1);
+    }
+
+    fn image_document(path: &std::path::Path) -> Document {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        let image = crate::objects::ImageObject::new(
+            path.to_string_lossy(),
+            4,
+            2,
+            crate::import::raster::DEFAULT_DPI,
+        );
+        document.add_object(Object::new(layer_id, Shape::Image(image)));
+        document.operations.push(Operation {
+            id: "engrave".to_string(),
+            name: "Image".to_string(),
+            op_type: OperationType::ImageProcessing,
+            params: OperationParams {
+                speed: 3000.0,
+                power: 20.0,
+                passes: 1,
+                line_interval_mm: 0.1,
+            },
+            enabled: true,
+        });
+        document.objects[0].operation_id = Some("engrave".to_string());
+        document
+    }
+
+    #[test]
+    fn raster_image_generates_engraving_runs() {
+        let path = std::env::temp_dir().join("beamwright_job_raster.png");
+        let mut image = image::GrayImage::new(4, 2);
+        for (x, _y, pixel) in image.enumerate_pixels_mut() {
+            *pixel = if x < 2 {
+                image::Luma([0])
+            } else {
+                image::Luma([255])
+            };
+        }
+        image.save(&path).unwrap();
+        let document = image_document(&path);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(warnings.len(), 0);
+        assert_eq!(toolpaths.len(), 1);
+        // Two rows, each with one run: travel + cut per row.
+        assert_eq!(toolpaths[0].moves.len(), 4);
+        assert_eq!(toolpaths[0].speed, 3000.0);
+        assert!((toolpaths[0].power - 200.0).abs() < 1e-9);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn missing_image_file_is_reported() {
+        let document = image_document(std::path::Path::new("/tmp/beamwright_no_such.png"));
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("not found"));
+    }
+
+    #[test]
+    fn blank_image_produces_no_toolpath() {
+        let path = std::env::temp_dir().join("beamwright_job_blank.png");
+        let image = image::GrayImage::from_pixel(4, 2, image::Luma([255]));
+        image.save(&path).unwrap();
+        let document = image_document(&path);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 0);
+        assert_eq!(warnings.len(), 0);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

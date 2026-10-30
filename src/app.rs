@@ -72,6 +72,13 @@ pub struct BeamWrightApp {
     profile_io_path: String,
     import_warnings: Vec<String>,
     preview_toolpaths: bool,
+    image_previews: std::collections::HashMap<String, ImagePreview>,
+}
+
+struct ImagePreview {
+    texture: egui::TextureHandle,
+    path: String,
+    settings: crate::objects::ImageSettings,
 }
 
 impl Default for BeamWrightApp {
@@ -111,6 +118,7 @@ impl BeamWrightApp {
                 .to_string(),
             import_warnings: Vec::new(),
             preview_toolpaths: false,
+            image_previews: std::collections::HashMap::new(),
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -1208,6 +1216,7 @@ impl BeamWrightApp {
                     });
             }
             Shape::Image(image) => {
+                use crate::objects::ImageMode;
                 ui.label("Image");
                 ui.label(&image.path);
                 ui.weak(format!(
@@ -1216,6 +1225,36 @@ impl BeamWrightApp {
                     image.height_mm(),
                     image.dpi
                 ));
+                ui.separator();
+                ui.label("Preparation (used by G-code export)");
+                let mut mode = image.settings.mode;
+                egui::ComboBox::from_label("Mode")
+                    .selected_text(mode.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in ImageMode::all() {
+                            ui.selectable_value(&mut mode, candidate, candidate.label());
+                        }
+                    });
+                image.settings.mode = mode;
+                ui.add(egui::Slider::new(&mut image.settings.threshold, 0..=255).text("Threshold"));
+                ui.add(
+                    egui::Slider::new(&mut image.settings.brightness, -100..=100)
+                        .text("Brightness"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut image.settings.contrast, 0.25..=3.0).text("Contrast"),
+                );
+                ui.add(egui::Slider::new(&mut image.settings.gamma, 0.2..=3.0).text("Gamma"));
+                ui.checkbox(&mut image.settings.invert, "Invert");
+                ui.add(
+                    egui::DragValue::new(&mut image.settings.line_interval_mm)
+                        .speed(0.01)
+                        .range(0.01..=2.0)
+                        .suffix(" mm line interval"),
+                );
+                if let Err(error) = image.settings.validate() {
+                    ui.colored_label(Color32::from_rgb(200, 60, 60), error);
+                }
             }
         }
         ui.separator();
@@ -1438,6 +1477,12 @@ impl BeamWrightApp {
                 } else {
                     None
                 };
+                self.refresh_image_previews(&ctx);
+                let textures: crate::editor::renderer::ImageTextures = self
+                    .image_previews
+                    .iter()
+                    .map(|(id, preview)| (id.clone(), preview.texture.id()))
+                    .collect();
                 paint_canvas(
                     &painter,
                     rect,
@@ -1445,6 +1490,7 @@ impl BeamWrightApp {
                     theme,
                     preview,
                     toolpaths.as_deref(),
+                    &textures,
                 );
 
                 if pointer_in_canvas {
@@ -1461,6 +1507,46 @@ impl BeamWrightApp {
                     ctx.request_repaint();
                 }
             });
+    }
+
+    fn refresh_image_previews(&mut self, ctx: &egui::Context) {
+        use crate::document::Shape;
+        use crate::objects::ImageSettings;
+
+        let mut needed: Vec<(String, String, ImageSettings)> = Vec::new();
+        for object in &self.editor.document.objects {
+            if let Shape::Image(image) = &object.shape {
+                needed.push((object.id.clone(), image.path.clone(), image.settings));
+            }
+        }
+        self.image_previews.retain(|id, preview| {
+            needed.iter().any(|(needed_id, path, settings)| {
+                needed_id == id && preview.path == *path && preview.settings == *settings
+            })
+        });
+        for (id, path, settings) in needed {
+            if self.image_previews.contains_key(&id) {
+                continue;
+            }
+            let Ok(bitmap) = crate::raster::process_file(std::path::Path::new(&path), &settings)
+            else {
+                continue;
+            };
+            let color = preview_color_image(&bitmap);
+            let texture = ctx.load_texture(
+                format!("image-preview-{id}"),
+                color,
+                egui::TextureOptions::NEAREST,
+            );
+            self.image_previews.insert(
+                id,
+                ImagePreview {
+                    texture,
+                    path,
+                    settings,
+                },
+            );
+        }
     }
 
     fn doc_point(&self, rect: Rect, pos: Pos2) -> Point2 {
@@ -2036,5 +2122,70 @@ fn sanitize_name(name: &str) -> String {
         "untitled".to_string()
     } else {
         cleaned
+    }
+}
+
+/// Downscale a burn bitmap to a preview texture (white paper, black burn).
+fn preview_color_image(bitmap: &crate::raster::RasterBitmap) -> egui::ColorImage {
+    const MAX_SIDE: usize = 320;
+    let step = ((bitmap.width.max(bitmap.height) as f32) / MAX_SIDE as f32)
+        .ceil()
+        .max(1.0) as usize;
+    let width = (bitmap.width / step).max(1);
+    let height = (bitmap.height / step).max(1);
+    let mut pixels = Vec::with_capacity(width * height * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let burned = bitmap.get(
+                (x * step).min(bitmap.width - 1),
+                (y * step).min(bitmap.height - 1),
+            );
+            let value = if burned { 0 } else { 255 };
+            pixels.extend_from_slice(&[value, value, value, 255]);
+        }
+    }
+    egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_marks_burn_black() {
+        let bitmap = crate::raster::RasterBitmap {
+            width: 2,
+            height: 1,
+            burn: vec![true, false],
+        };
+        let image = preview_color_image(&bitmap);
+        assert_eq!(image.size, [2, 1]);
+        assert_eq!(image.pixels[0], egui::Color32::BLACK);
+        assert_eq!(image.pixels[1], egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn preview_downscales_large_bitmaps() {
+        let bitmap = crate::raster::RasterBitmap {
+            width: 1000,
+            height: 500,
+            burn: vec![false; 500_000],
+        };
+        let image = preview_color_image(&bitmap);
+        assert!(image.size[0] <= 320);
+        assert!(image.size[1] <= 320);
+        assert_eq!(image.size[0], 250);
+    }
+
+    #[test]
+    fn preview_handles_single_pixel() {
+        let bitmap = crate::raster::RasterBitmap {
+            width: 1,
+            height: 1,
+            burn: vec![true],
+        };
+        let image = preview_color_image(&bitmap);
+        assert_eq!(image.size, [1, 1]);
+        assert_eq!(image.pixels[0], egui::Color32::BLACK);
     }
 }
