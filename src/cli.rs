@@ -29,6 +29,8 @@ pub enum Commands {
     Import { input: PathBuf, output: PathBuf },
     /// Export a project or SVG as SVG
     ExportSvg { input: PathBuf, output: PathBuf },
+    /// Export a project or SVG as DXF
+    ExportDxf { input: PathBuf, output: PathBuf },
     /// Export a GRBL-compatible G-code job
     ExportGcode { input: PathBuf, output: PathBuf },
     /// Print the estimated job duration and G-code size
@@ -56,6 +58,13 @@ pub fn run(cli: Cli) -> Result<()> {
             let svg = export_svg(&document)?;
             std::fs::write(&output, svg)?;
             println!("Exported SVG -> {}", output.display());
+            Ok(())
+        }
+        Some(Commands::ExportDxf { input, output }) => {
+            let document = open_document(&input)?;
+            let dxf = crate::export::export_dxf(&document)?;
+            std::fs::write(&output, dxf)?;
+            println!("Exported DXF -> {}", output.display());
             Ok(())
         }
         Some(Commands::ExportGcode { input, output }) => {

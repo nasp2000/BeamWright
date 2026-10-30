@@ -173,3 +173,47 @@ fn cli_estimate_command() {
     run(cli).unwrap();
     let _ = fs::remove_file(&project);
 }
+
+#[test]
+fn cli_export_dxf_command() {
+    let project = temp_dir().join("bw_cli_dxf.bwp");
+    let output = temp_dir().join("bw_cli_dxf.dxf");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let _ = fs::remove_file(&output);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "export-dxf",
+        project.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let text = fs::read_to_string(&output).unwrap();
+    assert!(text.contains("ENTITIES"));
+    let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn cli_import_dxf_command() {
+    let source = temp_dir().join("bw_cli_input.dxf");
+    let output = temp_dir().join("bw_cli_input.bwp");
+    fs::write(
+        &source,
+        "0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n0\nENDSEC\n0\nEOF\n",
+    )
+    .unwrap();
+    let _ = fs::remove_file(&output);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "import",
+        source.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    assert!(output.exists());
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+}

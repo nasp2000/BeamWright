@@ -17,7 +17,6 @@ use crate::document::{Document, Shape, Unit};
 use crate::editor::renderer::{PreviewShape, Theme, format_mm, paint_canvas};
 use crate::editor::{EditorState, Tool};
 use crate::geometry::Point2;
-use crate::import::format::open_document;
 use crate::ui::file_dialog::{DialogResult, FileDialog, FileMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +70,7 @@ pub struct BeamWrightApp {
     selected_operation: Option<String>,
     profile_message: String,
     profile_io_path: String,
+    import_warnings: Vec<String>,
 }
 
 impl Default for BeamWrightApp {
@@ -108,6 +108,7 @@ impl BeamWrightApp {
             profile_io_path: crate::profiles::default_path()
                 .to_string_lossy()
                 .to_string(),
+            import_warnings: Vec::new(),
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -162,7 +163,8 @@ impl BeamWrightApp {
     fn open_dialog(&mut self, mode: FileMode) {
         let stem = sanitize_name(&self.editor.document.name);
         let suggested = match mode {
-            FileMode::ImportSvg => "drawing.svg".to_string(),
+            FileMode::ImportFile => "drawing.svg".to_string(),
+            FileMode::ExportDxf => format!("{stem}.dxf"),
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
@@ -176,8 +178,15 @@ impl BeamWrightApp {
 
     fn handle_file(&mut self, mode: FileMode, path: &Path) {
         match mode {
-            FileMode::OpenProject | FileMode::ImportSvg => self.open_path(path),
+            FileMode::OpenProject | FileMode::ImportFile => self.open_path(path),
             FileMode::SaveProject => self.save_to(path),
+            FileMode::ExportDxf => match crate::export::export_dxf(&self.editor.document) {
+                Ok(dxf) => match std::fs::write(path, dxf) {
+                    Ok(()) => self.status = format!("Exported DXF to {}", path.display()),
+                    Err(error) => self.status = format!("Export failed: {error}"),
+                },
+                Err(error) => self.status = format!("Export failed: {error}"),
+            },
             FileMode::ExportGcode => {
                 match crate::gcode::export_job(
                     &self.editor.document,
@@ -212,8 +221,10 @@ impl BeamWrightApp {
     }
 
     fn open_path(&mut self, path: &Path) {
-        match open_document(path) {
-            Ok(mut document) => {
+        match crate::import::format::import_with_report(path) {
+            Ok(outcome) => {
+                let mut document = outcome.document;
+                self.import_warnings = outcome.warnings;
                 let is_project = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -232,7 +243,15 @@ impl BeamWrightApp {
                 self.saved_snapshot = if is_project { Some(document) } else { None };
                 self.needs_fit = true;
                 self.drag = None;
-                self.status = format!("Opened {}", path.display());
+                self.status = if self.import_warnings.is_empty() {
+                    format!("Opened {}", path.display())
+                } else {
+                    format!(
+                        "Opened {} with {} warning(s)",
+                        path.display(),
+                        self.import_warnings.len()
+                    )
+                };
             }
             Err(error) => self.status = format!("Open failed: {error}"),
         }
@@ -408,12 +427,16 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Import SVG...").clicked() {
-                        self.open_dialog(FileMode::ImportSvg);
+                    if ui.button("Import SVG or DXF...").clicked() {
+                        self.open_dialog(FileMode::ImportFile);
                         ui.close();
                     }
                     if ui.button("Export SVG...").clicked() {
                         self.open_dialog(FileMode::ExportSvg);
+                        ui.close();
+                    }
+                    if ui.button("Export DXF...").clicked() {
+                        self.open_dialog(FileMode::ExportDxf);
                         ui.close();
                     }
                     if ui.button("Export G-code...").clicked() {
@@ -694,6 +717,16 @@ impl BeamWrightApp {
                     ui.label(format!("Estimated: {:.1} s", report.seconds));
                     for warning in &report.warnings {
                         ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
+                    }
+                }
+                if !self.import_warnings.is_empty() {
+                    ui.separator();
+                    ui.heading("Import warnings");
+                    for warning in &self.import_warnings {
+                        ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
+                    }
+                    if ui.button("Dismiss").clicked() {
+                        self.import_warnings.clear();
                     }
                 }
                 ui.separator();

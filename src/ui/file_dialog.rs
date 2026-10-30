@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 pub enum FileMode {
     OpenProject,
     SaveProject,
-    ImportSvg,
+    ImportFile,
     ExportSvg,
+    ExportDxf,
     ExportGcode,
 }
 
@@ -14,17 +15,18 @@ impl FileMode {
         match self {
             FileMode::OpenProject => "Open project or SVG",
             FileMode::SaveProject => "Save project",
-            FileMode::ImportSvg => "Import SVG",
+            FileMode::ImportFile => "Import SVG or DXF",
             FileMode::ExportSvg => "Export SVG",
+            FileMode::ExportDxf => "Export DXF",
             FileMode::ExportGcode => "Export G-code",
         }
     }
 
     fn action_label(self) -> &'static str {
         match self {
-            FileMode::OpenProject | FileMode::ImportSvg => "Open",
+            FileMode::OpenProject | FileMode::ImportFile => "Open",
             FileMode::SaveProject => "Save",
-            FileMode::ExportSvg | FileMode::ExportGcode => "Export",
+            FileMode::ExportSvg | FileMode::ExportDxf | FileMode::ExportGcode => "Export",
         }
     }
 
@@ -32,7 +34,8 @@ impl FileMode {
         match self {
             FileMode::SaveProject => "bwp",
             FileMode::ExportGcode => "nc",
-            FileMode::OpenProject | FileMode::ImportSvg | FileMode::ExportSvg => "svg",
+            FileMode::ExportDxf => "dxf",
+            FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
         }
     }
 
@@ -44,7 +47,9 @@ impl FileMode {
         match self {
             FileMode::OpenProject => extension == "bwp" || extension == "svg",
             FileMode::SaveProject => extension == "bwp",
-            FileMode::ImportSvg | FileMode::ExportSvg => extension == "svg",
+            FileMode::ImportFile => extension == "svg" || extension == "dxf",
+            FileMode::ExportSvg => extension == "svg",
+            FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportGcode => extension == "nc" || extension == "gcode",
         }
     }
@@ -207,7 +212,10 @@ impl FileDialog {
         if !self.mode.accepts(&path) {
             if matches!(
                 self.mode,
-                FileMode::SaveProject | FileMode::ExportSvg | FileMode::ExportGcode
+                FileMode::SaveProject
+                    | FileMode::ExportSvg
+                    | FileMode::ExportDxf
+                    | FileMode::ExportGcode
             ) {
                 path.set_extension(self.mode.default_extension());
             } else {
@@ -215,12 +223,15 @@ impl FileDialog {
             }
         }
         match self.mode {
-            FileMode::OpenProject | FileMode::ImportSvg => {
+            FileMode::OpenProject | FileMode::ImportFile => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
                 }
             }
-            FileMode::SaveProject | FileMode::ExportSvg | FileMode::ExportGcode => {
+            FileMode::SaveProject
+            | FileMode::ExportSvg
+            | FileMode::ExportDxf
+            | FileMode::ExportGcode => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {
                         return Err(format!("Directory not found: {}", parent.display()));
@@ -284,7 +295,7 @@ mod tests {
     #[test]
     fn import_rejects_missing_file() {
         let mut dialog = FileDialog::new(
-            FileMode::ImportSvg,
+            FileMode::ImportFile,
             Some(std::path::Path::new("/tmp")),
             "missing.svg",
         );
