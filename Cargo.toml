@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-description = "Vector drawing, image editing and preparation of laser engraving/cutting jobs."
+description = "Vector drawing and preparation of laser engraving/cutting jobs."
 default-run = "BeamWright"
 
 [lib]

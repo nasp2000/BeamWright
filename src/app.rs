@@ -200,6 +200,13 @@ impl BeamWrightApp {
     }
 
     fn save_to(&mut self, path: &Path) {
+        if self.editor.document.name.trim().is_empty()
+            || self.editor.document.name.eq_ignore_ascii_case("untitled")
+        {
+            if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+                self.editor.document.name = stem.to_string();
+            }
+        }
         match self.editor.save(path) {
             Ok(()) => {
                 self.current_path = Some(path.to_path_buf());
@@ -224,7 +231,7 @@ impl BeamWrightApp {
 
     fn shortcuts(&mut self, ui: &Ui) {
         let ctx = ui.ctx();
-        if ctx.text_edit_focused() {
+        if ctx.text_edit_focused() || self.dialog.is_some() || self.confirm.is_some() {
             return;
         }
         let (
@@ -950,9 +957,15 @@ impl BeamWrightApp {
                     self.needs_fit = false;
                 }
                 let ctx = ui.ctx().clone();
-                let pointer = ctx.input(|input| input.pointer.interact_pos());
-                let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
-                let primary_released = ctx.input(|input| input.pointer.primary_released());
+                let modal = self.dialog.is_some() || self.confirm.is_some() || self.about_open;
+                let pointer = if modal {
+                    None
+                } else {
+                    ctx.input(|input| input.pointer.interact_pos())
+                };
+                let primary_pressed = !modal && ctx.input(|input| input.pointer.primary_pressed());
+                let primary_released =
+                    !modal && ctx.input(|input| input.pointer.primary_released());
                 let shift = ctx.input(|input| input.modifiers.shift);
 
                 if let Some(pos) = pointer {
@@ -994,11 +1007,18 @@ impl BeamWrightApp {
                         match self.editor.tool {
                             Tool::Select => self.begin_select(point, shift),
                             Tool::Rect | Tool::Ellipse | Tool::Line => {
-                                self.drag = Some(DragState::Draw {
-                                    tool: self.editor.tool,
-                                    start: point,
-                                    end: point,
-                                });
+                                if self.editor.layer_locked(&self.editor.active_layer_id)
+                                    || !self.editor.layer_visible(&self.editor.active_layer_id)
+                                {
+                                    self.status =
+                                        "Cannot draw on a hidden or locked layer".to_string();
+                                } else {
+                                    self.drag = Some(DragState::Draw {
+                                        tool: self.editor.tool,
+                                        start: point,
+                                        end: point,
+                                    });
+                                }
                             }
                             Tool::Pan => {
                                 self.drag = Some(DragState::Pan {
@@ -1217,6 +1237,14 @@ impl BeamWrightApp {
 
 impl eframe::App for BeamWrightApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        if ctx.input(|input| input.viewport().close_requested())
+            && self.is_dirty()
+            && !self.quit_requested
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(PendingAction::Quit);
+        }
         ui.ctx().set_visuals(if self.dark_mode {
             egui::Visuals::dark()
         } else {

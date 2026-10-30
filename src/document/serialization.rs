@@ -35,9 +35,22 @@ pub fn save_to_file(doc: &Document, path: &Path) -> Result<()> {
     let json = to_json(doc)?;
     let tmp = path.with_extension("bwp.tmp");
     fs::write(&tmp, json)?;
-    // Atomic replace on the same filesystem.
-    fs::rename(&tmp, path)?;
-    Ok(())
+    // Replace atomically on the same filesystem. On Windows `rename` refuses to
+    // overwrite, so fall back to remove-then-rename and clean up on failure.
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) if path.exists() => {
+            fs::remove_file(path)?;
+            fs::rename(&tmp, path).inspect_err(|_| {
+                let _ = fs::remove_file(&tmp);
+            })?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&tmp);
+            Err(error.into())
+        }
+    }
 }
 
 /// Load a document from `path`.

@@ -123,6 +123,10 @@ impl EditorState {
         if self.active_layer_id.is_empty() {
             self.active_layer_id = self.document.layers.first()?.id.clone();
         }
+        let layer = self.document.layer(&self.active_layer_id)?;
+        if layer.locked || !layer.visible {
+            return None;
+        }
         self.record();
         let object = Object::new(self.active_layer_id.clone(), shape).with_transform(transform);
         let id = object.id.clone();
