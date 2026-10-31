@@ -993,7 +993,7 @@ impl BeamWrightApp {
                 builder = builder.add_filter(
                     "Drawing or image",
                     &["svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"],
-                )
+                );
             }
             FileMode::RelinkImage => {
                 builder =
@@ -1008,7 +1008,7 @@ impl BeamWrightApp {
                     &[
                         "nc", "gcode", "gco", "gc", "ngc", "tap", "cnc", "mpf", "txt",
                     ],
-                )
+                );
             }
             FileMode::ExportProfiles
             | FileMode::ExportMachines
