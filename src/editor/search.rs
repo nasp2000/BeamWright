@@ -5,6 +5,8 @@ pub enum SearchKind {
     Object,
     Layer,
     Operation,
+    /// A material, operation, image or project profile.
+    Profile,
 }
 
 /// One hit from a document-wide search.
@@ -13,6 +15,52 @@ pub struct SearchHit {
     pub kind: SearchKind,
     pub id: String,
     pub label: String,
+}
+
+/// Search the profile library by name, category and tags.
+pub fn search_profiles(library: &crate::profiles::ProfileLibrary, query: &str) -> Vec<SearchHit> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    let mut push = |kind: &str, id: &str, name: &str, meta: &crate::profiles::ProfileMeta| {
+        let text = format!("{} {} {}", kind, name, meta.category).to_lowercase();
+        if text.contains(&query)
+            || meta
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(&query))
+        {
+            hits.push(SearchHit {
+                kind: SearchKind::Profile,
+                id: id.to_string(),
+                label: if meta.category.is_empty() {
+                    format!("{kind}: {name}")
+                } else {
+                    format!("{kind}: {name} ({})", meta.category)
+                },
+            });
+        }
+    };
+    for profile in &library.materials {
+        push("Material", &profile.id, &profile.name, &profile.meta);
+    }
+    for profile in &library.operations {
+        push(
+            "Operation profile",
+            &profile.id,
+            &profile.name,
+            &profile.meta,
+        );
+    }
+    for profile in &library.images {
+        push("Image profile", &profile.id, &profile.name, &profile.meta);
+    }
+    for profile in &library.projects {
+        push("Project profile", &profile.id, &profile.name, &profile.meta);
+    }
+    hits
 }
 
 /// Search objects, layers and operations by name and identifier.
@@ -101,6 +149,26 @@ mod document_tests {
         let doc = document();
         assert_eq!(search_document(&doc, "  ").len(), 0);
         assert_eq!(search_document(&doc, "zzz").len(), 0);
+    }
+
+    #[test]
+    fn profiles_are_searchable_by_name_category_and_tag() {
+        use crate::profiles::{MaterialProfile, ProfileLibrary};
+
+        let mut library = ProfileLibrary::with_builtins();
+        let mut profile = MaterialProfile::new("Birch board", "Birch", 4.0);
+        profile.meta.category = "Signage".to_string();
+        profile.meta.tags = vec!["outdoor".to_string()];
+        library.add_material(profile);
+        for query in ["birch board", "signage", "outdoor"] {
+            let hits = super::search_profiles(&library, query);
+            assert!(!hits.is_empty(), "{query}");
+            assert_eq!(hits[0].kind, SearchKind::Profile);
+        }
+        assert_eq!(super::search_profiles(&library, "zzz").len(), 0);
+        assert_eq!(super::search_profiles(&library, "  ").len(), 0);
+        // Built-ins are searchable too.
+        assert_ne!(super::search_profiles(&library, "plywood").len(), 0);
     }
 
     #[test]

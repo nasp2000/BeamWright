@@ -131,6 +131,8 @@ pub struct BeamWrightApp {
     preview_snapshot: Option<Document>,
     preview_line_numbers: bool,
     preview_order: bool,
+    show_layers_panel: bool,
+    show_properties_panel: bool,
 }
 
 /// Scale around a point, for direct property edits.
@@ -376,6 +378,8 @@ impl BeamWrightApp {
             preview_snapshot: None,
             preview_line_numbers: false,
             preview_order: false,
+            show_layers_panel: true,
+            show_properties_panel: true,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -636,6 +640,15 @@ impl BeamWrightApp {
             right,
             up,
             down,
+            tool_select,
+            tool_line,
+            tool_rect,
+            tool_ellipse,
+            tool_star,
+            tool_text,
+            preview,
+            toggle_layers,
+            toggle_properties,
         ) = ctx.input_mut(|input| {
             (
                 input.consume_key(Modifiers::CTRL, Key::N),
@@ -663,6 +676,15 @@ impl BeamWrightApp {
                 input.consume_key(Modifiers::NONE, Key::ArrowRight),
                 input.consume_key(Modifiers::NONE, Key::ArrowUp),
                 input.consume_key(Modifiers::NONE, Key::ArrowDown),
+                input.consume_key(Modifiers::NONE, Key::V),
+                input.consume_key(Modifiers::NONE, Key::L),
+                input.consume_key(Modifiers::NONE, Key::R),
+                input.consume_key(Modifiers::NONE, Key::E),
+                input.consume_key(Modifiers::NONE, Key::S),
+                input.consume_key(Modifiers::NONE, Key::T),
+                input.consume_key(Modifiers::CTRL, Key::P),
+                input.consume_key(Modifiers::NONE, Key::F9),
+                input.consume_key(Modifiers::NONE, Key::F10),
             )
         });
         if new_doc {
@@ -724,6 +746,33 @@ impl BeamWrightApp {
                 self.editor.end_node_edit();
             }
             self.editor.selection.clear();
+        }
+        if tool_select {
+            self.editor.tool = Tool::Select;
+        }
+        if tool_line {
+            self.editor.tool = Tool::Line;
+        }
+        if tool_rect {
+            self.editor.tool = Tool::Rect;
+        }
+        if tool_ellipse {
+            self.editor.tool = Tool::Ellipse;
+        }
+        if tool_star {
+            self.editor.tool = Tool::Star;
+        }
+        if tool_text {
+            self.editor.tool = Tool::Text;
+        }
+        if preview {
+            self.open_preview();
+        }
+        if toggle_layers {
+            self.show_layers_panel = !self.show_layers_panel;
+        }
+        if toggle_properties {
+            self.show_properties_panel = !self.show_properties_panel;
         }
         if fit {
             self.needs_fit = true;
@@ -1213,6 +1262,8 @@ impl BeamWrightApp {
                         );
                     });
                     ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
+                    ui.checkbox(&mut self.show_layers_panel, "Layers panel (F9)");
+                    ui.checkbox(&mut self.show_properties_panel, "Properties panel (F10)");
                     if ui.button("Preview and G-code...").clicked() {
                         self.open_preview();
                         ui.close();
@@ -1343,10 +1394,14 @@ impl BeamWrightApp {
             .show(ui, |ui| {
                 ui.heading("Search");
                 ui.text_edit_singleline(&mut self.search_query);
-                let hits = crate::editor::search::search_document(
+                let mut hits = crate::editor::search::search_document(
                     &self.editor.document,
                     &self.search_query,
                 );
+                hits.extend(crate::editor::search::search_profiles(
+                    &self.profiles,
+                    &self.search_query,
+                ));
                 if !hits.is_empty() {
                     egui::ScrollArea::vertical()
                         .max_height(120.0)
@@ -1363,6 +1418,9 @@ impl BeamWrightApp {
                                         }
                                         crate::editor::search::SearchKind::Operation => {
                                             self.active_operation = Some(hit.id.clone());
+                                        }
+                                        crate::editor::search::SearchKind::Profile => {
+                                            self.select_profile(&hit.id);
                                         }
                                     }
                                 }
@@ -2806,6 +2864,19 @@ impl BeamWrightApp {
     fn paste(&mut self) {
         let count = self.editor.paste_objects(&self.clipboard);
         self.status = format!("Pasted {count} object(s)");
+    }
+
+    fn select_profile(&mut self, id: &str) {
+        self.profiles_open = true;
+        if self.profiles.material(id).is_some() {
+            self.selected_material = Some(id.to_string());
+        } else if self.profiles.operation(id).is_some() {
+            self.selected_operation = Some(id.to_string());
+        } else if self.profiles.image(id).is_some() {
+            self.selected_image_profile = Some(id.to_string());
+        } else if self.profiles.project(id).is_some() {
+            self.selected_project_profile = Some(id.to_string());
+        }
     }
 
     fn save_profiles(&mut self) {
@@ -4464,8 +4535,12 @@ impl eframe::App for BeamWrightApp {
         self.menu_bar(ui);
         self.toolbar(ui);
         self.status_bar(ui);
-        self.layers_panel(ui);
-        self.properties_panel(ui);
+        if self.show_layers_panel {
+            self.layers_panel(ui);
+        }
+        if self.show_properties_panel {
+            self.properties_panel(ui);
+        }
         self.canvas(ui);
         let ctx = ui.ctx().clone();
         self.dialogs(&ctx);
