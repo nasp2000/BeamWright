@@ -987,7 +987,7 @@ impl BeamWrightApp {
         }
         match mode {
             FileMode::OpenProject => {
-                builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"])
+                builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"]);
             }
             FileMode::ImportFile => {
                 builder = builder.add_filter(
@@ -996,7 +996,8 @@ impl BeamWrightApp {
                 )
             }
             FileMode::RelinkImage => {
-                builder = builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"])
+                builder =
+                    builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"]);
             }
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
