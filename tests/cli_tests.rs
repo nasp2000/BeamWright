@@ -270,10 +270,9 @@ fn cli_export_png_rejects_bad_dpi() {
         "0",
     ])
     .unwrap();
-    run(cli).unwrap();
-    assert!(output.exists());
+    assert!(run(cli).is_err());
+    assert!(!output.exists());
     let _ = fs::remove_file(&project);
-    let _ = fs::remove_file(&output);
 }
 
 #[test]
