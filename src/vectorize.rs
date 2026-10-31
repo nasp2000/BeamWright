@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+
 //! Trace a burn bitmap into closed vector contours.
 //!
 //! The algorithm is a boundary-edge walk written for this project: every burn

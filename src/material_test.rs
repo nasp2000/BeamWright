@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+
 //! Material test grid: a matrix of speed and power cells (PLAN.md §18.6).
 //!
 //! This is preparation only. The grid is ordinary geometry with one outline
