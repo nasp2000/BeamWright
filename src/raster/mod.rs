@@ -55,48 +55,48 @@ pub fn process_luma(
             }
         }
         ImageMode::FloydSteinberg => {
-            let mut values = adjusted.clone();
-            for y in 0..height {
-                for x in 0..width {
-                    let index = y * width + x;
-                    let old = values[index];
-                    let new = if old < 128.0 { 0.0 } else { 255.0 };
-                    burn[index] = new == 0.0;
-                    let error = old - new;
-                    if x + 1 < width {
-                        values[index + 1] += error * 7.0 / 16.0;
-                    }
-                    if y + 1 < height {
-                        let below = index + width;
-                        if x > 0 {
-                            values[below - 1] += error * 3.0 / 16.0;
-                        }
-                        values[below] += error * 5.0 / 16.0;
-                        if x + 1 < width {
-                            values[below + 1] += error * 1.0 / 16.0;
-                        }
-                    }
-                }
-            }
+            burn = diffuse(&adjusted, width, height, &FLOYD_STEINBERG, 16);
+        }
+        ImageMode::Atkinson => {
+            burn = diffuse(&adjusted, width, height, &ATKINSON, 8);
+        }
+        ImageMode::Stucki => {
+            burn = diffuse(&adjusted, width, height, &STUCKI, 42);
+        }
+        ImageMode::Jarvis => {
+            burn = diffuse(&adjusted, width, height, &JARVIS, 48);
         }
         ImageMode::OrderedDither => {
-            const MATRIX: [[u8; 8]; 8] = [
-                [0, 32, 8, 40, 2, 34, 10, 42],
-                [48, 16, 56, 24, 50, 18, 58, 26],
-                [12, 44, 4, 36, 14, 46, 6, 38],
-                [60, 28, 52, 20, 62, 30, 54, 22],
-                [3, 35, 11, 43, 1, 33, 9, 41],
-                [51, 19, 59, 27, 49, 17, 57, 25],
-                [15, 47, 7, 39, 13, 45, 5, 37],
-                [63, 31, 55, 23, 61, 29, 53, 21],
-            ];
             for y in 0..height {
                 for x in 0..width {
                     let index = y * width + x;
-                    let limit = (f32::from(MATRIX[y % 8][x % 8]) + 0.5) * 255.0 / 64.0;
+                    let limit = (f32::from(BAYER_8[y % 8][x % 8]) + 0.5) * 255.0 / 64.0;
                     burn[index] = adjusted[index] < limit;
                 }
             }
+        }
+        ImageMode::Halftone => {
+            for y in 0..height {
+                for x in 0..width {
+                    let index = y * width + x;
+                    let limit = (f32::from(CLUSTER_4[y % 4][x % 4]) + 0.5) * 255.0 / 16.0;
+                    burn[index] = adjusted[index] < limit;
+                }
+            }
+        }
+        ImageMode::Newsprint => {
+            for y in 0..height {
+                for x in 0..width {
+                    let index = y * width + x;
+                    let u = (x + y) % 8;
+                    let v = (x + 2 * y) % 8;
+                    let limit = (f32::from(BAYER_8[u][v]) + 0.5) * 255.0 / 64.0;
+                    burn[index] = adjusted[index] < limit;
+                }
+            }
+        }
+        ImageMode::Sketch => {
+            burn = sketch(&adjusted, width, height, settings.threshold);
         }
     }
     Ok(RasterBitmap {
@@ -104,6 +104,122 @@ pub fn process_luma(
         height,
         burn,
     })
+}
+
+const BAYER_8: [[u8; 8]; 8] = [
+    [0, 32, 8, 40, 2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+/// Clustered-dot screen used by the halftone modes.
+const CLUSTER_4: [[u8; 4]; 4] = [[12, 5, 6, 13], [4, 0, 1, 7], [11, 3, 2, 8], [15, 10, 9, 14]];
+
+const FLOYD_STEINBERG: [(i32, i32, i32); 4] = [(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)];
+
+const ATKINSON: [(i32, i32, i32); 6] = [
+    (1, 0, 1),
+    (2, 0, 1),
+    (-1, 1, 1),
+    (0, 1, 1),
+    (1, 1, 1),
+    (0, 2, 1),
+];
+
+const STUCKI: [(i32, i32, i32); 12] = [
+    (1, 0, 8),
+    (2, 0, 4),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 8),
+    (1, 1, 4),
+    (2, 1, 2),
+    (-2, 2, 1),
+    (-1, 2, 2),
+    (0, 2, 4),
+    (1, 2, 2),
+    (2, 2, 1),
+];
+
+const JARVIS: [(i32, i32, i32); 12] = [
+    (1, 0, 7),
+    (2, 0, 5),
+    (-2, 1, 3),
+    (-1, 1, 5),
+    (0, 1, 7),
+    (1, 1, 5),
+    (2, 1, 3),
+    (-2, 2, 1),
+    (-1, 2, 3),
+    (0, 2, 5),
+    (1, 2, 3),
+    (2, 2, 1),
+];
+
+/// Error diffusion with the given kernel and divisor.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn diffuse(
+    adjusted: &[f32],
+    width: usize,
+    height: usize,
+    kernel: &[(i32, i32, i32)],
+    divisor: i32,
+) -> Vec<bool> {
+    let mut values = adjusted.to_vec();
+    let mut burn = vec![false; adjusted.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            let old = values[index];
+            let new = if old < 128.0 { 0.0 } else { 255.0 };
+            burn[index] = new == 0.0;
+            let error = old - new;
+            for (dx, dy, weight) in kernel {
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
+                    let target = ny as usize * width + nx as usize;
+                    values[target] += error * (*weight as f32) / (divisor as f32);
+                }
+            }
+        }
+    }
+    burn
+}
+
+/// Burn the edges found by a Sobel operator. `threshold` scales the gradient
+/// that is considered an edge; flat areas stay unburned.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn sketch(adjusted: &[f32], width: usize, height: usize, threshold: u8) -> Vec<bool> {
+    let mut burn = vec![false; adjusted.len()];
+    if width < 3 || height < 3 {
+        return burn;
+    }
+    let limit = f32::from(threshold) * 4.0;
+    let at = |x: usize, y: usize| adjusted[y * width + x];
+    for y in 1..height - 1 {
+        for x in 1..width - 1 {
+            let gx = -at(x - 1, y - 1) + at(x + 1, y - 1) - 2.0 * at(x - 1, y) + 2.0 * at(x + 1, y)
+                - at(x - 1, y + 1)
+                + at(x + 1, y + 1);
+            let gy = -at(x - 1, y - 1) - 2.0 * at(x, y - 1) - at(x + 1, y - 1)
+                + at(x - 1, y + 1)
+                + 2.0 * at(x, y + 1)
+                + at(x + 1, y + 1);
+            burn[y * width + x] = gx.hypot(gy) > limit;
+        }
+    }
+    burn
 }
 
 fn adjust(value: f32, settings: &ImageSettings) -> f32 {
@@ -321,6 +437,60 @@ mod tests {
         let second = process_luma(&luma, 8, 8, &settings(ImageMode::OrderedDither)).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.burned(), 32);
+    }
+
+    #[test]
+    fn error_diffusion_modes_are_deterministic_and_keep_tone() {
+        let luma = [128u8; 16 * 16];
+        for mode in [ImageMode::Atkinson, ImageMode::Stucki, ImageMode::Jarvis] {
+            let first = process_luma(&luma, 16, 16, &settings(mode)).unwrap();
+            let second = process_luma(&luma, 16, 16, &settings(mode)).unwrap();
+            assert_eq!(first, second, "{mode:?} is not deterministic");
+            let burned = first.burned();
+            assert!(
+                (60..=196).contains(&burned),
+                "{mode:?} burned {burned} of 256 pixels"
+            );
+        }
+    }
+
+    #[test]
+    fn halftone_modes_repeat_and_keep_tone() {
+        let luma = [128u8; 8 * 8];
+        let halftone = process_luma(&luma, 8, 8, &settings(ImageMode::Halftone)).unwrap();
+        assert_eq!(halftone.burned(), 32);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(halftone.get(x, y), halftone.get(x + 4, y));
+                assert_eq!(halftone.get(x, y), halftone.get(x, y + 4));
+            }
+        }
+        let newsprint = process_luma(&luma, 8, 8, &settings(ImageMode::Newsprint)).unwrap();
+        let again = process_luma(&luma, 8, 8, &settings(ImageMode::Newsprint)).unwrap();
+        assert_eq!(newsprint, again);
+        assert!(newsprint.burned() > 0 && newsprint.burned() < 64);
+    }
+
+    #[test]
+    fn sketch_burns_only_edges() {
+        let flat = [128u8; 8 * 8];
+        assert_eq!(
+            process_luma(&flat, 8, 8, &settings(ImageMode::Sketch))
+                .unwrap()
+                .burned(),
+            0
+        );
+        let mut step = vec![0u8; 8 * 8];
+        for y in 0..8 {
+            for x in 0..8 {
+                step[y * 8 + x] = if x < 4 { 0 } else { 255 };
+            }
+        }
+        let edges = process_luma(&step, 8, 8, &settings(ImageMode::Sketch)).unwrap();
+        assert!(edges.burned() > 0, "the step edge was not detected");
+        assert!(!edges.get(2, 4), "flat interior burned");
+        assert!(!edges.get(6, 4), "flat interior burned");
+        assert!(!edges.get(0, 4), "border burned");
     }
 
     #[test]

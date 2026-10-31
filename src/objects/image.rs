@@ -10,6 +10,18 @@ pub enum ImageMode {
     FloydSteinberg,
     /// Ordered dithering with an 8×8 matrix.
     OrderedDither,
+    /// Atkinson error diffusion, a lighter dither that keeps highlights clean.
+    Atkinson,
+    /// Stucki error diffusion, a finer dither than Floyd–Steinberg.
+    Stucki,
+    /// Jarvis–Judice–Ninke error diffusion with a wide kernel.
+    Jarvis,
+    /// Clustered-dot halftone with a 4×4 screen.
+    Halftone,
+    /// Clustered-dot halftone rotated 45°, for a newsprint look.
+    Newsprint,
+    /// Edge detection: burns the outlines of the image.
+    Sketch,
 }
 
 impl ImageMode {
@@ -18,14 +30,26 @@ impl ImageMode {
             ImageMode::Threshold => "Threshold",
             ImageMode::FloydSteinberg => "Floyd–Steinberg",
             ImageMode::OrderedDither => "Ordered dither",
+            ImageMode::Atkinson => "Atkinson",
+            ImageMode::Stucki => "Stucki",
+            ImageMode::Jarvis => "Jarvis–Judice–Ninke",
+            ImageMode::Halftone => "Halftone dots",
+            ImageMode::Newsprint => "Newsprint",
+            ImageMode::Sketch => "Sketch (edges)",
         }
     }
 
-    pub fn all() -> [ImageMode; 3] {
+    pub fn all() -> [ImageMode; 9] {
         [
             ImageMode::Threshold,
             ImageMode::FloydSteinberg,
             ImageMode::OrderedDither,
+            ImageMode::Atkinson,
+            ImageMode::Stucki,
+            ImageMode::Jarvis,
+            ImageMode::Halftone,
+            ImageMode::Newsprint,
+            ImageMode::Sketch,
         ]
     }
 }
