@@ -16,6 +16,7 @@ impl GCodeWriter {
         Self { options }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn render(&self, toolpaths: &[Toolpath]) -> String {
         let newline = if self.options.line_ending_crlf {
             "\r\n"
