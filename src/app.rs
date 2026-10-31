@@ -106,6 +106,7 @@ pub struct BeamWrightApp {
     repeat_open: bool,
     repeat_options: crate::editor::RepeatOptions,
     clipboard: Vec<crate::document::Object>,
+    operation_params: Option<crate::operations::OperationParams>,
     link_proportions: bool,
     skew_open: bool,
     skew_x: f64,
@@ -341,6 +342,7 @@ impl BeamWrightApp {
             repeat_open: false,
             repeat_options: crate::editor::RepeatOptions::default(),
             clipboard: Vec::new(),
+            operation_params: None,
             link_proportions: false,
             skew_open: false,
             skew_x: 0.0,
@@ -1547,8 +1549,20 @@ impl BeamWrightApp {
                 {
                     self.editor.move_operation(id, 1);
                 }
+                if ui
+                    .small_button("Duplicate")
+                    .on_hover_text("Duplicate this operation")
+                    .clicked()
+                {
+                    if let Some(copy) = self.editor.duplicate_operation(id) {
+                        self.active_operation = Some(copy);
+                    }
+                }
             });
         }
+        let mut copy_parameters = false;
+        let mut paste_parameters = false;
+        let mut save_as_profile = false;
         if let Some(active) = self.active_operation.clone() {
             if let Some(operation) = self
                 .editor
@@ -1635,6 +1649,23 @@ impl BeamWrightApp {
                     });
                     ui.weak("Fill spacing is the line interval above. Offset fill uses the interval between loops.");
                 }
+                ui.horizontal(|ui| {
+                    if ui.button("Copy parameters").clicked() {
+                        copy_parameters = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.operation_params.is_some(),
+                            egui::Button::new("Paste parameters"),
+                        )
+                        .clicked()
+                    {
+                        paste_parameters = true;
+                    }
+                    if ui.button("Save as profile").clicked() {
+                        save_as_profile = true;
+                    }
+                });
             }
             ui.horizontal(|ui| {
                 if ui
@@ -1658,6 +1689,53 @@ impl BeamWrightApp {
                     self.status = format!("Cleared operation on {changed} object(s)");
                 }
             });
+        }
+        if let Some(active) = self.active_operation.clone() {
+            if copy_parameters {
+                if let Some(operation) = self
+                    .editor
+                    .document
+                    .operations
+                    .iter()
+                    .find(|operation| operation.id == active)
+                {
+                    self.operation_params = Some(operation.params.clone());
+                    self.status = "Operation parameters copied".to_string();
+                }
+            }
+            if paste_parameters {
+                if let Some(params) = self.operation_params.clone() {
+                    if let Some(operation) = self
+                        .editor
+                        .document
+                        .operations
+                        .iter_mut()
+                        .find(|operation| operation.id == active)
+                    {
+                        operation.params = params;
+                        self.status = "Operation parameters pasted".to_string();
+                    }
+                }
+            }
+            if save_as_profile {
+                if let Some(operation) = self
+                    .editor
+                    .document
+                    .operations
+                    .iter()
+                    .find(|operation| operation.id == active)
+                {
+                    let mut profile = crate::profiles::OperationProfile::new(
+                        format!("{} profile", operation.name),
+                        operation.op_type,
+                    );
+                    profile.params = operation.params.clone();
+                    profile.notes = "Saved from an operation".to_string();
+                    self.profiles.add_operation(profile);
+                    self.save_profiles();
+                    self.status = "Operation saved as a profile".to_string();
+                }
+            }
         }
         if self.editor.document != before {
             self.editor.history.record(&before);

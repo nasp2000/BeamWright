@@ -262,6 +262,17 @@ impl McpServer {
                 }
                 Ok(json!({"id": id, "operations": self.editor.document.operations.len()}))
             }
+            "duplicate_operation" => {
+                let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
+                let copy = self
+                    .editor
+                    .duplicate_operation(&id)
+                    .ok_or_else(|| BeamError::InvalidInput(format!("unknown operation: {id}")))?;
+                Ok(json!({
+                    "id": copy,
+                    "operations": self.editor.document.operations.len()
+                }))
+            }
             "assign_operation" => {
                 let operation =
                     string(arguments, "operation").ok_or_else(|| missing("operation"))?;
@@ -854,6 +865,11 @@ fn tool_definitions() -> Vec<Value> {
             }}),
         ),
         tool_with(
+            "duplicate_operation",
+            "Duplicate an operation, keeping its parameters.",
+            json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+        ),
+        tool_with(
             "assign_operation",
             "Assign an operation to objects (all objects when ids are omitted).",
             json!({"type": "object", "properties": {
@@ -1241,6 +1257,42 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_operation_tool() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "Cut", "type": "outline_cutting", "speed": 700.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let copy = call(&mut server, "duplicate_operation", json!({"id": id}));
+        assert_eq!(copy["result"]["operations"], 2);
+        let copy_id = copy["result"]["id"].as_str().unwrap();
+        let source = server
+            .editor
+            .document
+            .operations
+            .iter()
+            .find(|operation| operation.id == id)
+            .unwrap();
+        let duplicated = server
+            .editor
+            .document
+            .operations
+            .iter()
+            .find(|operation| operation.id == copy_id)
+            .unwrap();
+        assert_eq!(source.params, duplicated.params);
+        assert!(
+            call(&mut server, "duplicate_operation", json!({"id": "missing"}))
+                .get("error")
+                .is_some()
+        );
     }
 
     #[test]

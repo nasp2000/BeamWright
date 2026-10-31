@@ -2082,6 +2082,26 @@ impl EditorState {
         id
     }
 
+    /// Duplicate an operation, returning the new id.
+    ///
+    /// The copy keeps the type and parameters, gets a new identifier and a name
+    /// ending in "copy", and is inserted just after the source so the job order
+    /// stays predictable.
+    pub fn duplicate_operation(&mut self, id: &str) -> Option<String> {
+        let index = self
+            .document
+            .operations
+            .iter()
+            .position(|operation| operation.id == id)?;
+        self.record();
+        let mut copy = self.document.operations[index].clone();
+        copy.id = uuid::Uuid::new_v4().to_string();
+        copy.name = format!("{} copy", copy.name);
+        let new_id = copy.id.clone();
+        self.document.operations.insert(index + 1, copy);
+        Some(new_id)
+    }
+
     /// Remove an operation and clear every reference to it.
     pub fn remove_operation(&mut self, id: &str) -> bool {
         let Some(index) = self
@@ -2797,6 +2817,40 @@ mod tests {
             editor.document.object(&first).unwrap().group_id.is_some(),
             "undo restores the grouped state"
         );
+    }
+
+    #[test]
+    fn operations_can_be_duplicated() {
+        use crate::operations::{OperationParams, OperationType};
+
+        let mut editor = editor();
+        let id = editor.add_operation("Cut", OperationType::OutlineCutting);
+        if let Some(operation) = editor
+            .document
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == id)
+        {
+            operation.params = OperationParams {
+                speed: 456.0,
+                power: 78.0,
+                passes: 3,
+                line_interval_mm: 0.2,
+                ..OperationParams::default()
+            };
+        }
+        let copy = editor.duplicate_operation(&id).unwrap();
+        assert_ne!(copy, id);
+        assert_eq!(editor.document.operations.len(), 2);
+        assert_eq!(editor.document.operations[1].id, copy);
+        assert!(editor.document.operations[1].name.ends_with("copy"));
+        assert_eq!(
+            editor.document.operations[1].params,
+            editor.document.operations[0].params
+        );
+        assert!(editor.undo());
+        assert_eq!(editor.document.operations.len(), 1);
+        assert!(editor.duplicate_operation("missing").is_none());
     }
 
     #[test]
