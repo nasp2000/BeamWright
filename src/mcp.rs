@@ -397,6 +397,35 @@ impl McpServer {
                 let count = self.editor.unlock_selection();
                 Ok(json!({"unlocked": count}))
             }
+            "duplicate_grid" => {
+                self.select_scope(arguments)?;
+                let options = crate::editor::GridOptions {
+                    columns: usize::try_from(
+                        arguments
+                            .get("columns")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(2),
+                    )
+                    .unwrap_or(2),
+                    rows: usize::try_from(
+                        arguments.get("rows").and_then(Value::as_u64).unwrap_or(2),
+                    )
+                    .unwrap_or(2),
+                    dx: number(arguments, "dx").unwrap_or(10.0),
+                    dy: number(arguments, "dy").unwrap_or(10.0),
+                    margin_x: number(arguments, "margin_x").unwrap_or(0.0),
+                    margin_y: number(arguments, "margin_y").unwrap_or(0.0),
+                    column_major: arguments
+                        .get("column_major")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                };
+                let created = self.editor.duplicate_grid_with(&options);
+                Ok(json!({
+                    "created": created,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "repeat" => {
                 let mode = match string(arguments, "mode").as_deref().unwrap_or("linear") {
                     "linear" => crate::editor::RepeatMode::Linear,
@@ -960,6 +989,20 @@ fn tool_definitions() -> Vec<Value> {
             }}),
         ),
         tool_with(
+            "duplicate_grid",
+            "Duplicate the selection in a grid with spacing, margins and fill order.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "columns": {"type": "integer"},
+                "rows": {"type": "integer"},
+                "dx": {"type": "number"},
+                "dy": {"type": "number"},
+                "margin_x": {"type": "number"},
+                "margin_y": {"type": "number"},
+                "column_major": {"type": "boolean"}
+            }}),
+        ),
+        tool_with(
             "repeat",
             "Duplicate the selection linearly or around a circle.",
             json!({"type": "object", "properties": {
@@ -1369,6 +1412,25 @@ mod tests {
             call(&mut server, "invert_selection", json!({}))["result"]["selected"],
             1
         );
+    }
+
+    #[test]
+    fn grid_tool_uses_margins() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 2.0, "height": 2.0}),
+        );
+        let grid = call(
+            &mut server,
+            "duplicate_grid",
+            json!({"columns": 2, "rows": 1, "dx": 10.0, "margin_x": 5.0}),
+        );
+        assert_eq!(grid["result"]["created"], 1);
+        let object = &server.editor.document.objects[1];
+        let (min, _) = object.bounds().unwrap();
+        assert!((min.x - 15.0).abs() < 1e-9);
     }
 
     #[test]

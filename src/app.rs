@@ -119,7 +119,7 @@ pub struct BeamWrightApp {
     nest_rotation: bool,
     nest_proposal: Option<crate::editor::NestProposal>,
     nest_message: String,
-    grid_array: (usize, usize, f64, f64),
+    grid_array: crate::editor::GridOptions,
     search_query: String,
     preview_open: bool,
     playback: Option<crate::gcode::Playback>,
@@ -356,7 +356,13 @@ impl BeamWrightApp {
             nest_rotation: true,
             nest_proposal: None,
             nest_message: String::new(),
-            grid_array: (3, 2, 20.0, 20.0),
+            grid_array: crate::editor::GridOptions {
+                columns: 3,
+                rows: 2,
+                dx: 20.0,
+                dy: 20.0,
+                ..crate::editor::GridOptions::default()
+            },
             search_query: String::new(),
             preview_open: false,
             playback: None,
@@ -3460,32 +3466,61 @@ impl BeamWrightApp {
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                let (columns, rows, dx, dy) = &mut self.grid_array;
+                let options = &mut self.grid_array;
                 ui.horizontal(|ui| {
                     ui.label("Columns");
-                    ui.add(egui::DragValue::new(columns).speed(1.0).range(1..=100));
+                    ui.add(
+                        egui::DragValue::new(&mut options.columns)
+                            .speed(1.0)
+                            .range(1..=100),
+                    );
                     ui.label("Rows");
-                    ui.add(egui::DragValue::new(rows).speed(1.0).range(1..=100));
+                    ui.add(
+                        egui::DragValue::new(&mut options.rows)
+                            .speed(1.0)
+                            .range(1..=100),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("Spacing X");
                     ui.add(
-                        egui::DragValue::new(dx)
+                        egui::DragValue::new(&mut options.dx)
                             .speed(0.5)
                             .range(-10000.0..=10000.0)
                             .suffix(" mm"),
                     );
                     ui.label("Y");
                     ui.add(
-                        egui::DragValue::new(dy)
+                        egui::DragValue::new(&mut options.dy)
                             .speed(0.5)
                             .range(-10000.0..=10000.0)
                             .suffix(" mm"),
                     );
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Margin X");
+                    ui.add(
+                        egui::DragValue::new(&mut options.margin_x)
+                            .speed(0.5)
+                            .range(-10000.0..=10000.0)
+                            .suffix(" mm"),
+                    );
+                    ui.label("Y");
+                    ui.add(
+                        egui::DragValue::new(&mut options.margin_y)
+                            .speed(0.5)
+                            .range(-10000.0..=10000.0)
+                            .suffix(" mm"),
+                    );
+                });
+                ui.checkbox(&mut options.column_major, "Fill column by column");
+                let options = *options;
                 ui.label(format!(
                     "Creates {} copies of the {} selected object(s).",
-                    columns.saturating_mul(*rows).saturating_sub(1),
+                    options
+                        .columns
+                        .saturating_mul(options.rows)
+                        .saturating_sub(1),
                     self.editor.selection.len()
                 ));
                 if ui
@@ -3495,7 +3530,7 @@ impl BeamWrightApp {
                     )
                     .clicked()
                 {
-                    let created = self.editor.duplicate_grid(*columns, *rows, *dx, *dy);
+                    let created = self.editor.duplicate_grid_with(&options);
                     self.status = format!("Created {created} copies");
                     self.grid_array_open = false;
                 }

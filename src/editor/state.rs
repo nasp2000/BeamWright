@@ -10,6 +10,35 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
+/// Grid duplicate settings (PLAN.md §19.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridOptions {
+    pub columns: usize,
+    pub rows: usize,
+    /// Spacing between columns and rows, in millimetres.
+    pub dx: f64,
+    pub dy: f64,
+    /// Offset of the whole grid from the original, in millimetres.
+    pub margin_x: f64,
+    pub margin_y: f64,
+    /// Fill column by column instead of row by row.
+    pub column_major: bool,
+}
+
+impl Default for GridOptions {
+    fn default() -> Self {
+        Self {
+            columns: 2,
+            rows: 2,
+            dx: 10.0,
+            dy: 10.0,
+            margin_x: 0.0,
+            margin_y: 0.0,
+            column_major: false,
+        }
+    }
+}
+
 /// Copy distribution modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
@@ -1955,11 +1984,28 @@ impl EditorState {
     /// Returns the number of new objects. The original objects stay in place;
     /// the copies become the selection.
     pub fn duplicate_grid(&mut self, columns: usize, rows: usize, dx: f64, dy: f64) -> usize {
+        self.duplicate_grid_with(&GridOptions {
+            columns,
+            rows,
+            dx,
+            dy,
+            ..GridOptions::default()
+        })
+    }
+
+    /// Duplicate the selection in a grid with margins and a fill order.
+    ///
+    /// The margins offset the whole grid from the original; the fill order only
+    /// changes the order the copies are added, which is the order later
+    /// operations see them in.
+    pub fn duplicate_grid_with(&mut self, options: &GridOptions) -> usize {
         if self.selection.is_empty()
-            || !(1..=100).contains(&columns)
-            || !(1..=100).contains(&rows)
-            || !dx.is_finite()
-            || !dy.is_finite()
+            || !(1..=100).contains(&options.columns)
+            || !(1..=100).contains(&options.rows)
+            || !options.dx.is_finite()
+            || !options.dy.is_finite()
+            || !options.margin_x.is_finite()
+            || !options.margin_y.is_finite()
         {
             return 0;
         }
@@ -1971,22 +2017,37 @@ impl EditorState {
             .filter_map(|id| self.document.object(id).cloned())
             .collect();
         self.selection.clear();
+        let mut cells: Vec<(usize, usize)> = Vec::new();
+        if options.column_major {
+            for column in 0..options.columns {
+                for row in 0..options.rows {
+                    cells.push((column, row));
+                }
+            }
+        } else {
+            for row in 0..options.rows {
+                for column in 0..options.columns {
+                    cells.push((column, row));
+                }
+            }
+        }
         let mut created = 0;
-        for row in 0..rows {
-            for column in 0..columns {
-                if row == 0 && column == 0 {
-                    continue;
-                }
-                #[allow(clippy::cast_precision_loss)]
-                let offset = (column as f64 * dx, row as f64 * dy);
-                for original in &originals {
-                    let mut copy = original.clone();
-                    copy.id = uuid::Uuid::new_v4().to_string();
-                    copy.translate(offset.0, offset.1);
-                    self.selection.add(copy.id.clone());
-                    self.document.add_object(copy);
-                    created += 1;
-                }
+        for (column, row) in cells {
+            if row == 0 && column == 0 {
+                continue;
+            }
+            #[allow(clippy::cast_precision_loss)]
+            let offset = (
+                options.margin_x + column as f64 * options.dx,
+                options.margin_y + row as f64 * options.dy,
+            );
+            for original in &originals {
+                let mut copy = original.clone();
+                copy.id = uuid::Uuid::new_v4().to_string();
+                copy.translate(offset.0, offset.1);
+                self.selection.add(copy.id.clone());
+                self.document.add_object(copy);
+                created += 1;
             }
         }
         created
@@ -2826,6 +2887,110 @@ mod tests {
         assert!(
             editor.document.object(&first).unwrap().group_id.is_some(),
             "undo restores the grouped state"
+        );
+    }
+
+    #[test]
+    fn grid_array_applies_margins_and_fill_order() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        let options = GridOptions {
+            columns: 2,
+            rows: 2,
+            dx: 10.0,
+            dy: 10.0,
+            margin_x: 5.0,
+            margin_y: 3.0,
+            column_major: true,
+        };
+        assert_eq!(editor.duplicate_grid_with(&options), 3);
+        let mut mins: Vec<(f64, f64)> = editor
+            .document
+            .objects
+            .iter()
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| (min.x, min.y))
+            .collect();
+        mins.sort_by(|left, right| {
+            left.0
+                .partial_cmp(&right.0)
+                .unwrap()
+                .then(left.1.partial_cmp(&right.1).unwrap())
+        });
+        assert_eq!(
+            mins,
+            vec![(0.0, 0.0), (5.0, 13.0), (15.0, 3.0), (15.0, 13.0)]
+        );
+    }
+
+    #[test]
+    fn grid_fill_order_changes_the_document_order() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
+        let row_major = GridOptions {
+            columns: 2,
+            rows: 2,
+            dx: 10.0,
+            dy: 10.0,
+            ..GridOptions::default()
+        };
+        editor.duplicate_grid_with(&row_major);
+        let x_row: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .skip(1)
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| min.x)
+            .collect();
+        assert_eq!(x_row, vec![10.0, 0.0, 10.0]);
+
+        let mut editor = editor_with_one_rect();
+        let column_major = GridOptions {
+            columns: 2,
+            rows: 2,
+            dx: 10.0,
+            dy: 10.0,
+            column_major: true,
+            ..GridOptions::default()
+        };
+        editor.duplicate_grid_with(&column_major);
+        let x_column: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .skip(1)
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| min.x)
+            .collect();
+        assert_eq!(x_column, vec![0.0, 10.0, 10.0]);
+    }
+
+    fn editor_with_one_rect() -> EditorState {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
+        editor
+    }
+
+    #[test]
+    fn grid_array_rejects_bad_parameters() {
+        let mut editor = editor_with_one_rect();
+        let good = GridOptions::default();
+        assert_eq!(editor.duplicate_grid_with(&good), 3);
+        assert_eq!(
+            editor.duplicate_grid_with(&GridOptions { columns: 0, ..good }),
+            0
+        );
+        assert_eq!(
+            editor.duplicate_grid_with(&GridOptions { rows: 101, ..good }),
+            0
+        );
+        assert_eq!(
+            editor.duplicate_grid_with(&GridOptions {
+                dx: f64::NAN,
+                ..good
+            }),
+            0
         );
     }
 
