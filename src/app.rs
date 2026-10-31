@@ -4071,8 +4071,7 @@ impl BeamWrightApp {
                 } else {
                     ctx.input(|input| input.pointer.interact_pos())
                 };
-                let primary_pressed =
-                    !modal && ctx.input(|input| input.pointer.primary_pressed());
+                let primary_pressed = !modal && ctx.input(|input| input.pointer.primary_pressed());
                 let primary_released =
                     !modal && ctx.input(|input| input.pointer.primary_released());
                 let shift = ctx.input(|input| input.modifiers.shift);
