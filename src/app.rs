@@ -105,6 +105,7 @@ pub struct BeamWrightApp {
     star_inner: f64,
     repeat_open: bool,
     repeat_options: crate::editor::RepeatOptions,
+    clipboard: Vec<crate::document::Object>,
     simplify_open: bool,
     simplify_tolerance: f64,
     nest_open: bool,
@@ -326,6 +327,7 @@ impl BeamWrightApp {
             star_inner: 0.5,
             repeat_open: false,
             repeat_options: crate::editor::RepeatOptions::default(),
+            clipboard: Vec::new(),
             simplify_open: false,
             simplify_tolerance: 0.2,
             nest_open: false,
@@ -643,6 +645,22 @@ impl BeamWrightApp {
         if select_all {
             self.editor.select_all();
         }
+        let (cut, copy, paste) = ctx.input_mut(|input| {
+            (
+                input.consume_key(Modifiers::CTRL, Key::X),
+                input.consume_key(Modifiers::CTRL, Key::C),
+                input.consume_key(Modifiers::CTRL, Key::V),
+            )
+        });
+        if cut {
+            self.cut();
+        }
+        if copy {
+            self.copy();
+        }
+        if paste {
+            self.paste();
+        }
         if duplicate {
             self.editor.duplicate_selection();
         }
@@ -792,6 +810,33 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
+                            egui::Button::new("Cut"),
+                        )
+                        .clicked()
+                    {
+                        self.cut();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Copy"),
+                        )
+                        .clicked()
+                    {
+                        self.copy();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!self.clipboard.is_empty(), egui::Button::new("Paste"))
+                        .clicked()
+                    {
+                        self.paste();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
                             egui::Button::new("Duplicate"),
                         )
                         .clicked()
@@ -807,6 +852,34 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.delete_selection();
+                        ui.close();
+                    }
+                    if ui.button("Invert selection").clicked() {
+                        let count = self.editor.invert_selection();
+                        self.status = format!("Selected {count} object(s)");
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Lock"),
+                        )
+                        .clicked()
+                    {
+                        let count = self.editor.lock_selection();
+                        self.status = format!("Locked {count} object(s)");
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Unlock"),
+                        )
+                        .clicked()
+                    {
+                        let count = self.editor.unlock_selection();
+                        self.status = format!("Unlocked {count} object(s)");
                         ui.close();
                     }
                     ui.separator();
@@ -2399,6 +2472,22 @@ impl BeamWrightApp {
             | DragState::NodeMove { .. }
             | DragState::Handle { .. } => {}
         }
+    }
+
+    fn cut(&mut self) {
+        let objects = self.editor.cut_selection();
+        self.status = format!("Cut {} object(s)", objects.len());
+        self.clipboard = objects;
+    }
+
+    fn copy(&mut self) {
+        self.clipboard = self.editor.copy_selection();
+        self.status = format!("Copied {} object(s)", self.clipboard.len());
+    }
+
+    fn paste(&mut self) {
+        let count = self.editor.paste_objects(&self.clipboard);
+        self.status = format!("Pasted {count} object(s)");
     }
 
     fn save_profiles(&mut self) {

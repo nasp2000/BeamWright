@@ -1655,6 +1655,112 @@ impl EditorState {
         }
     }
 
+    /// Clone the selected objects for an in-app clipboard.
+    pub fn copy_selection(&self) -> Vec<Object> {
+        self.selection
+            .ids()
+            .iter()
+            .filter_map(|id| self.document.object(id).cloned())
+            .collect()
+    }
+
+    /// Remove the selected objects and return them for an in-app clipboard.
+    pub fn cut_selection(&mut self) -> Vec<Object> {
+        let objects = self.copy_selection();
+        if objects.is_empty() {
+            return objects;
+        }
+        self.record();
+        for object in &objects {
+            self.document.remove_object(&object.id);
+        }
+        self.selection.clear();
+        objects
+    }
+
+    /// Paste copied objects with fresh identifiers, offset slightly.
+    ///
+    /// The pasted objects become the selection. Groups are not recreated, so a
+    /// pasted copy cannot silently link back to the original group.
+    pub fn paste_objects(&mut self, objects: &[Object]) -> usize {
+        if objects.is_empty() {
+            return 0;
+        }
+        self.record();
+        let fallback_layer = self.document.layers.first().map(|layer| layer.id.clone());
+        let mut pasted = Vec::new();
+        for source in objects {
+            let mut object = source.clone();
+            object.id = uuid::Uuid::new_v4().to_string();
+            object.group_id = None;
+            object.name = format!("{} copy", source.name);
+            if self.document.layer(&object.layer_id).is_none() {
+                let Some(layer) = fallback_layer.clone() else {
+                    continue;
+                };
+                object.layer_id = layer;
+            }
+            object.translate(5.0, -5.0);
+            pasted.push(object.id.clone());
+            self.document.add_object(object);
+        }
+        self.selection.clear();
+        for id in &pasted {
+            self.selection.add(id.clone());
+        }
+        pasted.len()
+    }
+
+    /// Select every unselected visible, unlocked object.
+    pub fn invert_selection(&mut self) -> usize {
+        let candidates: Vec<String> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| {
+                !self.selection.contains(&object.id)
+                    && object.visible
+                    && !object.locked
+                    && self.layer_visible(&object.layer_id)
+                    && !self.layer_locked(&object.layer_id)
+            })
+            .map(|object| object.id.clone())
+            .collect();
+        self.selection.clear();
+        for id in &candidates {
+            self.selection.add(id.clone());
+        }
+        candidates.len()
+    }
+
+    /// Lock the selected objects so they cannot be moved or picked.
+    pub fn lock_selection(&mut self) -> usize {
+        self.set_selection_locked(true)
+    }
+
+    /// Unlock the selected objects.
+    pub fn unlock_selection(&mut self) -> usize {
+        self.set_selection_locked(false)
+    }
+
+    fn set_selection_locked(&mut self, locked: bool) -> usize {
+        if self.selection.is_empty() {
+            return 0;
+        }
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        let mut changed = 0;
+        for id in ids {
+            if let Some(object) = self.document.object_mut(&id) {
+                if object.locked != locked {
+                    object.locked = locked;
+                    changed += 1;
+                }
+            }
+        }
+        changed
+    }
+
     /// Duplicate the selection along a line or around a circle (PLAN.md §19.2).
     ///
     /// Linear copies step by `(dx, dy)` and may be rotated by a fixed angle each
@@ -3306,6 +3412,80 @@ mod tests {
         editor.selection.add(rect);
         let error = editor.close_paths().unwrap_err();
         assert!(error.contains("No open paths"), "{error}");
+    }
+
+    #[test]
+    fn copy_cut_and_paste_round_trip() {
+        let mut editor = editor();
+        let original = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.select_all();
+        let clipboard = editor.copy_selection();
+        assert_eq!(clipboard.len(), 1);
+        assert_eq!(editor.document.objects.len(), 1);
+        assert_eq!(editor.paste_objects(&clipboard), 1);
+        assert_eq!(editor.document.objects.len(), 2);
+        let pasted = &editor.document.objects[1];
+        assert_ne!(pasted.id, original);
+        assert_eq!(pasted.style, editor.document.objects[0].style);
+        assert_eq!(editor.selection.ids(), std::slice::from_ref(&pasted.id));
+
+        editor.selection.clear();
+        editor.selection.add(original.clone());
+        let cut = editor.cut_selection();
+        assert_eq!(cut.len(), 1);
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.document.object(&original).is_none());
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn paste_without_a_clipboard_does_nothing() {
+        let mut editor = editor();
+        assert_eq!(editor.paste_objects(&[]), 0);
+        assert_eq!(editor.document.objects.len(), 0);
+    }
+
+    #[test]
+    fn invert_selection_skips_locked_and_hidden_objects() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0))
+            .unwrap();
+        let third = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(24.0, 4.0))
+            .unwrap();
+        {
+            let object = editor.document.object_mut(&third).unwrap();
+            object.visible = false;
+        }
+        editor.selection.clear();
+        editor.selection.add(first);
+        assert_eq!(editor.invert_selection(), 1);
+        assert!(editor.selection.contains(&second));
+        assert!(!editor.selection.contains(&third));
+    }
+
+    #[test]
+    fn locking_prevents_movement_until_unlocked() {
+        let mut editor = editor();
+        let id = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor.select_all();
+        assert_eq!(editor.lock_selection(), 1);
+        assert!(editor.document.object(&id).unwrap().locked);
+        editor.nudge_selection(10.0, 0.0);
+        assert!((editor.document.object(&id).unwrap().bounds().unwrap().0.x).abs() < 1e-9);
+        assert_eq!(editor.unlock_selection(), 1);
+        editor.nudge_selection(10.0, 0.0);
+        assert!((editor.document.object(&id).unwrap().bounds().unwrap().0.x - 10.0).abs() < 1e-9);
+        assert!(editor.undo());
     }
 
     #[test]

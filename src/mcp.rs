@@ -17,6 +17,7 @@ use crate::operations::OperationType;
 pub struct McpServer {
     editor: EditorState,
     path: Option<PathBuf>,
+    clipboard: Vec<Object>,
 }
 
 impl Default for McpServer {
@@ -30,6 +31,7 @@ impl McpServer {
         Self {
             editor: EditorState::new(Document::default()),
             path: None,
+            clipboard: Vec::new(),
         }
     }
 
@@ -304,6 +306,40 @@ impl McpServer {
                     "offset": count,
                     "objects": self.editor.document.objects.len()
                 }))
+            }
+            "copy_objects" => {
+                self.select_scope(arguments)?;
+                self.clipboard = self.editor.copy_selection();
+                Ok(json!({"copied": self.clipboard.len()}))
+            }
+            "cut_objects" => {
+                self.select_scope(arguments)?;
+                self.clipboard = self.editor.cut_selection();
+                Ok(json!({
+                    "cut": self.clipboard.len(),
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
+            "paste_objects" => {
+                let pasted = self.editor.paste_objects(&self.clipboard);
+                Ok(json!({
+                    "pasted": pasted,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
+            "invert_selection" => {
+                let count = self.editor.invert_selection();
+                Ok(json!({"selected": count}))
+            }
+            "lock_objects" => {
+                self.select_scope(arguments)?;
+                let count = self.editor.lock_selection();
+                Ok(json!({"locked": count}))
+            }
+            "unlock_objects" => {
+                self.select_scope(arguments)?;
+                let count = self.editor.unlock_selection();
+                Ok(json!({"unlocked": count}))
             }
             "repeat" => {
                 let mode = match string(arguments, "mode").as_deref().unwrap_or("linear") {
@@ -793,6 +829,42 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "copy_objects",
+            "Copy the selected objects (all when ids are omitted) to the in-app clipboard.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "cut_objects",
+            "Cut the selected objects to the in-app clipboard.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool(
+            "paste_objects",
+            "Paste the in-app clipboard, offset by 5 mm.",
+        ),
+        tool(
+            "invert_selection",
+            "Select every object that is not selected.",
+        ),
+        tool_with(
+            "lock_objects",
+            "Lock the selected objects.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "unlock_objects",
+            "Unlock the selected objects.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
             "repeat",
             "Duplicate the selection linearly or around a circle.",
             json!({"type": "object", "properties": {
@@ -1097,6 +1169,40 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn clipboard_and_lock_tools() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 4.0, "height": 4.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            call(&mut server, "copy_objects", json!({"ids": [id]}))["result"]["copied"],
+            1
+        );
+        assert_eq!(
+            call(&mut server, "paste_objects", json!({}))["result"]["pasted"],
+            1
+        );
+        assert_eq!(server.editor.document.objects.len(), 2);
+        let locked = call(&mut server, "lock_objects", json!({"ids": [id]}));
+        assert_eq!(locked["result"]["locked"], 1);
+        assert!(server.editor.document.object(&id).unwrap().locked);
+        let unlocked = call(&mut server, "unlock_objects", json!({"ids": [id]}));
+        assert_eq!(unlocked["result"]["unlocked"], 1);
+        let cut = call(&mut server, "cut_objects", json!({"ids": [id]}));
+        assert_eq!(cut["result"]["cut"], 1);
+        assert_eq!(cut["result"]["objects"], 1);
+        assert_eq!(
+            call(&mut server, "invert_selection", json!({}))["result"]["selected"],
+            1
+        );
     }
 
     #[test]
