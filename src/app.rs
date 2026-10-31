@@ -265,6 +265,7 @@ pub struct BeamWrightApp {
     machine_editor: crate::machines::MachineProfile,
     machine_edit_id: Option<String>,
     machine_error: Option<String>,
+    doc_properties_snapshot: Option<Document>,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -663,6 +664,7 @@ impl BeamWrightApp {
             machine_editor: crate::machines::MachineProfile::default(),
             machine_edit_id: None,
             machine_error: None,
+            doc_properties_snapshot: None,
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -795,6 +797,7 @@ impl BeamWrightApp {
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::RelinkImage => "image.png".to_string(),
+            FileMode::ImportProfiles | FileMode::ExportProfiles => "profiles.json".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
         };
         let default_directory = self.preferences.general.default_directory.trim();
@@ -823,6 +826,27 @@ impl BeamWrightApp {
         };
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.start_import(path),
+            FileMode::ImportProfiles => {
+                match crate::profiles::library::import_into(&mut self.profiles, path) {
+                    Ok(count) => {
+                        match crate::profiles::library::save(&self.profiles, &self.profiles_path) {
+                            Ok(()) => {
+                                self.status = format!("Imported {count} profile(s)");
+                            }
+                            Err(error) => {
+                                self.status = format!("Cannot save the profile library: {error}");
+                            }
+                        }
+                    }
+                    Err(error) => self.status = format!("Profile import failed: {error}"),
+                }
+            }
+            FileMode::ExportProfiles => {
+                match crate::profiles::library::export(&self.profiles, path) {
+                    Ok(()) => self.status = format!("Exported profiles to {}", path.display()),
+                    Err(error) => self.status = format!("Profile export failed: {error}"),
+                }
+            }
             FileMode::SaveProject => self.save_to(path),
             FileMode::ExportPng
             | FileMode::ExportDxf
@@ -919,44 +943,85 @@ impl BeamWrightApp {
         }
     }
 
+    fn open_document_properties(&mut self) {
+        self.doc_properties_snapshot = Some(self.editor.document.clone());
+        self.doc_properties_open = true;
+    }
+
     fn document_properties_window(&mut self, ctx: &egui::Context) {
+        use crate::document::Unit;
+
         let mut open = self.doc_properties_open;
+        let mut changed = false;
         egui::Window::new("Document properties")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                let document = &self.editor.document;
                 egui::Grid::new("document_properties_window")
                     .num_columns(2)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
                         ui.label("Name");
-                        ui.label(&document.name);
+                        changed |= ui
+                            .text_edit_singleline(&mut self.editor.document.name)
+                            .changed();
                         ui.end_row();
-                        ui.label("Size");
-                        ui.label(format!(
-                            "{:.1} x {:.1} mm",
-                            document.width_mm, document.height_mm
-                        ));
+                        ui.label("Width");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.editor.document.width_mm)
+                                    .speed(1.0)
+                                    .range(10.0..=100_000.0)
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        ui.end_row();
+                        ui.label("Height");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.editor.document.height_mm)
+                                    .speed(1.0)
+                                    .range(10.0..=100_000.0)
+                                    .suffix(" mm"),
+                            )
+                            .changed();
                         ui.end_row();
                         ui.label("Unit");
-                        ui.label(document.unit.label());
+                        let mut unit = self.editor.document.unit;
+                        egui::ComboBox::from_id_salt("document_unit")
+                            .selected_text(unit.label())
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    Unit::Millimeters,
+                                    Unit::Centimeters,
+                                    Unit::Inches,
+                                    Unit::Pixels,
+                                ] {
+                                    if ui
+                                        .selectable_value(&mut unit, candidate, candidate.label())
+                                        .changed()
+                                    {
+                                        changed = true;
+                                    }
+                                }
+                            });
+                        self.editor.document.unit = unit;
                         ui.end_row();
                         ui.label("Origin");
-                        ui.label(format!("{:?}", document.origin));
+                        ui.label(format!("{:?}", self.editor.document.origin));
                         ui.end_row();
                         ui.label("Layers");
-                        ui.label(document.layers.len().to_string());
+                        ui.label(self.editor.document.layers.len().to_string());
                         ui.end_row();
                         ui.label("Objects");
-                        ui.label(document.objects.len().to_string());
+                        ui.label(self.editor.document.objects.len().to_string());
                         ui.end_row();
                         ui.label("Operations");
-                        ui.label(document.operations.len().to_string());
+                        ui.label(self.editor.document.operations.len().to_string());
                         ui.end_row();
                         ui.label("Format version");
-                        ui.label(document.format_version.to_string());
+                        ui.label(self.editor.document.format_version.to_string());
                         ui.end_row();
                         ui.label("File");
                         ui.label(self.current_path.as_deref().map_or_else(
@@ -966,7 +1031,20 @@ impl BeamWrightApp {
                         ui.end_row();
                     });
             });
-        self.doc_properties_open = open;
+        if changed {
+            self.needs_fit = true;
+        }
+        if !open || !self.doc_properties_open {
+            self.doc_properties_open = open;
+        }
+        if !open {
+            if let Some(snapshot) = self.doc_properties_snapshot.take() {
+                if snapshot != self.editor.document {
+                    self.editor.history.record(&snapshot, "Document properties");
+                }
+            }
+            self.doc_properties_open = false;
+        }
     }
 
     fn operations_compare_window(&mut self, ctx: &egui::Context) {
@@ -1588,7 +1666,7 @@ impl BeamWrightApp {
                     });
                     ui.separator();
                     if icons::button(ui, Icon::Page, "Document properties...").clicked() {
-                        self.doc_properties_open = true;
+                        self.open_document_properties();
                         ui.close();
                     }
                     if ui
@@ -1865,7 +1943,13 @@ impl BeamWrightApp {
                         }
                         ui.close();
                     }
-                    if icons::button(ui, Icon::Layers, "Assign operation to layer").clicked() {
+                    if ui
+                        .add_enabled(
+                            self.active_operation.is_some(),
+                            icons::widget(ui, Icon::Layers, "Assign operation to layer"),
+                        )
+                        .clicked()
+                    {
                         if let Some(operation) = self.active_operation.clone() {
                             let layer = self.editor.active_layer_id.clone();
                             let changed = self
@@ -1883,11 +1967,11 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if icons::button(ui, Icon::Import, "Import profiles...").clicked() {
-                        self.profiles_open = true;
+                        self.open_dialog(FileMode::ImportProfiles);
                         ui.close();
                     }
                     if icons::button(ui, Icon::Export, "Export profiles...").clicked() {
-                        self.profiles_open = true;
+                        self.open_dialog(FileMode::ExportProfiles);
                         ui.close();
                     }
                 });
@@ -4174,7 +4258,7 @@ impl BeamWrightApp {
             ContextAction::FitPage => self.needs_fit = true,
             ContextAction::ZoomSelection => self.zoom_to_selection_request = true,
             ContextAction::Guides => self.guides_open = true,
-            ContextAction::DocumentProperties => self.doc_properties_open = true,
+            ContextAction::DocumentProperties => self.open_document_properties(),
             ContextAction::Preview => self.open_preview(),
             ContextAction::Preferences => self.preferences_open = true,
         }
@@ -6085,6 +6169,14 @@ impl BeamWrightApp {
                 ui.label(
                     "Values are reference starting points, not guarantees. Test on your own material.",
                 );
+                ui.horizontal(|ui| {
+                    if ui.button("Import profiles...").clicked() {
+                        self.open_dialog(FileMode::ImportProfiles);
+                    }
+                    if ui.button("Export profiles...").clicked() {
+                        self.open_dialog(FileMode::ExportProfiles);
+                    }
+                });
                 ui.horizontal(|ui| {
                     ui.label("Search");
                     ui.text_edit_singleline(&mut self.profile_search);

@@ -10,6 +10,8 @@ pub enum FileMode {
     ExportPng,
     ExportGcode,
     RelinkImage,
+    ImportProfiles,
+    ExportProfiles,
 }
 
 impl FileMode {
@@ -23,6 +25,8 @@ impl FileMode {
             FileMode::ExportPng => "Export PNG",
             FileMode::ExportGcode => "Export G-code",
             FileMode::RelinkImage => "Relink image",
+            FileMode::ImportProfiles => "Import profiles",
+            FileMode::ExportProfiles => "Export profiles",
         }
     }
 
@@ -35,6 +39,8 @@ impl FileMode {
             | FileMode::ExportPng
             | FileMode::ExportGcode => "Export",
             FileMode::RelinkImage => "Relink",
+            FileMode::ImportProfiles => "Import",
+            FileMode::ExportProfiles => "Export",
         }
     }
 
@@ -45,6 +51,7 @@ impl FileMode {
             FileMode::ExportDxf => "dxf",
             FileMode::ExportPng | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
+            FileMode::ImportProfiles | FileMode::ExportProfiles => "json",
         }
     }
 
@@ -52,6 +59,7 @@ impl FileMode {
     fn filter_hint(self) -> &'static str {
         match self {
             FileMode::OpenProject => "Shows .bwp and .svg files",
+            FileMode::ImportProfiles | FileMode::ExportProfiles => "Shows .json profile libraries",
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::ImportFile => {
                 "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif and .tiff files"
@@ -88,6 +96,7 @@ impl FileMode {
                     "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
                 )
             }
+            FileMode::ImportProfiles | FileMode::ExportProfiles => extension == "json",
         }
     }
 }
@@ -290,6 +299,7 @@ impl FileDialog {
                     | FileMode::ExportDxf
                     | FileMode::ExportPng
                     | FileMode::ExportGcode
+                    | FileMode::ExportProfiles
             ) {
                 path.set_extension(self.mode.default_extension());
             } else {
@@ -297,7 +307,10 @@ impl FileDialog {
             }
         }
         match self.mode {
-            FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage => {
+            FileMode::OpenProject
+            | FileMode::ImportFile
+            | FileMode::RelinkImage
+            | FileMode::ImportProfiles => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
                 }
@@ -306,7 +319,8 @@ impl FileDialog {
             | FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportPng
-            | FileMode::ExportGcode => {
+            | FileMode::ExportGcode
+            | FileMode::ExportProfiles => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {
                         return Err(format!("Directory not found: {}", parent.display()));
@@ -388,6 +402,24 @@ mod tests {
             "{} is not a folder",
             dialog.directory.display()
         );
+    }
+
+    #[test]
+    fn profile_libraries_use_json() {
+        let mut dialog = FileDialog::new(
+            FileMode::ExportProfiles,
+            Some(std::path::Path::new("/tmp/profiles")),
+            "profiles",
+        );
+        dialog.directory = std::env::temp_dir();
+        dialog.file_name = "beamwright-profiles".to_string();
+        let path = dialog.resolve().unwrap();
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("json")
+        );
+        assert!(FileMode::ImportProfiles.accepts(std::path::Path::new("a.json")));
+        assert!(FileMode::ExportProfiles.filter_hint().contains("json"));
     }
 
     #[test]
