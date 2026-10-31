@@ -184,6 +184,8 @@ pub struct EditorState {
     pub zoom_step: f64,
     /// Clicking one member of a group selects the whole group.
     pub select_whole_group: bool,
+    /// Zoom factor applied by the mouse wheel.
+    pub scroll_zoom_step: f64,
     /// Draw the document guides.
     pub guides_visible: bool,
     /// Snap drawing to visible guides.
@@ -225,6 +227,7 @@ impl EditorState {
             handle_style: HandleStyle::Square,
             zoom_step: 1.25,
             select_whole_group: true,
+            scroll_zoom_step: 1.15,
             guides_visible: true,
             snap_guides: true,
             transform_center: TransformCenter::Selection,

@@ -152,6 +152,23 @@ pub struct BeamWrightApp {
     pen_drag_start: Option<Point2>,
 }
 
+/// Short description shown when hovering a toolbar tool.
+fn tool_help(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Select => "Select and move objects (V)",
+        Tool::Line => "Draw a line; Shift snaps to 45° (L)",
+        Tool::Rect => "Draw a rectangle; Shift for a square (R)",
+        Tool::Ellipse => "Draw an ellipse; Shift for a circle (E)",
+        Tool::Polygon => "Draw a regular polygon (P)",
+        Tool::Star => "Draw a star with adjustable tips (S)",
+        Tool::Text => "Insert text (T)",
+        Tool::Measure => "Measure a distance and angle",
+        Tool::Bezier => "Draw a Bézier path node by node",
+        Tool::Pencil => "Draw a freehand path (B)",
+        Tool::Pan => "Pan the canvas",
+    }
+}
+
 /// Scale around a point, for direct property edits.
 fn egui_transform_scale(
     factor_x: f64,
@@ -322,6 +339,7 @@ impl BeamWrightApp {
             crate::editor::state::HandleStyle::from_label(&preferences.drawing.handle_style);
         editor.zoom_step = preferences.drawing.zoom_step;
         editor.select_whole_group = preferences.drawing.select_whole_group;
+        editor.scroll_zoom_step = preferences.drawing.scroll_zoom_step;
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
@@ -1988,6 +2006,7 @@ impl BeamWrightApp {
                 ] {
                     if ui
                         .selectable_label(self.editor.tool == tool, tool.label())
+                        .on_hover_text(tool_help(tool))
                         .clicked()
                     {
                         self.editor.tool = tool;
@@ -3235,7 +3254,12 @@ impl BeamWrightApp {
                     let scroll = ctx.input(|input| input.smooth_scroll_delta.y);
                     if scroll.abs() > 0.0 {
                         if let Some(pos) = pointer {
-                            let factor = if scroll > 0.0 { 1.15 } else { 1.0 / 1.15 };
+                            let step = if self.editor.scroll_zoom_step > 1.0 {
+                                self.editor.scroll_zoom_step
+                            } else {
+                                1.15
+                            };
+                            let factor = if scroll > 0.0 { step } else { 1.0 / step };
                             self.editor.canvas.zoom_at(
                                 f64::from(pos.x - rect.min.x),
                                 f64::from(pos.y - rect.min.y),

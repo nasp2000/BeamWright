@@ -79,6 +79,9 @@ pub struct DrawingPrefs {
     /// Clicking one object of a group selects the whole group.
     #[serde(default = "default_true")]
     pub select_whole_group: bool,
+    /// Zoom factor applied by the mouse wheel.
+    #[serde(default = "default_scroll_zoom_step")]
+    pub scroll_zoom_step: f64,
 }
 
 impl Default for DrawingPrefs {
@@ -101,6 +104,7 @@ impl Default for DrawingPrefs {
             handle_style: default_handle_style(),
             zoom_step: default_zoom_step(),
             select_whole_group: true,
+            scroll_zoom_step: default_scroll_zoom_step(),
         }
     }
 }
@@ -125,6 +129,9 @@ impl DrawingPrefs {
         if !self.zoom_step.is_finite() || !(1.01..=3.0).contains(&self.zoom_step) {
             return Err("zoom step must be between 1.01 and 3".to_string());
         }
+        if !self.scroll_zoom_step.is_finite() || !(1.01..=2.0).contains(&self.scroll_zoom_step) {
+            return Err("wheel zoom step must be between 1.01 and 2".to_string());
+        }
         Ok(())
     }
 }
@@ -147,6 +154,10 @@ fn default_handle_style() -> String {
 
 fn default_zoom_step() -> f64 {
     1.25
+}
+
+fn default_scroll_zoom_step() -> f64 {
+    1.15
 }
 
 #[cfg(test)]
