@@ -27,6 +27,7 @@ enum TaskResult {
         path: PathBuf,
         outcome: std::result::Result<crate::import::format::ImportOutcome, String>,
     },
+    Export(std::result::Result<FileReport, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +166,66 @@ pub struct BeamWrightApp {
     recover_next: bool,
     pen_nodes: Vec<crate::geometry::path::Node>,
     pen_drag_start: Option<Point2>,
+}
+
+/// Build one export and write it, reporting what it contains.
+///
+/// Runs on a worker thread; `cancel` is checked before writing so a cancelled
+/// export never creates or replaces a file.
+fn run_export(
+    mode: FileMode,
+    path: &Path,
+    document: &crate::document::Document,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> std::result::Result<FileReport, String> {
+    let cancelled = || {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            Err("Cancelled".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    match mode {
+        FileMode::ExportPng => {
+            cancelled()?;
+            let report =
+                crate::export::export_png(document, path, &crate::export::PngOptions::default())
+                    .map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export PNG", path.display().to_string())
+                .with_summary("Width", format!("{} px", report.width_px))
+                .with_summary("Height", format!("{} px", report.height_px))
+                .with_summary("Resolution", "96 dpi")
+                .with_warnings(report.warnings))
+        }
+        FileMode::ExportDxf => {
+            let dxf = crate::export::export_dxf(document).map_err(|error| error.to_string())?;
+            cancelled()?;
+            std::fs::write(path, dxf).map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export DXF", path.display().to_string())
+                .with_summary("Objects", document.objects.len().to_string())
+                .with_summary("Format", "LWPOLYLINE subset"))
+        }
+        FileMode::ExportGcode => {
+            cancelled()?;
+            let report =
+                crate::gcode::export_job(document, path, &crate::gcode::JobOptions::default())
+                    .map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export G-code", path.display().to_string())
+                .with_summary("Paths", report.paths.to_string())
+                .with_summary("Lines", report.lines.to_string())
+                .with_summary("Bytes", report.bytes.to_string())
+                .with_summary("Estimated", format!("{:.1} s", report.seconds))
+                .with_warnings(report.warnings))
+        }
+        FileMode::ExportSvg => {
+            let svg = crate::export::export_svg(document).map_err(|error| error.to_string())?;
+            cancelled()?;
+            std::fs::write(path, svg).map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export SVG", path.display().to_string())
+                .with_summary("Objects", document.objects.len().to_string()))
+        }
+        _ => Err("unsupported export mode".to_string()),
+    }
 }
 
 /// Short description shown when hovering a toolbar tool.
@@ -563,70 +624,11 @@ impl BeamWrightApp {
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.start_import(path),
             FileMode::SaveProject => self.save_to(path),
-            FileMode::ExportPng => {
-                match crate::export::export_png(
-                    &document,
-                    path,
-                    &crate::export::PngOptions::default(),
-                ) {
-                    Ok(report) => {
-                        let file_report = FileReport::new("Export PNG", path.display().to_string())
-                            .with_summary("Width", format!("{} px", report.width_px))
-                            .with_summary("Height", format!("{} px", report.height_px))
-                            .with_summary("Resolution", "96 dpi")
-                            .with_warnings(report.warnings);
-                        self.status = file_report.headline();
-                        self.show_report(file_report);
-                    }
-                    Err(error) => self.status = format!("Export failed: {error}"),
-                }
-            }
-            FileMode::ExportDxf => match crate::export::export_dxf(&document) {
-                Ok(dxf) => match std::fs::write(path, dxf) {
-                    Ok(()) => {
-                        let report = FileReport::new("Export DXF", path.display().to_string())
-                            .with_summary("Objects", document.objects.len().to_string())
-                            .with_summary("Format", "LWPOLYLINE subset");
-                        self.status = report.headline();
-                        self.show_report(report);
-                    }
-                    Err(error) => self.status = format!("Export failed: {error}"),
-                },
-                Err(error) => self.status = format!("Export failed: {error}"),
-            },
-            FileMode::ExportGcode => {
-                match crate::gcode::export_job(
-                    &document,
-                    path,
-                    &crate::gcode::JobOptions::default(),
-                ) {
-                    Ok(report) => {
-                        let file_report =
-                            FileReport::new("Export G-code", path.display().to_string())
-                                .with_summary("Paths", report.paths.to_string())
-                                .with_summary("Lines", report.lines.to_string())
-                                .with_summary("Bytes", report.bytes.to_string())
-                                .with_summary("Estimated", format!("{:.1} s", report.seconds))
-                                .with_warnings(report.warnings);
-                        self.status = file_report.headline();
-                        self.show_report(file_report);
-                    }
-                    Err(error) => self.status = format!("Export failed: {error}"),
-                }
-            }
+            FileMode::ExportPng
+            | FileMode::ExportDxf
+            | FileMode::ExportGcode
+            | FileMode::ExportSvg => self.start_export(mode, path, document),
             FileMode::RelinkImage => self.relink_image(path),
-            FileMode::ExportSvg => match crate::export::export_svg(&document) {
-                Ok(svg) => match std::fs::write(path, svg) {
-                    Ok(()) => {
-                        let report = FileReport::new("Export SVG", path.display().to_string())
-                            .with_summary("Objects", document.objects.len().to_string());
-                        self.status = report.headline();
-                        self.show_report(report);
-                    }
-                    Err(error) => self.status = format!("Export failed: {error}"),
-                },
-                Err(error) => self.status = format!("Export failed: {error}"),
-            },
         }
     }
 
@@ -962,6 +964,28 @@ impl BeamWrightApp {
             })
         }));
         self.status = "Importing...".to_string();
+    }
+
+    fn start_export(&mut self, mode: FileMode, path: &Path, document: crate::document::Document) {
+        if self.task.is_some() {
+            self.status = "Another operation is still running".to_string();
+            return;
+        }
+        let path = path.to_path_buf();
+        let label = format!("Exporting {}", path.display());
+        let worker_path = path.clone();
+        self.task = Some(crate::task::BackgroundTask::spawn(label, move |cancel| {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            Some(TaskResult::Export(run_export(
+                mode,
+                &worker_path,
+                &document,
+                cancel,
+            )))
+        }));
+        self.status = "Exporting...".to_string();
     }
 
     fn apply_import(&mut self, path: &Path, outcome: crate::import::format::ImportOutcome) {
@@ -3904,13 +3928,26 @@ impl BeamWrightApp {
             }
             crate::task::TaskPoll::Cancelled => {
                 self.task = None;
-                self.status = "Import cancelled".to_string();
+                self.status = "Cancelled".to_string();
             }
             crate::task::TaskPoll::Finished(TaskResult::Import { path, outcome }) => {
                 self.task = None;
                 match outcome {
                     Ok(outcome) => self.apply_import(&path, outcome),
                     Err(error) => self.status = format!("Import failed: {error}"),
+                }
+            }
+            crate::task::TaskPoll::Finished(TaskResult::Export(result)) => {
+                self.task = None;
+                match result {
+                    Ok(report) => {
+                        self.status = report.headline();
+                        self.show_report(report);
+                    }
+                    Err(error) if error == "Cancelled" => {
+                        self.status = "Export cancelled".to_string();
+                    }
+                    Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
         }
@@ -3937,9 +3974,9 @@ impl BeamWrightApp {
         if cancel {
             if let Some(task) = &self.task {
                 task.cancel();
+                self.status = format!("Cancelled: {}", task.label());
             }
             self.task = None;
-            self.status = "Import cancelled".to_string();
         }
     }
 
