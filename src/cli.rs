@@ -246,12 +246,14 @@ pub fn run(cli: Cli) -> Result<()> {
             token,
         }) => {
             if live {
-                crate::bridge::proxy_stdio(
-                    &host,
-                    port,
-                    token.or_else(crate::bridge::configured_token),
-                )
-                .map_err(BeamError::InvalidInput)?;
+                let token = token.or_else(crate::bridge::configured_token).or_else(|| {
+                    if host == "127.0.0.1" || host == "localhost" {
+                        crate::bridge::stored_token()
+                    } else {
+                        None
+                    }
+                });
+                crate::bridge::proxy_stdio(&host, port, token).map_err(BeamError::InvalidInput)?;
             } else {
                 let mut server = crate::mcp::McpServer::new();
                 server.serve_stdio()?;
@@ -266,13 +268,17 @@ pub fn run(cli: Cli) -> Result<()> {
         }) => {
             println!(
                 "{}",
-                crate::bridge::request(
-                    &host,
-                    port,
-                    token.or_else(crate::bridge::configured_token),
-                    &json
-                )
-                .map_err(BeamError::InvalidInput)?
+                let token = token
+                    .or_else(crate::bridge::configured_token)
+                    .or_else(|| {
+                        if host == "127.0.0.1" || host == "localhost" {
+                            crate::bridge::stored_token()
+                        } else {
+                            None
+                        }
+                    });
+                crate::bridge::request(&host, port, token, &json)
+                    .map_err(BeamError::InvalidInput)?
             );
             Ok(())
         }

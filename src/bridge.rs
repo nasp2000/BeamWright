@@ -10,6 +10,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Port used when `BEAMWRIGHT_BRIDGE_PORT` is not set.
@@ -22,8 +23,12 @@ pub const PORT_ENV: &str = "BEAMWRIGHT_BRIDGE_PORT";
 /// address to accept connections from other machines.
 pub const ADDRESS_ENV: &str = "BEAMWRIGHT_BRIDGE_ADDR";
 
-/// Shared secret required for non-loopback connections.
+/// Shared secret required for every connection. Generated on first use when the
+/// environment variable is absent and stored in the user data directory.
 pub const TOKEN_ENV: &str = "BEAMWRIGHT_BRIDGE_TOKEN";
+
+/// File holding the generated token, readable only by the user on Unix.
+pub const TOKEN_FILE: &str = "bridge.token";
 
 /// One request read from a client, with the channel used to answer it.
 pub struct BridgeRequest {
@@ -105,6 +110,7 @@ fn serve_client(stream: TcpStream, sender: Sender<BridgeRequest>, token: Option<
     let Ok(reader_stream) = stream.try_clone() else {
         return;
     };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(600)));
     let reader = BufReader::new(reader_stream);
     let mut writer = stream;
     let mut lines = reader.lines().map_while(Result::ok);
@@ -120,7 +126,7 @@ fn serve_client(stream: TcpStream, sender: Sender<BridgeRequest>, token: Option<
                     .and_then(|token| token.as_str())
                     .map(str::to_owned)
             })
-            .is_some_and(|value| value == *expected);
+            .is_some_and(|value| tokens_equal(&value, expected));
         if !authorized {
             let _ = writeln!(
                 writer,
@@ -252,6 +258,66 @@ fn authenticate(mut stream: TcpStream, token: &str) -> Result<(), String> {
     } else {
         Err("the editor rejected the bridge token".to_string())
     }
+}
+
+/// File that holds the generated bridge token.
+pub fn token_path() -> PathBuf {
+    crate::config::paths::data_dir().join(TOKEN_FILE)
+}
+
+/// Token to require, from the environment or generated once and stored.
+///
+/// The file is created with user-only permissions on Unix, so another local
+/// account cannot read the token; a process of the same user can, but that
+/// account can already read the user's documents.
+pub fn effective_token() -> String {
+    if let Some(token) = configured_token() {
+        return token;
+    }
+    let path = token_path();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            return existing;
+        }
+    }
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::write(&path, &token).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    token
+}
+
+/// Token stored on this machine, if any.
+pub fn stored_token() -> Option<String> {
+    std::fs::read_to_string(token_path())
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn tokens_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
 }
 
 /// Port from the environment, or the default.

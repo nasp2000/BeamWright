@@ -710,6 +710,14 @@ impl BeamWrightApp {
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
+        let bridge_address = crate::bridge::configured_address();
+        let bridge_network_token = crate::bridge::configured_token();
+        let bridge_network = !bridge_address.is_loopback() && bridge_network_token.is_some();
+        let bridge_bind = if bridge_network {
+            bridge_address
+        } else {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        };
         let machines_path = crate::machines::default_path();
         let machines =
             crate::machines::MachineLibrary::load_or_default(&machines_path).unwrap_or_default();
@@ -779,9 +787,9 @@ impl BeamWrightApp {
             cuts_drag: None,
             cuts_drag_target: None,
             bridge: crate::bridge::LiveBridge::start(
-                crate::bridge::configured_address(),
+                bridge_bind,
                 crate::bridge::configured_port(),
-                crate::bridge::configured_token(),
+                Some(crate::bridge::effective_token()),
             ),
             live_server: crate::mcp::McpServer::new(),
             preferences: preferences.clone(),
@@ -869,10 +877,7 @@ impl BeamWrightApp {
                     bridge.port()
                 );
             }
-            if !bridge.is_network()
-                && !crate::bridge::configured_address().is_loopback()
-                && crate::bridge::configured_token().is_none()
-            {
+            if !bridge.is_network() && !bridge_address.is_loopback() {
                 app.status = "Live bridge kept on localhost: set BEAMWRIGHT_BRIDGE_TOKEN to expose it on the network".to_string();
             }
         }
