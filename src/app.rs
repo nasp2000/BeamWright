@@ -4645,6 +4645,7 @@ impl BeamWrightApp {
     fn material_test_window(&mut self, ctx: &egui::Context) {
         let mut open = self.material_test_open;
         let mut generate = false;
+        let mut close_requested = false;
         egui::Window::new("Material test")
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
@@ -4749,10 +4750,13 @@ impl BeamWrightApp {
                         generate = true;
                     }
                     if ui.button("Close").clicked() {
-                        open = false;
+                        close_requested = true;
                     }
                 });
             });
+        if close_requested {
+            open = false;
+        }
         if generate {
             self.editor.record_action("Material test");
             match crate::material_test::generate(
