@@ -176,6 +176,8 @@ pub struct EditorState {
     pub snap_tolerance_px: f64,
     /// Draw millimetre rulers along the top and left edges.
     pub show_rulers: bool,
+    /// Draw selection outlines and handles around selected objects.
+    pub show_selection: bool,
     /// Colour used for selection outlines and handles.
     pub selection_color: String,
     /// Shape used for node handles.
@@ -223,6 +225,7 @@ impl EditorState {
             snap_limits: false,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            show_selection: true,
             selection_color: "#008CFF".to_string(),
             handle_style: HandleStyle::Square,
             zoom_step: 1.25,

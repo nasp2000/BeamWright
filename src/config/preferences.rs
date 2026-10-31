@@ -171,6 +171,7 @@ mod tests {
         preferences.drawing.select_whole_group = false;
         preferences.drawing.scroll_zoom_step = 1.2;
         preferences.drawing.max_image_pixels = 20_000_000;
+        preferences.drawing.show_selection = false;
         preferences.general.theme = "dark".to_string();
         preferences.save(&path).unwrap();
         let loaded = AppPreferences::load_or_default(&path).unwrap();
@@ -188,6 +189,7 @@ mod tests {
         assert!(!loaded.drawing.select_whole_group);
         assert!((loaded.drawing.scroll_zoom_step - 1.2).abs() < 1e-9);
         assert_eq!(loaded.drawing.max_image_pixels, 20_000_000);
+        assert!(!loaded.drawing.show_selection);
         assert!(!loaded.drawing.snap_midpoints);
         assert_eq!(loaded.general.theme, "dark");
         assert!(!path.with_extension("json.tmp").exists());

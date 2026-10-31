@@ -646,7 +646,7 @@ fn paint_path(painter: &Painter, rect: Rect, editor: &EditorState, path: &Path, 
 }
 
 fn paint_selection(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
-    if editor.selection.is_empty() {
+    if !editor.show_selection || editor.selection.is_empty() {
         return;
     }
     let color = crate::color::parse_hex_color(&editor.selection_color)

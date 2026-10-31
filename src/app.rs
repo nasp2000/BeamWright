@@ -571,6 +571,7 @@ impl BeamWrightApp {
         editor.snap_intersections = preferences.drawing.snap_intersections;
         editor.snap_limits = preferences.drawing.snap_limits;
         editor.show_rulers = preferences.drawing.show_rulers;
+        editor.show_selection = preferences.drawing.show_selection;
         editor
             .selection_color
             .clone_from(&preferences.drawing.selection_color);
@@ -2201,6 +2202,16 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     icons::checkbox(ui, &mut self.editor.canvas.grid_visible, Icon::Grid, "Show grid");
+                    if icons::checkbox(
+                        ui,
+                        &mut self.editor.show_selection,
+                        Icon::Eye,
+                        "Show selection",
+                    )
+                    .changed()
+                    {
+                        self.preferences.drawing.show_selection = self.editor.show_selection;
+                    }
                     icons::checkbox(ui, &mut self.editor.show_rulers, Icon::Rulers, "Show rulers");
                     icons::checkbox(ui, &mut self.editor.guides_visible, Icon::Guides, "Show guides");
                     icons::checkbox(ui, &mut self.editor.snap_guides, Icon::Snap, "Snap to guides");
@@ -2254,36 +2265,169 @@ impl BeamWrightApp {
         });
     }
 
+    fn tool_strip(&mut self, ui: &mut Ui) {
+        egui::Panel::left("tool_strip")
+            .resizable(false)
+            .exact_size(56.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        for tool in [
+                            Tool::Select,
+                            Tool::Pencil,
+                            Tool::Rect,
+                            Tool::Ellipse,
+                            Tool::Polygon,
+                            Tool::Star,
+                            Tool::Line,
+                            Tool::Bezier,
+                            Tool::Text,
+                            Tool::Measure,
+                            Tool::Pan,
+                        ] {
+                            if icons::icon_button(
+                                ui,
+                                self.editor.tool == tool,
+                                tool_icon(tool),
+                                26.0,
+                                tool.label(),
+                            )
+                            .on_hover_text(tool_help(tool))
+                            .clicked()
+                            {
+                                self.editor.tool = tool;
+                            }
+                        }
+                        ui.separator();
+                        let has_selection = !self.editor.selection.is_empty();
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::Duplicate,
+                            22.0,
+                            "Duplicate",
+                        )
+                        .on_hover_text("Duplicate the selection")
+                        .clicked()
+                        {
+                            self.editor.duplicate_selection();
+                        }
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::Delete,
+                            22.0,
+                            "Delete",
+                        )
+                        .on_hover_text("Delete the selection")
+                        .clicked()
+                        {
+                            self.editor.delete_selection();
+                        }
+                        ui.separator();
+                        let two_selected = self.editor.selection.len() == 2;
+                        for op in crate::geometry::BooleanOp::all() {
+                            if icons::icon_button_enabled(
+                                ui,
+                                two_selected,
+                                Icon::Boolean,
+                                22.0,
+                                op.label(),
+                            )
+                            .on_hover_text(format!("{} the two selected objects", op.label()))
+                            .clicked()
+                            {
+                                self.apply_boolean(op);
+                            }
+                        }
+                        ui.separator();
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::Nodes,
+                            22.0,
+                            "Edit nodes",
+                        )
+                        .on_hover_text("Edit the nodes of one path")
+                        .clicked()
+                        {
+                            if let Some(id) = self.editor.selection.ids().first().cloned() {
+                                match self.editor.begin_node_edit(&id) {
+                                    Ok(()) => {
+                                        self.status =
+                                            "Editing nodes: drag to move, double-click a segment to insert"
+                                                .to_string();
+                                    }
+                                    Err(error) => {
+                                        self.status = format!("Cannot edit nodes: {error}");
+                                    }
+                                }
+                            }
+                        }
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::GridArray,
+                            22.0,
+                            "Grid array",
+                        )
+                        .on_hover_text("Copy the selection in a grid")
+                        .clicked()
+                        {
+                            self.grid_array_open = true;
+                        }
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::Repeat,
+                            22.0,
+                            "Circular array",
+                        )
+                        .on_hover_text("Copy the selection around a circle")
+                        .clicked()
+                        {
+                            self.repeat_open = true;
+                        }
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::Offset,
+                            22.0,
+                            "Offset",
+                        )
+                        .on_hover_text("Offset the selection by the radius")
+                        .clicked()
+                        {
+                            self.offset_open = true;
+                        }
+                        if icons::icon_button_enabled(
+                            ui,
+                            has_selection,
+                            Icon::OutlineStroke,
+                            22.0,
+                            "Outline stroke",
+                        )
+                        .on_hover_text("Convert the stroke into an outline")
+                        .clicked()
+                        {
+                            self.apply_outline_stroke();
+                        }
+                        ui.separator();
+                        ui.label("Radius");
+                        ui.add(
+                            egui::DragValue::new(&mut self.offset_distance)
+                                .speed(0.1)
+                                .range(0.1..=50.0)
+                                .suffix(" mm"),
+                        );
+                    });
+                });
+            });
+    }
+
     fn toolbar(&mut self, ui: &mut Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                for tool in [
-                    Tool::Select,
-                    Tool::Line,
-                    Tool::Rect,
-                    Tool::Ellipse,
-                    Tool::Polygon,
-                    Tool::Star,
-                    Tool::Text,
-                    Tool::Measure,
-                    Tool::Bezier,
-                    Tool::Pencil,
-                    Tool::Pan,
-                ] {
-                    if icons::selectable_at(
-                        ui,
-                        self.editor.tool == tool,
-                        tool_icon(tool),
-                        tool.label(),
-                        22.0,
-                    )
-                    .on_hover_text(tool_help(tool))
-                    .clicked()
-                    {
-                        self.editor.tool = tool;
-                    }
-                }
-                ui.separator();
                 if ui
                     .add_enabled(
                         self.editor.history.can_undo(),
@@ -2302,24 +2446,7 @@ impl BeamWrightApp {
                 {
                     self.redo();
                 }
-                if ui
-                    .add_enabled(
-                        !self.editor.selection.is_empty(),
-                        icons::widget_at(ui, Icon::Duplicate, "Duplicate", 20.0),
-                    )
-                    .clicked()
-                {
-                    self.editor.duplicate_selection();
-                }
-                if ui
-                    .add_enabled(
-                        !self.editor.selection.is_empty(),
-                        icons::widget_at(ui, Icon::Delete, "Delete", 20.0),
-                    )
-                    .clicked()
-                {
-                    self.editor.delete_selection();
-                }
+
                 if self.editor.tool == Tool::Polygon {
                     ui.add(
                         egui::DragValue::new(&mut self.polygon_sides)
@@ -3903,6 +4030,16 @@ impl BeamWrightApp {
             Icon::Grid,
             "Show grid",
         );
+        if icons::checkbox(
+            ui,
+            &mut self.editor.show_selection,
+            Icon::Eye,
+            "Show selection",
+        )
+        .changed()
+        {
+            self.preferences.drawing.show_selection = self.editor.show_selection;
+        }
         icons::checkbox(
             ui,
             &mut self.editor.show_rulers,
@@ -5284,6 +5421,12 @@ impl BeamWrightApp {
                     )
                     .changed();
                 changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.show_selection,
+                        "Show selection outlines and handles",
+                    )
+                    .changed();
+                changed |= ui
                     .checkbox(&mut self.preferences.drawing.guides_visible, "Show guides")
                     .changed();
                 changed |= ui
@@ -5351,6 +5494,7 @@ impl BeamWrightApp {
                     self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
                     self.editor.snap_limits = self.preferences.drawing.snap_limits;
                     self.editor.show_rulers = self.preferences.drawing.show_rulers;
+                    self.editor.show_selection = self.preferences.drawing.show_selection;
                     self.editor
                         .selection_color
                         .clone_from(&self.preferences.drawing.selection_color);
@@ -6295,6 +6439,7 @@ impl eframe::App for BeamWrightApp {
         self.menu_bar(ui);
         self.toolbar(ui);
         self.status_bar(ui);
+        self.tool_strip(ui);
         if self.show_layers_panel {
             self.layers_panel(ui);
         }

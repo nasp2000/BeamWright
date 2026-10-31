@@ -93,6 +93,7 @@ impl Default for DrawingPrefs {
             grid_spacing_mm: 10.0,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            show_selection: true,
             snap_step_mm: 1.0,
             snap_enabled: false,
             snap_nodes: false,

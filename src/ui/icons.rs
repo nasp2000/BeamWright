@@ -1247,6 +1247,32 @@ pub fn checkbox(
     checkbox_at(ui, checked, icon, text, ICON_SIZE)
 }
 
+/// Icon-only button for the vertical tool strip.
+pub fn icon_button(ui: &mut Ui, selected: bool, icon: Icon, size: f32, label: &str) -> Response {
+    let image = image_at(ui.ctx(), icon, size);
+    let button = egui::Button::selectable(selected, image).image_tint_follows_text_color(true);
+    let response = ui.add(button);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+    });
+    response
+}
+
+/// Icon-only button that may be disabled.
+pub fn icon_button_enabled(
+    ui: &mut Ui,
+    enabled: bool,
+    icon: Icon,
+    size: f32,
+    label: &str,
+) -> Response {
+    let image = image_at(ui.ctx(), icon, size);
+    let button = egui::Button::new(image).image_tint_follows_text_color(true);
+    let response = ui.add_enabled(enabled, button);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response
+}
+
 /// Like [`checkbox`], with an explicit icon size for the toolbar.
 pub fn checkbox_at(
     ui: &mut Ui,

@@ -48,6 +48,22 @@ impl FileMode {
         }
     }
 
+    /// Human-readable list of what the browser shows for this mode.
+    fn filter_hint(self) -> &'static str {
+        match self {
+            FileMode::OpenProject => "Shows .bwp and .svg files",
+            FileMode::SaveProject => "Saves .bwp files",
+            FileMode::ImportFile => {
+                "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif and .tiff files"
+            }
+            FileMode::ExportSvg => "Saves .svg files",
+            FileMode::ExportDxf => "Saves .dxf files",
+            FileMode::ExportPng => "Saves .png files",
+            FileMode::ExportGcode => "Saves .nc and .gcode files",
+            FileMode::RelinkImage => "Shows .png, .jpg, .jpeg, .bmp, .tif and .tiff files",
+        }
+    }
+
     fn accepts(self, path: &Path) -> bool {
         let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
             return false;
@@ -81,6 +97,10 @@ pub struct FileDialog {
     pub directory: PathBuf,
     pub file_name: String,
     pub error: Option<String>,
+    /// List every file, not only the formats the mode accepts.
+    show_all_files: bool,
+    /// Editable copy of the current folder, so a path can be typed.
+    path_text: String,
 }
 
 pub enum DialogResult {
@@ -102,15 +122,20 @@ impl FileDialog {
                     .to_string(),
             ),
             None => (
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                home_directory()
+                    .or_else(|| std::env::current_dir().ok())
+                    .unwrap_or_else(|| PathBuf::from(".")),
                 suggested_name.to_string(),
             ),
         };
+        let path_text = directory.display().to_string();
         Self {
             mode,
             directory,
             file_name,
             error: None,
+            show_all_files: false,
+            path_text,
         }
     }
 
@@ -127,14 +152,36 @@ impl FileDialog {
                     if ui.button("Up").clicked() {
                         if let Some(parent) = self.directory.parent() {
                             self.directory = parent.to_path_buf();
+                            self.path_text = self.directory.display().to_string();
                         }
                     }
                     if ui.button("Home").clicked() {
                         if let Some(home) = home_directory() {
                             self.directory = home;
+                            self.path_text = self.directory.display().to_string();
                         }
                     }
                     ui.label(self.directory.display().to_string());
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Folder");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.path_text)
+                            .desired_width(f32::INFINITY),
+                    );
+                    let go = ui.button("Go").clicked()
+                        || (response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+                    if go {
+                        let candidate = PathBuf::from(self.path_text.trim());
+                        if candidate.is_dir() {
+                            self.directory = candidate;
+                            self.path_text = self.directory.display().to_string();
+                            self.error = None;
+                        } else {
+                            self.error = Some(format!("Folder not found: {}", candidate.display()));
+                        }
+                    }
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -164,7 +211,7 @@ impl FileDialog {
                     if ui.button("Cancel").clicked() {
                         result = DialogResult::Cancelled;
                     }
-                    ui.label(format!("Files must use .{}", self.mode.default_extension()));
+                    ui.label(self.mode.filter_hint());
                 });
             });
         if !open && matches!(result, DialogResult::Pending) {
@@ -174,6 +221,7 @@ impl FileDialog {
     }
 
     fn listing(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.show_all_files, "Show all files");
         let entries = match std::fs::read_dir(&self.directory) {
             Ok(entries) => entries,
             Err(error) => {
@@ -190,12 +238,15 @@ impl FileDialog {
             let path = entry.path();
             if path.is_dir() {
                 directories.push(path);
-            } else if self.mode.accepts(&path) {
+            } else if self.show_all_files || self.mode.accepts(&path) {
                 files.push(path);
             }
         }
         directories.sort();
         files.sort();
+        if directories.is_empty() && files.is_empty() {
+            ui.weak("This folder is empty or has no supported files.");
+        }
         for directory in directories {
             let name = directory
                 .file_name()
@@ -205,6 +256,7 @@ impl FileDialog {
                 .selectable_label(false, format!("[dir] {name}"))
                 .clicked()
             {
+                self.path_text = directory.display().to_string();
                 self.directory = directory;
                 self.error = None;
             }
@@ -267,7 +319,9 @@ impl FileDialog {
 }
 
 fn home_directory() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -313,6 +367,27 @@ mod tests {
         );
         assert!(FileMode::ExportGcode.accepts(std::path::Path::new("a.gcode")));
         assert!(!FileMode::ExportGcode.accepts(std::path::Path::new("a.svg")));
+    }
+
+    #[test]
+    fn import_hint_lists_images_and_vectors() {
+        let hint = FileMode::ImportFile.filter_hint();
+        for extension in [
+            ".svg", ".dxf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff",
+        ] {
+            assert!(hint.contains(extension), "{hint} misses {extension}");
+        }
+        assert!(FileMode::OpenProject.filter_hint().contains(".bwp"));
+    }
+
+    #[test]
+    fn a_new_dialog_starts_in_a_real_folder() {
+        let dialog = FileDialog::new(FileMode::ImportFile, None, "drawing.svg");
+        assert!(
+            dialog.directory.is_dir(),
+            "{} is not a folder",
+            dialog.directory.display()
+        );
     }
 
     #[test]
