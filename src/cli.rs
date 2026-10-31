@@ -266,15 +266,13 @@ pub fn run(cli: Cli) -> Result<()> {
             port,
             token,
         }) => {
-            let token = token
-                .or_else(crate::bridge::configured_token)
-                .or_else(|| {
-                    if host == "127.0.0.1" || host == "localhost" {
-                        crate::bridge::stored_token()
-                    } else {
-                        None
-                    }
-                });
+            let token = token.or_else(crate::bridge::configured_token).or_else(|| {
+                if host == "127.0.0.1" || host == "localhost" {
+                    crate::bridge::stored_token()
+                } else {
+                    None
+                }
+            });
             println!(
                 "{}",
                 crate::bridge::request(&host, port, token, &json)
