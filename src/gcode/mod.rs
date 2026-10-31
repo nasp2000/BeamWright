@@ -6,9 +6,10 @@ pub mod writer;
 
 pub use dialect::{GCodeOptions, LaserMode};
 pub use job::{
-    JobOptions, JobReport, build_toolpaths, build_toolpaths_cancellable, estimate_seconds,
-    export_job, export_job_cancellable, order_by_operation, order_toolpaths, planned_toolpaths,
-    planned_toolpaths_cancellable, render_job, render_job_cancellable, validate_bounds,
+    JobOptions, JobReport, bounds_warnings, build_toolpaths, build_toolpaths_cancellable,
+    estimate_seconds, export_job, export_job_cancellable, order_by_operation, order_toolpaths,
+    planned_toolpaths, planned_toolpaths_cancellable, render_job, render_job_cancellable,
+    validate_bounds,
 };
 pub use playback::{Playback, PlaybackPosition, PlaybackSegment};
 pub use toolpath::{MoveKind, Toolpath};

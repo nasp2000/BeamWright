@@ -558,8 +558,7 @@ fn order_group(toolpaths: &mut [Toolpath]) {
 }
 
 /// Validate that every move stays inside the document work area.
-pub fn validate_bounds(document: &Document, toolpaths: &[Toolpath]) -> Result<()> {
-    let tolerance = 1e-6;
+pub fn validate_bounds(_document: &Document, toolpaths: &[Toolpath]) -> Result<()> {
     for toolpath in toolpaths {
         for movement in &toolpath.moves {
             if !movement.x.is_finite() || !movement.y.is_finite() {
@@ -568,19 +567,38 @@ pub fn validate_bounds(document: &Document, toolpaths: &[Toolpath]) -> Result<()
                     toolpath.name
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+/// Report geometry that extends beyond the work area.
+///
+/// Working outside the page is allowed (the job is still generated); the report
+/// tells the operator so they can reposition or resize the work area.
+pub fn bounds_warnings(document: &Document, toolpaths: &[Toolpath]) -> Vec<String> {
+    let tolerance = 1e-6;
+    let mut warnings = Vec::new();
+    for toolpath in toolpaths {
+        let mut outside = false;
+        for movement in &toolpath.moves {
             if movement.x < -tolerance
                 || movement.y < -tolerance
                 || movement.x > document.width_mm + tolerance
                 || movement.y > document.height_mm + tolerance
             {
-                return Err(BeamError::InvalidInput(format!(
-                    "'{}' leaves the {:.1} x {:.1} mm work area at ({:.3}, {:.3})",
-                    toolpath.name, document.width_mm, document.height_mm, movement.x, movement.y
-                )));
+                outside = true;
+                break;
             }
         }
+        if outside {
+            warnings.push(format!(
+                "'{}' extends outside the {:.1} x {:.1} mm work area; the job is generated as placed",
+                toolpath.name, document.width_mm, document.height_mm
+            ));
+        }
     }
-    Ok(())
+    warnings
 }
 
 /// Estimate job duration in seconds, including rapids.
@@ -648,7 +666,7 @@ pub fn render_job_cancellable(
     cancel: &dyn Fn() -> bool,
 ) -> Result<(String, JobReport)> {
     document.validate().map_err(BeamError::InvalidInput)?;
-    let (toolpaths, warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
+    let (toolpaths, mut warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
     if cancel() {
         return Err(cancelled());
     }
@@ -673,6 +691,7 @@ pub fn render_job_cancellable(
     if cancel() {
         return Err(cancelled());
     }
+    warnings.extend(bounds_warnings(document, &toolpaths));
     let text = GCodeWriter::new(options.gcode).render(&toolpaths);
     let report = JobReport {
         lines: text.lines().count(),
