@@ -101,6 +101,24 @@ impl Object {
     }
 }
 
+/// A horizontal or vertical guide line, in document millimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Guide {
+    pub id: String,
+    pub horizontal: bool,
+    pub position: f64,
+}
+
+impl Guide {
+    pub fn new(horizontal: bool, position: f64) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            horizontal,
+            position,
+        }
+    }
+}
+
 /// The main document (PLAN.md §4.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -113,6 +131,9 @@ pub struct Document {
     pub objects: Vec<Object>,
     #[serde(default)]
     pub operations: Vec<Operation>,
+    /// Guide lines drawn over the page and used by snapping.
+    #[serde(default)]
+    pub guides: Vec<Guide>,
     pub format_version: u32,
 }
 
@@ -215,6 +236,7 @@ impl Default for Document {
             layers: vec![Layer::new("Layer 1").with_color("#000000")],
             objects: Vec::new(),
             operations: Vec::new(),
+            guides: Vec::new(),
             format_version: CURRENT_FORMAT_VERSION,
         }
     }
@@ -228,6 +250,19 @@ impl Document {
             height_mm,
             ..Self::default()
         }
+    }
+
+    fn validate_guides(&self) -> Result<(), String> {
+        let mut guide_ids = std::collections::HashSet::new();
+        for guide in &self.guides {
+            if !guide.position.is_finite() {
+                return Err("guide position must be finite".to_string());
+            }
+            if !guide_ids.insert(guide.id.as_str()) {
+                return Err(format!("duplicate guide id: {}", guide.id));
+            }
+        }
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -308,6 +343,8 @@ impl Document {
             return Err("operation dependencies contain a cycle".to_string());
         }
 
+        self.validate_guides()?;
+
         let mut object_ids = std::collections::HashSet::new();
         for object in &self.objects {
             object.validate()?;
@@ -330,6 +367,17 @@ impl Document {
             }
         }
         Ok(())
+    }
+
+    pub fn add_guide(&mut self, horizontal: bool, position: f64) -> &Guide {
+        self.guides.push(Guide::new(horizontal, position));
+        self.guides.last().expect("guide was just pushed")
+    }
+
+    pub fn remove_guide(&mut self, id: &str) -> bool {
+        let before = self.guides.len();
+        self.guides.retain(|guide| guide.id != id);
+        self.guides.len() != before
     }
 
     pub fn add_layer(&mut self, name: impl Into<String>) -> &Layer {
@@ -470,6 +518,27 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn guides_round_trip_and_validate() {
+        let mut document = Document::default();
+        document.add_guide(true, 25.0);
+        document.add_guide(false, 10.0);
+        assert!(document.validate().is_ok());
+        let json = serde_json::to_string(&document).unwrap();
+        let loaded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.guides, document.guides);
+
+        document.guides[0].position = f64::NAN;
+        assert!(document.validate().is_err());
+        document.guides[0].position = 1.0;
+        document.guides[1].id = document.guides[0].id.clone();
+        assert!(document.validate().is_err());
+        document.guides[1].id = "other-guide".to_string();
+        let id = document.guides[0].id.clone();
+        assert!(document.remove_guide(&id));
+        assert_eq!(document.guides.len(), 1);
     }
 
     #[test]

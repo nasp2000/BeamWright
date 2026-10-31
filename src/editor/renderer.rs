@@ -111,6 +111,7 @@ pub fn paint_canvas(
         paint_grid(painter, rect, editor, theme);
     }
     if let Some(images) = overlays.images {
+        paint_guides(painter, rect, editor);
         paint_objects(painter, rect, editor, theme, images);
     } else {
         let empty = ImageTextures::new();
@@ -131,6 +132,36 @@ pub fn paint_canvas(
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+/// Draw the document guides.
+fn paint_guides(painter: &Painter, rect: Rect, editor: &EditorState) {
+    if !editor.guides_visible || editor.document.guides.is_empty() {
+        return;
+    }
+    let color = Color32::from_rgb(0, 150, 200);
+    for guide in &editor.document.guides {
+        let points = if guide.horizontal {
+            [
+                screen_pos(rect, editor, Point2::new(0.0, guide.position)),
+                screen_pos(
+                    rect,
+                    editor,
+                    Point2::new(editor.document.width_mm, guide.position),
+                ),
+            ]
+        } else {
+            [
+                screen_pos(rect, editor, Point2::new(guide.position, 0.0)),
+                screen_pos(
+                    rect,
+                    editor,
+                    Point2::new(guide.position, editor.document.height_mm),
+                ),
+            ]
+        };
+        painter.line_segment(points, Stroke::new(1.0, color));
+    }
 }
 
 /// Draw millimetre rulers along the top and left edges.

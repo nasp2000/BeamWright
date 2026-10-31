@@ -139,6 +139,8 @@ pub struct BeamWrightApp {
     operations_compare_open: bool,
     profile_pending: Option<(String, crate::profiles::OperationProfile)>,
     relink_target: Option<String>,
+    guides_open: bool,
+    guide_position: f64,
     profile_confirm_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
@@ -310,6 +312,8 @@ impl BeamWrightApp {
         editor.snap_intersections = preferences.drawing.snap_intersections;
         editor.snap_limits = preferences.drawing.snap_limits;
         editor.show_rulers = preferences.drawing.show_rulers;
+        editor.guides_visible = preferences.drawing.guides_visible;
+        editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
         let mut app = Self {
             editor,
@@ -397,6 +401,8 @@ impl BeamWrightApp {
             operations_compare_open: false,
             profile_pending: None,
             relink_target: None,
+            guides_open: false,
+            guide_position: 50.0,
             profile_confirm_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
@@ -735,6 +741,56 @@ impl BeamWrightApp {
                     });
             });
         self.operations_compare_open = open;
+    }
+
+    fn guides_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.guides_open;
+        egui::Window::new("Guides")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Position");
+                    ui.add(
+                        egui::DragValue::new(&mut self.guide_position)
+                            .speed(0.5)
+                            .suffix(" mm"),
+                    );
+                    if ui.button("Add horizontal").clicked() {
+                        self.editor.add_guide(true, self.guide_position);
+                    }
+                    if ui.button("Add vertical").clicked() {
+                        self.editor.add_guide(false, self.guide_position);
+                    }
+                });
+                ui.separator();
+                if self.editor.document.guides.is_empty() {
+                    ui.weak("No guides yet.");
+                }
+                let mut remove: Option<String> = None;
+                for guide in &self.editor.document.guides {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} at {:.2} mm",
+                            if guide.horizontal {
+                                "Horizontal"
+                            } else {
+                                "Vertical"
+                            },
+                            guide.position
+                        ));
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(guide.id.clone());
+                        }
+                    });
+                }
+                if let Some(id) = remove {
+                    self.editor.remove_guide(&id);
+                }
+            });
+        self.guides_open = open;
     }
 
     fn profile_confirm_window(&mut self, ctx: &egui::Context) {
@@ -1849,6 +1905,12 @@ impl BeamWrightApp {
                     ui.separator();
                     ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
                     ui.checkbox(&mut self.editor.show_rulers, "Show rulers");
+                    ui.checkbox(&mut self.editor.guides_visible, "Show guides");
+                    ui.checkbox(&mut self.editor.snap_guides, "Snap to guides");
+                    if ui.button("Guides...").clicked() {
+                        self.guides_open = true;
+                        ui.close();
+                    }
                     ui.menu_button("Snapping", |ui| {
                         ui.checkbox(&mut self.editor.snap_enabled, "Grid");
                         ui.checkbox(&mut self.editor.snap_nodes, "Nodes");
@@ -4527,6 +4589,12 @@ impl BeamWrightApp {
                         "Snap to object bounds",
                     )
                     .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.guides_visible, "Show guides")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_guides, "Snap to guides")
+                    .changed();
                 ui.separator();
                 ui.heading("General");
                 ui.horizontal(|ui| {
@@ -4581,6 +4649,8 @@ impl BeamWrightApp {
                     self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
                     self.editor.snap_limits = self.preferences.drawing.snap_limits;
                     self.editor.show_rulers = self.preferences.drawing.show_rulers;
+                    self.editor.guides_visible = self.preferences.drawing.guides_visible;
+                    self.editor.snap_guides = self.preferences.drawing.snap_guides;
                     self.dark_mode = self.preferences.general.theme == "dark";
                     match self.preferences.save(&self.preferences_path) {
                         Ok(()) => self.status = "Preferences saved".to_string(),
@@ -5370,6 +5440,9 @@ impl BeamWrightApp {
         }
         if self.profile_confirm_open {
             self.profile_confirm_window(ctx);
+        }
+        if self.guides_open {
+            self.guides_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

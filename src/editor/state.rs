@@ -145,6 +145,10 @@ pub struct EditorState {
     pub snap_tolerance_px: f64,
     /// Draw millimetre rulers along the top and left edges.
     pub show_rulers: bool,
+    /// Draw the document guides.
+    pub guides_visible: bool,
+    /// Snap drawing to visible guides.
+    pub snap_guides: bool,
     /// Centre used by rotate, scale and flip.
     pub transform_center: TransformCenter,
     /// Path object whose nodes are being edited.
@@ -178,6 +182,8 @@ impl EditorState {
             snap_limits: false,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            guides_visible: true,
+            snap_guides: true,
             transform_center: TransformCenter::Selection,
             node_object: None,
             node_selection: Vec::new(),
@@ -232,7 +238,8 @@ impl EditorState {
             || self.snap_centers
             || self.snap_midpoints
             || self.snap_intersections
-            || self.snap_limits)
+            || self.snap_limits
+            || self.snap_guides)
         {
             return None;
         }
@@ -253,69 +260,17 @@ impl EditorState {
             if !object.visible {
                 continue;
             }
-            let path = object.world_path();
-            if path.segments.is_empty() {
-                continue;
+            for candidate in self.object_snap_candidates(object) {
+                consider(candidate);
             }
-            if self.snap_nodes {
-                for segment in &path.segments {
-                    match *segment {
-                        Segment::Line { from, to } => {
-                            consider(from);
-                            consider(to);
-                        }
-                        Segment::Cubic(c) => {
-                            consider(c.p0);
-                            consider(c.p3);
-                        }
-                    }
-                }
-            }
-            if self.snap_endpoints && !path.closed {
-                if let Some(start) = path.start_point() {
-                    consider(start);
-                }
-                if let Some(end) = path.last_point() {
-                    consider(end);
-                }
-            }
-            if self.snap_midpoints {
-                for segment in &path.segments {
-                    consider(match *segment {
-                        Segment::Line { from, to } => {
-                            Point2::new(f64::midpoint(from.x, to.x), f64::midpoint(from.y, to.y))
-                        }
-                        Segment::Cubic(cubic) => cubic.eval(0.5),
-                    });
-                }
-            }
-            if self.snap_centers || self.snap_limits {
-                if let Some((min, max)) = object.bounds() {
-                    if self.snap_centers {
-                        consider(Point2::new(
-                            f64::midpoint(min.x, max.x),
-                            f64::midpoint(min.y, max.y),
-                        ));
-                    }
-                    if self.snap_limits {
-                        for corner in [
-                            Point2::new(min.x, min.y),
-                            Point2::new(max.x, min.y),
-                            Point2::new(max.x, max.y),
-                            Point2::new(min.x, max.y),
-                        ] {
-                            consider(corner);
-                        }
-                        for edge in [
-                            Point2::new(f64::midpoint(min.x, max.x), min.y),
-                            Point2::new(max.x, f64::midpoint(min.y, max.y)),
-                            Point2::new(f64::midpoint(min.x, max.x), max.y),
-                            Point2::new(min.x, f64::midpoint(min.y, max.y)),
-                        ] {
-                            consider(edge);
-                        }
-                    }
-                }
+        }
+        if self.snap_guides && self.guides_visible {
+            for guide in &self.document.guides {
+                consider(if guide.horizontal {
+                    Point2::new(point.x, guide.position)
+                } else {
+                    Point2::new(guide.position, point.y)
+                });
             }
         }
         if self.snap_intersections {
@@ -324,6 +279,70 @@ impl EditorState {
             }
         }
         best.map(|(_, candidate)| candidate)
+    }
+
+    /// Nodes, endpoints, midpoints, centres and bounds that can be snapped to.
+    fn object_snap_candidates(&self, object: &crate::document::Object) -> Vec<Point2> {
+        let mut candidates = Vec::new();
+        let path = object.world_path();
+        if path.segments.is_empty() {
+            return candidates;
+        }
+        if self.snap_nodes {
+            for segment in &path.segments {
+                match *segment {
+                    Segment::Line { from, to } => {
+                        candidates.push(from);
+                        candidates.push(to);
+                    }
+                    Segment::Cubic(c) => {
+                        candidates.push(c.p0);
+                        candidates.push(c.p3);
+                    }
+                }
+            }
+        }
+        if self.snap_endpoints && !path.closed {
+            if let Some(start) = path.start_point() {
+                candidates.push(start);
+            }
+            if let Some(end) = path.last_point() {
+                candidates.push(end);
+            }
+        }
+        if self.snap_midpoints {
+            for segment in &path.segments {
+                candidates.push(match *segment {
+                    Segment::Line { from, to } => {
+                        Point2::new(f64::midpoint(from.x, to.x), f64::midpoint(from.y, to.y))
+                    }
+                    Segment::Cubic(cubic) => cubic.eval(0.5),
+                });
+            }
+        }
+        if (self.snap_centers || self.snap_limits) && object.bounds().is_some() {
+            if let Some((min, max)) = object.bounds() {
+                if self.snap_centers {
+                    candidates.push(Point2::new(
+                        f64::midpoint(min.x, max.x),
+                        f64::midpoint(min.y, max.y),
+                    ));
+                }
+                if self.snap_limits {
+                    candidates.extend([
+                        Point2::new(min.x, min.y),
+                        Point2::new(max.x, min.y),
+                        Point2::new(max.x, max.y),
+                        Point2::new(min.x, max.y),
+                        Point2::new(f64::midpoint(min.x, max.x), min.y),
+                        Point2::new(max.x, f64::midpoint(min.y, max.y)),
+                        Point2::new(f64::midpoint(min.x, max.x), max.y),
+                        Point2::new(min.x, f64::midpoint(min.y, max.y)),
+                    ]);
+                }
+            }
+        }
+        candidates
     }
 
     /// Crossings between different objects' segments near `point`.
@@ -670,6 +689,24 @@ impl EditorState {
             Shape::Path(Path::from_nodes(nodes, closed)),
             Transform2::identity(),
         )
+    }
+
+    /// Add a horizontal or vertical guide at a document position.
+    pub fn add_guide(&mut self, horizontal: bool, position: f64) -> Option<String> {
+        if !position.is_finite() {
+            return None;
+        }
+        self.record_action("Add guide");
+        Some(self.document.add_guide(horizontal, position).id.clone())
+    }
+
+    /// Remove a guide by id.
+    pub fn remove_guide(&mut self, id: &str) -> bool {
+        if self.document.guides.iter().all(|guide| guide.id != id) {
+            return false;
+        }
+        self.record_action("Remove guide");
+        self.document.remove_guide(id)
     }
 
     /// Insert a text object whose anchor is `at`, selected and ready to edit.
@@ -4996,6 +5033,38 @@ mod tests {
                 .relink_image("missing", std::path::Path::new("x.png"), 4, 4)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn guides_can_be_added_removed_and_snapped_to() {
+        let mut editor = editor();
+        let guide = editor.add_guide(true, 25.0).unwrap();
+        assert_eq!(editor.document.guides.len(), 1);
+        editor.snap_guides = true;
+        editor.snap_tolerance_px = 3.0;
+        assert_eq!(
+            editor.snap(Point2::new(10.0, 24.5)),
+            Point2::new(10.0, 25.0)
+        );
+        editor.snap_guides = false;
+        assert_eq!(
+            editor.snap(Point2::new(10.0, 24.5)),
+            Point2::new(10.0, 24.5)
+        );
+        editor.guides_visible = false;
+        editor.snap_guides = true;
+        assert_eq!(
+            editor.snap(Point2::new(10.0, 24.5)),
+            Point2::new(10.0, 24.5)
+        );
+
+        editor.guides_visible = true;
+        assert!(editor.remove_guide(&guide));
+        assert_eq!(editor.document.guides.len(), 0);
+        assert!(editor.undo().is_some());
+        assert_eq!(editor.document.guides.len(), 1);
+        assert!(!editor.remove_guide("missing"));
+        assert!(editor.add_guide(false, f64::NAN).is_none());
     }
 
     #[test]

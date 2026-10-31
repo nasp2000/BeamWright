@@ -61,6 +61,12 @@ pub struct DrawingPrefs {
     /// Snap drawing to object bounding-box corners and edges.
     #[serde(default)]
     pub snap_limits: bool,
+    /// Draw the document guides.
+    #[serde(default = "default_true")]
+    pub guides_visible: bool,
+    /// Snap drawing to visible guides.
+    #[serde(default)]
+    pub snap_guides: bool,
 }
 
 impl Default for DrawingPrefs {
@@ -77,6 +83,8 @@ impl Default for DrawingPrefs {
             snap_midpoints: false,
             snap_intersections: false,
             snap_limits: false,
+            guides_visible: true,
+            snap_guides: false,
         }
     }
 }
