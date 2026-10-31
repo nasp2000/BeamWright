@@ -603,6 +603,10 @@ impl BeamWrightApp {
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
+        let machines_path = crate::machines::default_path();
+        let machines =
+            crate::machines::MachineLibrary::load_or_default(&machines_path).unwrap_or_default();
+        let machine_wizard_open = !machines.first_run_done;
         let recovery_path = crate::config::paths::recovery_path();
         let recovery_timestamp = std::fs::metadata(&recovery_path)
             .and_then(|metadata| metadata.modified())
@@ -652,17 +656,10 @@ impl BeamWrightApp {
             image_original_previews: std::collections::HashMap::new(),
             image_adjust: None,
             image_adjust_snapshot: None,
-            machines: crate::machines::MachineLibrary::load_or_default(
-                &crate::machines::default_path(),
-            )
-            .unwrap_or_default(),
-            machines_path: crate::machines::default_path(),
+            machines,
+            machines_path,
             machines_open: false,
-            machine_wizard_open: crate::machines::MachineLibrary::load_or_default(
-                &crate::machines::default_path(),
-            )
-            .map(|library| !library.first_run_done)
-            .unwrap_or(true),
+            machine_wizard_open,
             machine_editor: crate::machines::MachineProfile::default(),
             machine_edit_id: None,
             machine_error: None,

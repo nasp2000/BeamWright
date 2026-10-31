@@ -188,7 +188,8 @@ mod tests {
                 .is_err()
         );
         assert_eq!(library.machines.len(), 1);
-        assert!(library.remove(&library.machines[0].id));
+        let id = library.machines[0].id.clone();
+        assert!(library.remove(&id));
         assert!(library.machines.is_empty());
     }
 
