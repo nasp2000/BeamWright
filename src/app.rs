@@ -5681,6 +5681,7 @@ impl BeamWrightApp {
         let mut reset = false;
         let mut export_prepared = false;
         let mut apply_all = false;
+        let mut compare = false;
         let mut preset: Option<crate::objects::ImageSettings> = None;
         egui::Window::new(format!("Adjust image - {object_name}"))
             .pivot(egui::Align2::CENTER_CENTER)
@@ -5844,6 +5845,7 @@ impl BeamWrightApp {
                     if ui.button("Apply to selected images").clicked() {
                         apply_all = true;
                     }
+                    ui.checkbox(&mut compare, "Compare with original");
                     if ui.button("Photo").clicked() {
                         preset = Some(crate::objects::ImageSettings {
                             mode: crate::objects::ImageMode::Jarvis,
@@ -5966,7 +5968,11 @@ impl BeamWrightApp {
             .find(|object| object.id == id)
         {
             if let crate::document::Shape::Image(current) = &mut current.shape {
-                current.settings = image.settings;
+                current.settings = if compare {
+                    original.settings
+                } else {
+                    image.settings
+                };
             }
         }
         if apply_all {
