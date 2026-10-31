@@ -5812,6 +5812,20 @@ impl BeamWrightApp {
                             ..crate::objects::ImageSettings::default()
                         });
                     }
+                    if ui.button("Newsprint").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::Newsprint,
+                            contrast: 1.2,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
+                    if ui.button("Sketch").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::Sketch,
+                            contrast: 1.3,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("OK").clicked() {
                             close = true;
