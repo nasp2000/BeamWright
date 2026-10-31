@@ -4,7 +4,7 @@ pub mod playback;
 pub mod toolpath;
 pub mod writer;
 
-pub use dialect::{GCodeOptions, LaserMode};
+pub use dialect::{Dialect, GCodeOptions, LaserMode};
 pub use job::{
     JobOptions, JobReport, bounds_warnings, build_toolpaths, build_toolpaths_cancellable,
     estimate_seconds, export_job, export_job_cancellable, order_by_operation, order_toolpaths,

@@ -1,3 +1,46 @@
+/// G-code dialect written by the job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dialect {
+    #[default]
+    Grbl,
+    Marlin,
+    Smoothie,
+    LinuxCnc,
+}
+
+impl Dialect {
+    pub fn label(self) -> &'static str {
+        match self {
+            Dialect::Grbl => "GRBL",
+            Dialect::Marlin => "Marlin",
+            Dialect::Smoothie => "SmoothieWare",
+            Dialect::LinuxCnc => "LinuxCNC",
+        }
+    }
+
+    pub fn all() -> [Dialect; 4] {
+        [
+            Dialect::Grbl,
+            Dialect::Marlin,
+            Dialect::Smoothie,
+            Dialect::LinuxCnc,
+        ]
+    }
+
+    /// Only GRBL distinguishes dynamic (`M4`) from constant (`M3`) power.
+    pub fn supports_dynamic_power(self) -> bool {
+        self == Dialect::Grbl
+    }
+
+    pub fn laser_command(self, constant: bool) -> &'static str {
+        if self.supports_dynamic_power() && !constant {
+            "M4"
+        } else {
+            "M3"
+        }
+    }
+}
+
 /// Laser power reporting mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LaserMode {
@@ -21,6 +64,7 @@ impl LaserMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GCodeOptions {
     pub laser_mode: LaserMode,
+    pub dialect: Dialect,
     /// Number of decimals for coordinates.
     pub decimals: u8,
     pub line_ending_crlf: bool,
@@ -32,6 +76,7 @@ impl Default for GCodeOptions {
     fn default() -> Self {
         Self {
             laser_mode: LaserMode::DynamicPower,
+            dialect: Dialect::Grbl,
             decimals: 3,
             line_ending_crlf: false,
             include_comments: true,

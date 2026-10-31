@@ -294,6 +294,7 @@ pub struct BeamWrightApp {
     cuts_drag: Option<usize>,
     cuts_drag_target: Option<usize>,
     material_test_open: bool,
+    gcode_dialect: crate::gcode::Dialect,
     material_test_options: crate::material_test::Options,
     bridge: Option<crate::bridge::LiveBridge>,
     live_server: crate::mcp::McpServer,
@@ -372,6 +373,7 @@ fn run_export(
     document: &crate::document::Document,
     cancel: &std::sync::atomic::AtomicBool,
     offset_origin: bool,
+    dialect: crate::gcode::Dialect,
 ) -> std::result::Result<FileReport, String> {
     let cancelled = || {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -408,6 +410,10 @@ fn run_export(
                 path,
                 &crate::gcode::JobOptions {
                     offset_to_origin: offset_origin,
+                    gcode: crate::gcode::GCodeOptions {
+                        dialect,
+                        ..crate::gcode::GCodeOptions::default()
+                    },
                     ..crate::gcode::JobOptions::default()
                 },
                 &cancelled_flag,
@@ -798,6 +804,7 @@ impl BeamWrightApp {
             cuts_drag: None,
             cuts_drag_target: None,
             material_test_open: false,
+            gcode_dialect: crate::gcode::Dialect::default(),
             material_test_options: crate::material_test::Options::default(),
             bridge: crate::bridge::LiveBridge::start(
                 bridge_bind,
@@ -1447,6 +1454,7 @@ impl BeamWrightApp {
             return;
         }
         let path = path.to_path_buf();
+        let dialect = self.gcode_dialect;
         let label = format!("Exporting {}", path.display());
         let worker_path = path.clone();
         self.task = Some(crate::task::BackgroundTask::spawn(label, move |cancel| {
@@ -1459,6 +1467,7 @@ impl BeamWrightApp {
                 &document,
                 cancel,
                 offset_origin,
+                dialect,
             )))
         }));
         self.status = "Exporting...".to_string();
@@ -4833,6 +4842,18 @@ impl BeamWrightApp {
             .default_size([760.0, 560.0])
             .show(ctx, |ui| {
                 ui.label("One row per cut. Output controls the job, Show controls the preview, Air emits M8/M9.");
+                ui.horizontal(|ui| {
+                    ui.label("G-code dialect");
+                    let mut dialect = self.gcode_dialect;
+                    egui::ComboBox::from_id_salt("gcode_dialect")
+                        .selected_text(dialect.label())
+                        .show_ui(ui, |ui| {
+                            for candidate in crate::gcode::Dialect::all() {
+                                ui.selectable_value(&mut dialect, candidate, candidate.label());
+                            }
+                        });
+                    self.gcode_dialect = dialect;
+                });
                 ui.separator();
                 let mut row_centers: Vec<(usize, f32)> = Vec::new();
                 egui::ScrollArea::vertical()
