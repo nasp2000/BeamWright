@@ -230,12 +230,12 @@ fn audit(path: &Path, peer: SocketAddr, tool: &str, status: u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::{BURST, Bucket, allow, is_loopback};
-
-    const BURST_REQUESTS: u32 = 40;
+    use super::{Bucket, allow, is_loopback};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::time::Instant;
+
+    const BURST_REQUESTS: u32 = 40;
 
     #[test]
     fn loopback_detection_works() {
