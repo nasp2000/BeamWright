@@ -65,6 +65,16 @@ pub fn square_corner(start: Point2, end: Point2) -> Point2 {
     )
 }
 
+/// Corner for an exact-size drag, keeping the drag direction.
+pub fn sized_corner(start: Point2, end: Point2, width: f64, height: f64) -> Point2 {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    Point2::new(
+        start.x + width.abs() * if dx < 0.0 { -1.0 } else { 1.0 },
+        start.y + height.abs() * if dy < 0.0 { -1.0 } else { 1.0 },
+    )
+}
+
 /// Constrain a drag to multiples of `step_degrees`, keeping its length.
 pub fn constrain_angle(start: Point2, end: Point2, step_degrees: f64) -> Point2 {
     let dx = end.x - start.x;
@@ -83,7 +93,7 @@ pub fn constrain_angle(start: Point2, end: Point2, step_degrees: f64) -> Point2 
 
 #[cfg(test)]
 mod tests {
-    use super::{Point2, constrain_angle, square_corner};
+    use super::{Point2, constrain_angle, sized_corner, square_corner};
 
     const EPS: f64 = 1e-9;
 
@@ -126,6 +136,17 @@ mod tests {
         assert!((constrained.distance(start) - near_horizontal.distance(start)).abs() < 1e-9);
         let diagonal = constrain_angle(start, Point2::new(10.0, 9.0), 45.0);
         assert!((diagonal.x - diagonal.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sized_corner_keeps_the_direction() {
+        let start = Point2::new(5.0, 5.0);
+        let corner = sized_corner(start, Point2::new(1.0, 2.0), 20.0, 10.0);
+        assert!((corner.x + 15.0).abs() < EPS);
+        assert!((corner.y + 5.0).abs() < EPS);
+        let corner = sized_corner(start, Point2::new(30.0, 40.0), 20.0, 10.0);
+        assert!((corner.x - 25.0).abs() < EPS);
+        assert!((corner.y - 15.0).abs() < EPS);
     }
 
     #[test]

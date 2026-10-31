@@ -141,6 +141,9 @@ pub struct BeamWrightApp {
     relink_target: Option<String>,
     guides_open: bool,
     guide_position: f64,
+    exact_size: bool,
+    exact_width: f64,
+    exact_height: f64,
     profile_confirm_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
@@ -403,6 +406,9 @@ impl BeamWrightApp {
             relink_target: None,
             guides_open: false,
             guide_position: 50.0,
+            exact_size: false,
+            exact_width: 20.0,
+            exact_height: 10.0,
             profile_confirm_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
@@ -2025,6 +2031,23 @@ impl BeamWrightApp {
                     );
                     ui.label("sides");
                 }
+                if matches!(self.editor.tool, Tool::Rect | Tool::Ellipse) {
+                    ui.checkbox(&mut self.exact_size, "Exact size");
+                    if self.exact_size {
+                        ui.add(
+                            egui::DragValue::new(&mut self.exact_width)
+                                .speed(0.5)
+                                .range(0.01..=10000.0)
+                                .suffix(" mm W"),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut self.exact_height)
+                                .speed(0.5)
+                                .range(0.01..=10000.0)
+                                .suffix(" mm H"),
+                        );
+                    }
+                }
                 if matches!(self.editor.tool, Tool::Rect | Tool::Ellipse | Tool::Line) {
                     ui.weak("Shift: square/circle or 45° steps");
                 }
@@ -3629,42 +3652,61 @@ impl BeamWrightApp {
     fn finish_drag(&mut self, drag: DragState) {
         match drag {
             DragState::Draw {
-                tool, start, end, ..
-            } => match tool {
-                Tool::Rect => {
-                    self.editor.add_rectangle(start, end);
-                }
-                Tool::Ellipse => {
-                    self.editor.add_ellipse(start, end);
-                }
-                Tool::Line => {
-                    self.editor.add_line(start, end);
-                }
-                Tool::Polygon => {
-                    self.editor.add_polygon(
-                        Point2::new(f64::midpoint(start.x, end.x), f64::midpoint(start.y, end.y)),
+                tool,
+                start,
+                mut end,
+                ..
+            } => {
+                if self.exact_size && matches!(tool, Tool::Rect | Tool::Ellipse) {
+                    end = crate::geometry::point::sized_corner(
+                        start,
                         end,
-                        self.polygon_sides,
+                        self.exact_width,
+                        self.exact_height,
                     );
                 }
-                Tool::Star => {
-                    self.editor.add_star(
-                        Point2::new(f64::midpoint(start.x, end.x), f64::midpoint(start.y, end.y)),
-                        end,
-                        self.star_points,
-                        self.star_inner,
-                    );
+                match tool {
+                    Tool::Rect => {
+                        self.editor.add_rectangle(start, end);
+                    }
+                    Tool::Ellipse => {
+                        self.editor.add_ellipse(start, end);
+                    }
+                    Tool::Line => {
+                        self.editor.add_line(start, end);
+                    }
+                    Tool::Polygon => {
+                        self.editor.add_polygon(
+                            Point2::new(
+                                f64::midpoint(start.x, end.x),
+                                f64::midpoint(start.y, end.y),
+                            ),
+                            end,
+                            self.polygon_sides,
+                        );
+                    }
+                    Tool::Star => {
+                        self.editor.add_star(
+                            Point2::new(
+                                f64::midpoint(start.x, end.x),
+                                f64::midpoint(start.y, end.y),
+                            ),
+                            end,
+                            self.star_points,
+                            self.star_inner,
+                        );
+                    }
+                    Tool::Text => {
+                        self.editor.add_text(start);
+                    }
+                    Tool::Measure => {
+                        let distance = start.distance(end);
+                        let angle = (end.y - start.y).atan2(end.x - start.x).to_degrees();
+                        self.status = format!("Distance {distance:.2} mm at {angle:.1}°");
+                    }
+                    _ => {}
                 }
-                Tool::Text => {
-                    self.editor.add_text(start);
-                }
-                Tool::Measure => {
-                    let distance = start.distance(end);
-                    let angle = (end.y - start.y).atan2(end.x - start.x).to_degrees();
-                    self.status = format!("Distance {distance:.2} mm at {angle:.1}°");
-                }
-                _ => {}
-            },
+            }
             DragState::Sketch { points } => {
                 if self.editor.add_polyline(&points, false).is_some() {
                     self.status = "Freehand path created".to_string();
