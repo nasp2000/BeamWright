@@ -5614,6 +5614,7 @@ impl BeamWrightApp {
         let mut cancel = false;
         let mut reset = false;
         let mut export_prepared = false;
+        let mut apply_all = false;
         let mut preset: Option<crate::objects::ImageSettings> = None;
         egui::Window::new(format!("Adjust image - {object_name}"))
             .pivot(egui::Align2::CENTER_CENTER)
@@ -5762,6 +5763,9 @@ impl BeamWrightApp {
                     if ui.button("Export prepared PNG").clicked() {
                         export_prepared = true;
                     }
+                    if ui.button("Apply to selected images").clicked() {
+                        apply_all = true;
+                    }
                     if ui.button("Photo").clicked() {
                         preset = Some(crate::objects::ImageSettings {
                             mode: crate::objects::ImageMode::Jarvis,
@@ -5872,6 +5876,20 @@ impl BeamWrightApp {
             if let crate::document::Shape::Image(current) = &mut current.shape {
                 current.settings = image.settings;
             }
+        }
+        if apply_all {
+            let settings = image.settings;
+            let ids = self.editor.selection.ids().to_vec();
+            let mut applied = 0;
+            for object in &mut self.editor.document.objects {
+                if ids.iter().any(|id| id == &object.id) {
+                    if let crate::document::Shape::Image(target) = &mut object.shape {
+                        target.settings = settings;
+                        applied += 1;
+                    }
+                }
+            }
+            self.status = format!("Applied the image settings to {applied} image(s)");
         }
         if settings_changed {
             ctx.request_repaint();
