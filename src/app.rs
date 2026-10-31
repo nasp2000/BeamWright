@@ -129,6 +129,8 @@ pub struct BeamWrightApp {
     playback_error: Option<String>,
     gcode_text: String,
     preview_snapshot: Option<Document>,
+    preview_line_numbers: bool,
+    preview_order: bool,
 }
 
 /// Scale around a point, for direct property edits.
@@ -372,6 +374,8 @@ impl BeamWrightApp {
             playback_error: None,
             gcode_text: String::new(),
             preview_snapshot: None,
+            preview_line_numbers: false,
+            preview_order: false,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -2493,11 +2497,12 @@ impl BeamWrightApp {
                     dark: self.dark_mode,
                 };
                 let painter = ui.painter_at(rect);
-                let toolpaths = if self.preview_toolpaths {
-                    Some(crate::gcode::build_toolpaths(&self.editor.document).0)
-                } else {
-                    None
-                };
+                let toolpaths =
+                    if self.preview_toolpaths || (self.preview_open && self.preview_order) {
+                        Some(crate::gcode::build_toolpaths(&self.editor.document).0)
+                    } else {
+                        None
+                    };
                 self.refresh_image_previews(&ctx);
                 let textures: crate::editor::renderer::ImageTextures = self
                     .image_previews
@@ -2523,6 +2528,7 @@ impl BeamWrightApp {
                     images: Some(&textures),
                     playback: playback_overlay,
                     nest: nest_overlay,
+                    show_order: self.preview_open && self.preview_order,
                 };
                 paint_canvas(&painter, rect, &self.editor, theme, preview, &overlays);
 
@@ -2930,10 +2936,18 @@ impl BeamWrightApp {
                 } else {
                     ui.weak("The document has no toolpaths yet.");
                 }
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.preview_line_numbers, "Line numbers");
+                    ui.checkbox(&mut self.preview_order, "Processing order on canvas");
+                });
                 ui.weak(format!("Estimated job time: {duration:.1} s"));
                 ui.separator();
                 ui.heading("G-code");
-                let mut text = self.gcode_text.clone();
+                let mut text = if self.preview_line_numbers {
+                    crate::gcode::number_lines(&self.gcode_text)
+                } else {
+                    self.gcode_text.clone()
+                };
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
                     .show(ui, |ui| {

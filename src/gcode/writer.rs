@@ -33,10 +33,15 @@ impl GCodeWriter {
         let precision = self.options.decimals as usize;
         for (index, toolpath) in toolpaths.iter().enumerate() {
             if self.options.include_comments {
+                let operation = toolpath
+                    .operation_name
+                    .as_deref()
+                    .unwrap_or("Default parameters");
                 let _ = write!(
                     out,
-                    "(Operation {}: {} | F{:.0} S{:.0} x{}){newline}",
+                    "(Operation {}: {} - {} | F{:.0} S{:.0} x{}){newline}",
                     index + 1,
+                    operation.replace(['(', ')'], " "),
                     toolpath.name.replace(['(', ')'], " "),
                     toolpath.speed,
                     toolpath.power,

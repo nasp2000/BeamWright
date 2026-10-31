@@ -41,7 +41,7 @@ pub struct JobReport {
 }
 
 /// Parameters resolved for one object.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Resolved {
     speed: f64,
     power: f64,
@@ -52,6 +52,7 @@ struct Resolved {
     fill_alternate: bool,
     fill_margin_mm: f64,
     fill_offset_mm: f64,
+    operation_name: Option<String>,
 }
 
 fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
@@ -73,6 +74,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             fill_alternate: operation.params.fill_alternate,
             fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
             fill_offset_mm: operation.params.fill_offset_mm,
+            operation_name: Some(operation.name.clone()),
         }),
         None => {
             let params = OperationParams::default();
@@ -86,6 +88,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 fill_alternate: params.fill_alternate,
                 fill_margin_mm: params.fill_margin_mm.max(0.0),
                 fill_offset_mm: params.fill_offset_mm,
+                operation_name: None,
             })
         }
     }
@@ -149,7 +152,9 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                             resolved.passes,
                         );
                         append_contour(&mut toolpath, &points);
-                        toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
+                        let mut toolpath = toolpath.with_operation(object.operation_id.as_deref());
+                        toolpath.operation_name.clone_from(&resolved.operation_name);
+                        toolpaths.push(toolpath);
                     }
                 }
             }
@@ -214,7 +219,9 @@ fn raster_toolpath(
         return Ok(None);
     }
     Ok(Some(
-        toolpath.with_operation(object.operation_id.as_deref()),
+        toolpath
+            .with_operation(object.operation_id.as_deref())
+            .with_operation_name(resolved.operation_name.as_deref()),
     ))
 }
 
@@ -328,7 +335,9 @@ fn push_fill_toolpath(
         append_contour(&mut toolpath, points);
     }
     if !toolpath.is_empty() {
-        toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
+        let mut toolpath = toolpath.with_operation(object.operation_id.as_deref());
+        toolpath.operation_name.clone_from(&resolved.operation_name);
+        toolpaths.push(toolpath);
     }
 }
 
@@ -792,6 +801,8 @@ mod tests {
         let cut = text.find("F500 S800").expect("cut feed");
         let engrave = text.find("F3000 S150").expect("engrave feed");
         assert!(cut < engrave, "the cut operation must come first");
+        assert!(text.contains("(Operation 1: Cut - cut"));
+        assert!(text.contains("(Operation 2: Engrave - engrave"));
     }
 
     fn fill_document(params: OperationParams) -> Document {

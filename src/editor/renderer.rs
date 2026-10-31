@@ -1,6 +1,6 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
-use egui::{Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
 
 use crate::color::parse_hex_color;
 use crate::document::{Object, Shape};
@@ -93,6 +93,8 @@ pub struct CanvasOverlays<'a> {
     pub playback: Option<(&'a crate::gcode::Playback, f64)>,
     /// Proposed nesting positions, before they are applied.
     pub nest: Option<&'a [crate::editor::NestPlacement]>,
+    /// Label each toolpath with its position in the job.
+    pub show_order: bool,
 }
 
 pub fn paint_canvas(
@@ -115,7 +117,7 @@ pub fn paint_canvas(
         paint_objects(painter, rect, editor, theme, &empty);
     }
     if let Some(toolpaths) = overlays.toolpaths {
-        paint_toolpaths(painter, rect, editor, toolpaths);
+        paint_toolpaths(painter, rect, editor, toolpaths, overlays.show_order);
     }
     if let Some((playback, progress)) = overlays.playback {
         paint_playback(painter, rect, editor, playback, progress);
@@ -250,6 +252,7 @@ fn paint_toolpaths(
     rect: Rect,
     editor: &EditorState,
     toolpaths: &[crate::gcode::Toolpath],
+    show_order: bool,
 ) {
     const PALETTE: [Color32; 6] = [
         Color32::from_rgb(220, 80, 60),
@@ -273,6 +276,17 @@ fn paint_toolpaths(
             }
             None => PALETTE[index % PALETTE.len()],
         };
+        if show_order {
+            if let Some(start) = toolpath.start() {
+                painter.text(
+                    screen_pos(rect, editor, start) + Vec2::new(3.0, -3.0),
+                    Align2::LEFT_BOTTOM,
+                    format!("{}", index + 1),
+                    FontId::proportional(11.0),
+                    color,
+                );
+            }
+        }
         let mut previous: Option<Pos2> = None;
         for movement in &toolpath.moves {
             let point = screen_pos(rect, editor, Point2::new(movement.x, movement.y));

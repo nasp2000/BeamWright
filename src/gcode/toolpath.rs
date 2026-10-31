@@ -27,6 +27,8 @@ pub struct Toolpath {
     pub passes: u32,
     /// Operation the toolpath belongs to, when one was assigned.
     pub operation_id: Option<String>,
+    /// Name of that operation, for readable comments.
+    pub operation_name: Option<String>,
 }
 
 impl Toolpath {
@@ -38,12 +40,19 @@ impl Toolpath {
             power,
             passes: passes.max(1),
             operation_id: None,
+            operation_name: None,
         }
     }
 
     /// Attach the operation that produced this toolpath.
     pub fn with_operation(mut self, operation_id: Option<&str>) -> Self {
         self.operation_id = operation_id.map(str::to_string);
+        self
+    }
+
+    /// Attach the readable name of that operation.
+    pub fn with_operation_name(mut self, name: Option<&str>) -> Self {
+        self.operation_name = name.map(str::to_string);
         self
     }
 
