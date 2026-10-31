@@ -275,6 +275,43 @@ impl McpServer {
                 }
                 Ok(json!({"assigned": assigned}))
             }
+            "boolean" => {
+                let operation =
+                    string(arguments, "operation").ok_or_else(|| missing("operation"))?;
+                let op = parse_boolean_op(&operation)?;
+                let ids = arguments
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| missing("ids"))?;
+                self.select_ids(ids)?;
+                let contours = self
+                    .editor
+                    .boolean_selection(op)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "contours": contours,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
+            "offset" => {
+                let distance = number(arguments, "distance").ok_or_else(|| missing("distance"))?;
+                if let Some(ids) = arguments.get("ids").and_then(Value::as_array) {
+                    self.select_ids(ids)?;
+                } else {
+                    self.editor.selection.clear();
+                    for object in &self.editor.document.objects {
+                        self.editor.selection.add(object.id.clone());
+                    }
+                }
+                let count = self
+                    .editor
+                    .offset_selection(distance)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "offset": count,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "export_svg" => {
                 let path = required_path(arguments, "path")?;
                 let text = crate::export::export_svg(&self.editor.document)?;
@@ -318,6 +355,24 @@ impl McpServer {
             }
             other => Err(BeamError::InvalidInput(format!("unknown tool: {other}"))),
         }
+    }
+
+    fn select_ids(&mut self, ids: &[Value]) -> Result<()> {
+        let mut resolved = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = id
+                .as_str()
+                .ok_or_else(|| BeamError::InvalidInput("ids must be strings".to_string()))?;
+            if self.editor.document.object(id).is_none() {
+                return Err(BeamError::InvalidInput(format!("unknown object id: {id}")));
+            }
+            resolved.push(id.to_string());
+        }
+        self.editor.selection.clear();
+        for id in resolved {
+            self.editor.selection.add(id);
+        }
+        Ok(())
     }
 
     fn add_shape(&mut self, shape: Shape, transform: Transform2) -> Result<String> {
@@ -469,6 +524,22 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["operation"]}),
         ),
         tool_with(
+            "boolean",
+            "Combine exactly two closed shapes (union, difference, intersection, xor).",
+            json!({"type": "object", "properties": {
+                "operation": {"type": "string"},
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["operation", "ids"]}),
+        ),
+        tool_with(
+            "offset",
+            "Offset closed shapes in millimetres; positive expands, negative contracts.",
+            json!({"type": "object", "properties": {
+                "distance": {"type": "number"},
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["distance"]}),
+        ),
+        tool_with(
             "export_svg",
             "Export the current document as SVG.",
             json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
@@ -531,6 +602,18 @@ fn path_argument(arguments: &Value, key: &str) -> Option<PathBuf> {
 
 fn required_path(arguments: &Value, key: &str) -> Result<PathBuf> {
     path_argument(arguments, key).ok_or_else(|| missing(key))
+}
+
+fn parse_boolean_op(value: &str) -> Result<crate::geometry::BooleanOp> {
+    match value {
+        "union" => Ok(crate::geometry::BooleanOp::Union),
+        "difference" | "subtract" => Ok(crate::geometry::BooleanOp::Difference),
+        "intersection" => Ok(crate::geometry::BooleanOp::Intersection),
+        "xor" | "symmetric_difference" => Ok(crate::geometry::BooleanOp::Xor),
+        other => Err(BeamError::InvalidInput(format!(
+            "unknown boolean operation: {other}"
+        ))),
+    }
 }
 
 fn parse_operation_type(value: &str) -> Result<OperationType> {
@@ -602,6 +685,70 @@ mod tests {
         assert_eq!(list["result"]["objects"][0]["type"], "Rectangle");
         let deleted = call(&mut server, "delete_objects", json!({"ids": [id]}));
         assert_eq!(deleted["result"]["removed"], 1);
+    }
+
+    #[test]
+    fn boolean_and_offset_tools() {
+        let mut server = McpServer::new();
+        let first = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 5.0, "y": 5.0, "width": 10.0, "height": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let union = call(
+            &mut server,
+            "boolean",
+            json!({"operation": "union", "ids": [first, second]}),
+        );
+        assert_eq!(union["result"]["contours"], 1);
+        assert_eq!(union["result"]["objects"], 1);
+        let id = server.editor.document.objects[0].id.clone();
+        let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
+        assert_eq!(offset["result"]["offset"], 1);
+        assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn boolean_rejects_bad_input() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 4.0, "height": 4.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let unknown = call(
+            &mut server,
+            "boolean",
+            json!({"operation": "union", "ids": [id.clone(), "missing"]}),
+        );
+        assert!(unknown.get("error").is_some());
+        let single = call(
+            &mut server,
+            "boolean",
+            json!({"operation": "union", "ids": [id]}),
+        );
+        assert!(single.get("error").is_some());
+        let operation = call(
+            &mut server,
+            "boolean",
+            json!({"operation": "teleport", "ids": [id]}),
+        );
+        assert!(operation.get("error").is_some());
+        assert_eq!(server.editor.document.objects.len(), 1);
     }
 
     #[test]

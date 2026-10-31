@@ -330,3 +330,90 @@ fn cli_import_raster_png() {
     let _ = fs::remove_file(&source);
     let _ = fs::remove_file(&project);
 }
+
+fn two_rectangle_project(path: &std::path::Path) {
+    use beamwright::geometry::Point2;
+
+    let document = beamwright::document::Document::new("Boolean", 100.0, 100.0);
+    let mut editor = beamwright::editor::EditorState::new(document);
+    editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+    editor.add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0));
+    beamwright::document::serialization::save_to_file(&editor.document, path).unwrap();
+}
+
+#[test]
+fn cli_boolean_union_writes_one_contour() {
+    let source = temp_dir().join("bw_cli_bool.bwp");
+    let output = temp_dir().join("bw_cli_bool_out.bwp");
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+    two_rectangle_project(&source);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "boolean",
+        source.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "union",
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let document = beamwright::document::serialization::load_from_file(&output).unwrap();
+    assert_eq!(document.objects.len(), 1);
+    assert!(document.objects[0].name.starts_with("Union"));
+    let (min, max) = document.objects[0].bounds().unwrap();
+    assert!((min.x - 0.0).abs() < 1e-6);
+    assert!((max.x - 6.0).abs() < 1e-6);
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn cli_offset_grows_a_shape() {
+    use beamwright::geometry::Point2;
+
+    let source = temp_dir().join("bw_cli_offset.bwp");
+    let output = temp_dir().join("bw_cli_offset_out.bwp");
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+    let document = beamwright::document::Document::new("Offset", 100.0, 100.0);
+    let mut editor = beamwright::editor::EditorState::new(document);
+    editor.add_rectangle(Point2::new(10.0, 10.0), Point2::new(20.0, 20.0));
+    beamwright::document::serialization::save_to_file(&editor.document, &source).unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "offset",
+        source.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "2.0",
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let document = beamwright::document::serialization::load_from_file(&output).unwrap();
+    let (min, max) = document.objects[0].bounds().unwrap();
+    assert!((min.x - 8.0).abs() < 1e-6);
+    assert!((max.y - 22.0).abs() < 1e-6);
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn cli_boolean_rejects_unknown_ids() {
+    let source = temp_dir().join("bw_cli_bad_bool.bwp");
+    let output = temp_dir().join("bw_cli_bad_bool_out.bwp");
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&output);
+    two_rectangle_project(&source);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "boolean",
+        source.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "xor",
+        "--ids",
+        "missing",
+    ])
+    .unwrap();
+    assert!(run(cli).is_err());
+    assert!(!output.exists());
+    let _ = fs::remove_file(&source);
+}
