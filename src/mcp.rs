@@ -551,6 +551,13 @@ impl McpServer {
                     .map_err(BeamError::InvalidInput)?;
                 Ok(json!({"nodes": nodes}))
             }
+            "align_handles" => {
+                let index = index_argument(arguments, "index")?;
+                self.editor.node_selection.clear();
+                self.editor.node_selection.push(index);
+                let aligned = self.editor.align_selected_node_handles();
+                Ok(json!({"aligned": aligned}))
+            }
             "outline_stroke" => {
                 self.select_scope(arguments)?;
                 let count = self
@@ -1025,6 +1032,11 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["tolerance"]}),
         ),
         tool_with(
+            "align_handles",
+            "Align one node's two handles into a straight line.",
+            json!({"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"]}),
+        ),
+        tool_with(
             "outline_stroke",
             "Replace strokes by their outline contours (all objects when ids are omitted).",
             json!({"type": "object", "properties": {
@@ -1444,6 +1456,13 @@ mod tests {
         assert_eq!(deleted["result"]["nodes"], 4);
         let list = call(&mut server, "list_nodes", json!({}));
         assert_eq!(list["result"]["editing"], true);
+        call(
+            &mut server,
+            "convert_node",
+            json!({"index": 0, "smooth": true}),
+        );
+        let aligned = call(&mut server, "align_handles", json!({"index": 0}));
+        assert_eq!(aligned["result"]["aligned"], 1);
         call(&mut server, "end_node_edit", json!({}));
         assert!(!server.editor.is_editing_nodes());
     }

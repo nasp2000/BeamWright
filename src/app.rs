@@ -2232,6 +2232,13 @@ impl BeamWrightApp {
         });
         ui.horizontal(|ui| {
             if ui
+                .add_enabled(has_nodes, egui::Button::new("Align handles"))
+                .clicked()
+            {
+                let aligned = self.editor.align_selected_node_handles();
+                self.status = format!("Aligned {aligned} node handle(s)");
+            }
+            if ui
                 .add_enabled(
                     self.editor.node_selection.len() == 1,
                     egui::Button::new("Open at node"),

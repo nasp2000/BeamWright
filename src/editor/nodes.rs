@@ -265,6 +265,61 @@ impl EditorState {
         converted
     }
 
+    /// Align the handles of the selected nodes into one straight line.
+    ///
+    /// Each node keeps its handle lengths; both handles are rotated onto the
+    /// line through them. Returns how many nodes were aligned. Nodes without
+    /// both handles are skipped, and handles are otherwise independent, so
+    /// breaking a handle is just moving one side.
+    pub fn align_selected_node_handles(&mut self) -> usize {
+        if self.node_selection.is_empty() || self.node_path().is_none() {
+            return 0;
+        }
+        let indices = self.node_selection.clone();
+        let mut planned: Vec<(usize, Option<Point2>, Option<Point2>)> = Vec::new();
+        if let Some(path) = self.node_path() {
+            let nodes = path.nodes();
+            for index in indices {
+                let Some(node) = nodes.get(index) else {
+                    continue;
+                };
+                let (Some(handle_in), Some(handle_out)) = (node.handle_in, node.handle_out) else {
+                    continue;
+                };
+                let direction = Point2::new(handle_out.x - handle_in.x, handle_out.y - handle_in.y);
+                let length = (direction.x * direction.x + direction.y * direction.y).sqrt();
+                if length <= 1e-9 {
+                    continue;
+                }
+                let unit = Point2::new(direction.x / length, direction.y / length);
+                let incoming = node.point.distance(handle_in);
+                let outgoing = node.point.distance(handle_out);
+                planned.push((
+                    index,
+                    Some(Point2::new(
+                        node.point.x - unit.x * incoming,
+                        node.point.y - unit.y * incoming,
+                    )),
+                    Some(Point2::new(
+                        node.point.x + unit.x * outgoing,
+                        node.point.y + unit.y * outgoing,
+                    )),
+                ));
+            }
+        }
+        if planned.is_empty() {
+            return 0;
+        }
+        self.record_node_edit();
+        let aligned = planned.len();
+        if let Some(path) = self.node_path_mut() {
+            for (index, handle_in, handle_out) in planned {
+                path.set_node_handles(index, handle_in, handle_out);
+            }
+        }
+        aligned
+    }
+
     /// Move one handle of a node to an absolute position.
     pub fn set_node_handle(&mut self, index: usize, outgoing: bool, point: Point2) -> bool {
         let Some(path) = self.node_path() else {
@@ -553,6 +608,26 @@ mod tests {
         assert_eq!(editor.convert_selected_nodes(false), 1);
         assert!(editor.node_handles()[1].0.is_none());
         assert!(editor.node_handles()[1].1.is_none());
+    }
+
+    #[test]
+    fn handles_can_be_aligned() {
+        let mut editor = editor();
+        let path = open_polyline(&mut editor);
+        editor.begin_node_edit(&path).unwrap();
+        editor.select_node_at(Point2::new(10.0, 0.0), 0.5, false);
+        editor.convert_selected_nodes(true);
+        // Move one handle off the line through the node.
+        editor.set_node_handle(1, true, Point2::new(13.0, 4.0));
+        assert!(editor.set_node_handle(1, false, Point2::new(7.0, -1.0)));
+        assert_eq!(editor.align_selected_node_handles(), 1);
+        let (handle_in, handle_out) = editor.node_handles()[1];
+        let point = editor.node_points()[1];
+        let (handle_in, handle_out) = (handle_in.unwrap(), handle_out.unwrap());
+        let first = (point.x - handle_in.x, point.y - handle_in.y);
+        let second = (handle_out.x - point.x, handle_out.y - point.y);
+        assert!((first.0 * second.1 - first.1 * second.0).abs() < 1e-9);
+        assert!((point.distance(handle_in) - 10.0_f64.sqrt()).abs() < 1e-6);
     }
 
     #[test]
