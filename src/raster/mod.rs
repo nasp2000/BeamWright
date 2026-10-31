@@ -116,6 +116,18 @@ fn adjust(value: f32, settings: &ImageSettings) -> f32 {
     value.clamp(0.0, 255.0)
 }
 
+/// Pixel dimensions of an image file, without decoding all its pixels twice.
+pub fn image_dimensions(path: &std::path::Path) -> Result<(u32, u32)> {
+    let reader = image::ImageReader::open(path)
+        .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))?;
+    let reader = reader
+        .with_guessed_format()
+        .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))?;
+    reader
+        .into_dimensions()
+        .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))
+}
+
 /// Load an image and apply the object's crop, rotation and working size.
 ///
 /// The pipeline is non-destructive: the file is never written. Crop and rotation

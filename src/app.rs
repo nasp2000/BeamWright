@@ -138,6 +138,7 @@ pub struct BeamWrightApp {
     doc_properties_open: bool,
     operations_compare_open: bool,
     profile_pending: Option<(String, crate::profiles::OperationProfile)>,
+    relink_target: Option<String>,
     profile_confirm_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
@@ -395,6 +396,7 @@ impl BeamWrightApp {
             doc_properties_open: false,
             operations_compare_open: false,
             profile_pending: None,
+            relink_target: None,
             profile_confirm_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
@@ -463,6 +465,7 @@ impl BeamWrightApp {
             FileMode::ExportPng => format!("{stem}.png"),
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
+            FileMode::RelinkImage => "image.png".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
         };
         let default_directory = self.preferences.general.default_directory.trim();
@@ -543,6 +546,7 @@ impl BeamWrightApp {
                     Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
+            FileMode::RelinkImage => self.relink_image(path),
             FileMode::ExportSvg => match crate::export::export_svg(&document) {
                 Ok(svg) => match std::fs::write(path, svg) {
                     Ok(()) => {
@@ -555,6 +559,69 @@ impl BeamWrightApp {
                 },
                 Err(error) => self.status = format!("Export failed: {error}"),
             },
+        }
+    }
+
+    fn relink_image(&mut self, path: &Path) {
+        let Some(object_id) = self.relink_target.take() else {
+            self.status = "No image selected for relinking".to_string();
+            return;
+        };
+        match crate::raster::image_dimensions(path) {
+            Ok((width, height)) => {
+                match self.editor.relink_image(&object_id, path, width, height) {
+                    Ok(()) => {
+                        self.status = format!("Relinked image to {}", path.display());
+                    }
+                    Err(error) => self.status = format!("Relink failed: {error}"),
+                }
+            }
+            Err(error) => self.status = format!("Relink failed: {error}"),
+        }
+    }
+
+    fn collect_images(&mut self) {
+        let Some(project) = self.current_path.clone() else {
+            self.status = "Save the project before collecting its images".to_string();
+            return;
+        };
+        let stem = project
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("project");
+        let directory = project
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(format!("{stem}_assets"));
+        let has_images = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .any(|object| matches!(object.shape, crate::document::Shape::Image(_)));
+        if !has_images {
+            self.status = "The project has no images".to_string();
+            return;
+        }
+        self.editor.record_action("Collect images");
+        match self.editor.document.collect_images(&directory) {
+            Ok(report) => {
+                let mut file_report =
+                    FileReport::new("Collect images", directory.display().to_string())
+                        .with_summary("Copied", report.collected.len().to_string())
+                        .with_warnings(report.missing.clone());
+                if report.missing.is_empty() {
+                    file_report.summary.push((
+                        "Next".to_string(),
+                        "save the project to keep the new paths".to_string(),
+                    ));
+                }
+                self.status = file_report.headline();
+                self.show_report(file_report);
+            }
+            Err(error) => {
+                self.status = format!("Collect failed: {error}");
+            }
         }
     }
 
@@ -1143,6 +1210,19 @@ impl BeamWrightApp {
                     ui.separator();
                     if ui.button("Document properties...").clicked() {
                         self.doc_properties_open = true;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.current_path.is_some()
+                                && self.editor.document.objects.iter().any(|object| {
+                                    matches!(object.shape, crate::document::Shape::Image(_))
+                                }),
+                            egui::Button::new("Collect images..."),
+                        )
+                        .clicked()
+                    {
+                        self.collect_images();
                         ui.close();
                     }
                     if ui.button("Recover project...").clicked() {
@@ -2509,6 +2589,7 @@ impl BeamWrightApp {
     }
 
     fn object_properties(&mut self, ui: &mut Ui, id: &str) {
+        let mut relink_request = false;
         let layers: Vec<(String, String)> = self
             .editor
             .document
@@ -2717,7 +2798,12 @@ impl BeamWrightApp {
             Shape::Image(image) => {
                 use crate::objects::ImageMode;
                 ui.label("Image");
-                ui.label(&image.path);
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut image.path);
+                    if ui.button("Relink...").clicked() {
+                        relink_request = true;
+                    }
+                });
                 ui.weak(format!(
                     "{:.1} x {:.1} mm, source {} x {} px at {:.0} dpi",
                     image.width_mm(),
@@ -2853,6 +2939,10 @@ impl BeamWrightApp {
                 edit_color(ui, &mut object.style.fill);
                 ui.end_row();
             });
+        if relink_request {
+            self.relink_target = Some(id.to_string());
+            self.open_dialog(FileMode::RelinkImage);
+        }
     }
 
     fn node_properties(&mut self, ui: &mut Ui) {

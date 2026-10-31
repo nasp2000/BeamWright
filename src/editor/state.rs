@@ -612,6 +612,51 @@ impl EditorState {
         Ok(ids)
     }
 
+    /// Point an image object at another file.
+    ///
+    /// The new pixel size replaces the stored one; a crop that no longer fits is
+    /// cleared instead of leaving an invalid object.
+    pub fn relink_image(
+        &mut self,
+        object_id: &str,
+        path: &std::path::Path,
+        width_px: u32,
+        height_px: u32,
+    ) -> std::result::Result<(), String> {
+        let index = self
+            .document
+            .objects
+            .iter()
+            .position(|object| object.id == object_id)
+            .ok_or_else(|| format!("unknown object: {object_id}"))?;
+        self.ensure_editable(index)?;
+        let object = &self.document.objects[index];
+        if !matches!(object.shape, Shape::Image(_)) {
+            return Err(format!("'{}' is not an image", object.name));
+        }
+        if width_px == 0 || height_px == 0 {
+            return Err("the image has no pixels".to_string());
+        }
+        self.record_action("Relink image");
+        let object = &mut self.document.objects[index];
+        let Shape::Image(image) = &mut object.shape else {
+            return Ok(());
+        };
+        image.path = path.to_string_lossy().to_string();
+        image.width_px = width_px;
+        image.height_px = height_px;
+        if let Some(crop) = image.crop {
+            if crop.x >= width_px
+                || crop.y >= height_px
+                || crop.width > width_px - crop.x
+                || crop.height > height_px - crop.y
+            {
+                image.crop = None;
+            }
+        }
+        Ok(())
+    }
+
     /// Create a path from editable nodes (the pen tool's output).
     pub fn add_bezier_nodes(
         &mut self,
@@ -4908,6 +4953,49 @@ mod tests {
             .add_bezier_nodes(&[nodes[0], nodes[1]], true)
             .unwrap();
         assert!(editor.document.object(&closed).unwrap().world_path().closed);
+    }
+
+    #[test]
+    fn an_image_can_be_relinked() {
+        use crate::objects::{ImageCrop, ImageObject};
+
+        let mut editor = editor();
+        // Build an image object directly, since the editor has no image tool.
+        let layer = editor.document.layers[0].id.clone();
+        let mut image = ImageObject::new("old.png", 100, 50, 96.0);
+        image.crop = Some(ImageCrop {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 30,
+        });
+        let object = Object::new(layer, Shape::Image(image));
+        let image_id = object.id.clone();
+        editor.document.add_object(object);
+
+        assert!(
+            editor
+                .relink_image(&image_id, std::path::Path::new("new.png"), 40, 20)
+                .is_ok()
+        );
+        let Shape::Image(image) = &editor.document.object(&image_id).unwrap().shape else {
+            panic!("expected image");
+        };
+        assert_eq!(image.path, "new.png");
+        assert_eq!(image.effective_size_px(), (40, 20));
+        assert!(image.crop.is_none());
+        assert!(editor.undo().is_some());
+        let text = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        assert!(
+            editor
+                .relink_image(&text, std::path::Path::new("x.png"), 4, 4)
+                .is_err()
+        );
+        assert!(
+            editor
+                .relink_image("missing", std::path::Path::new("x.png"), 4, 4)
+                .is_err()
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub enum FileMode {
     ExportDxf,
     ExportPng,
     ExportGcode,
+    RelinkImage,
 }
 
 impl FileMode {
@@ -21,6 +22,7 @@ impl FileMode {
             FileMode::ExportDxf => "Export DXF",
             FileMode::ExportPng => "Export PNG",
             FileMode::ExportGcode => "Export G-code",
+            FileMode::RelinkImage => "Relink image",
         }
     }
 
@@ -32,6 +34,7 @@ impl FileMode {
             | FileMode::ExportDxf
             | FileMode::ExportPng
             | FileMode::ExportGcode => "Export",
+            FileMode::RelinkImage => "Relink",
         }
     }
 
@@ -40,7 +43,7 @@ impl FileMode {
             FileMode::SaveProject => "bwp",
             FileMode::ExportGcode => "nc",
             FileMode::ExportDxf => "dxf",
-            FileMode::ExportPng => "png",
+            FileMode::ExportPng | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
         }
     }
@@ -63,6 +66,12 @@ impl FileMode {
             FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportPng => extension == "png",
             FileMode::ExportGcode => extension == "nc" || extension == "gcode",
+            FileMode::RelinkImage => {
+                matches!(
+                    extension.as_str(),
+                    "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
+                )
+            }
         }
     }
 }
@@ -236,7 +245,7 @@ impl FileDialog {
             }
         }
         match self.mode {
-            FileMode::OpenProject | FileMode::ImportFile => {
+            FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
                 }

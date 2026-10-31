@@ -116,7 +116,82 @@ pub struct Document {
     pub format_version: u32,
 }
 
+/// What [`Document::collect_images`] did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CollectReport {
+    /// Original path and the path it was copied to.
+    pub collected: Vec<(String, String)>,
+    /// Image paths that no longer exist.
+    pub missing: Vec<String>,
+}
+
 impl Document {
+    /// Copy every image referenced by the project into `destination`.
+    ///
+    /// Paths are rewritten to the copied files, so moving the project and its
+    /// folder keeps it usable. Images that are missing are reported and left
+    /// untouched. Returns the mapping and the missing paths.
+    pub fn collect_images(
+        &mut self,
+        destination: &std::path::Path,
+    ) -> std::io::Result<CollectReport> {
+        use std::collections::HashMap;
+
+        std::fs::create_dir_all(destination)?;
+        let mut mapping: HashMap<String, String> = HashMap::new();
+        let mut report = CollectReport::default();
+        for object in &self.objects {
+            let Shape::Image(image) = &object.shape else {
+                continue;
+            };
+            if mapping.contains_key(&image.path) {
+                continue;
+            }
+            let source = std::path::Path::new(&image.path);
+            if !source.is_file() {
+                report.missing.push(image.path.clone());
+                continue;
+            }
+            let stem = source
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("image");
+            let extension = source
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("png");
+            let sanitized: String = stem
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                        character
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let mut name = format!("{sanitized}.{extension}");
+            let mut counter = 2;
+            while destination.join(&name).exists() {
+                name = format!("{sanitized}-{counter}.{extension}");
+                counter += 1;
+            }
+            let target = destination.join(&name);
+            std::fs::copy(source, &target)?;
+            let target_text = target.to_string_lossy().to_string();
+            mapping.insert(image.path.clone(), target_text.clone());
+            report.collected.push((image.path.clone(), target_text));
+        }
+        for object in &mut self.objects {
+            if let Shape::Image(image) = &mut object.shape {
+                if let Some(target) = mapping.get(&image.path) {
+                    image.path.clone_from(target);
+                }
+            }
+        }
+        Ok(report)
+    }
+
     /// Clone this document keeping only the objects whose identifiers are listed.
     ///
     /// Layers and operations are preserved so styles and assignments stay valid.
@@ -360,6 +435,41 @@ mod tests {
                 corner_radius: 0.0,
             },
         )
+    }
+
+    #[test]
+    fn images_are_collected_into_a_folder() {
+        let root = std::env::temp_dir().join("bw_collect_images");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("a/photo.png"), b"one").unwrap();
+        std::fs::write(root.join("b/photo.png"), b"two").unwrap();
+        let mut document = Document::default();
+        let layer = document.layers[0].id.clone();
+        for path in [
+            root.join("a/photo.png"),
+            root.join("a/photo.png"),
+            root.join("b/photo.png"),
+            root.join("missing.png"),
+        ] {
+            let image = crate::objects::ImageObject::new(path.to_string_lossy(), 4, 4, 96.0);
+            document.add_object(Object::new(layer.clone(), Shape::Image(image)));
+        }
+        let destination = root.join("assets");
+        let report = document.collect_images(&destination).unwrap();
+        assert_eq!(report.collected.len(), 2);
+        assert_eq!(report.missing.len(), 1);
+        assert!(destination.join("photo.png").is_file());
+        assert!(destination.join("photo-2.png").is_file());
+        for object in &document.objects {
+            if let Shape::Image(image) = &object.shape {
+                if !image.path.ends_with("missing.png") {
+                    assert!(image.path.contains("assets"));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
