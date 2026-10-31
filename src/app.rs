@@ -4049,13 +4049,13 @@ impl BeamWrightApp {
                         paths
                             .into_iter()
                             .filter(|path| {
-                                path.operation_id.as_deref().map_or(true, |id| {
+                                path.operation_id.as_deref().is_none_or(|id| {
                                     self.editor
                                         .document
                                         .operations
                                         .iter()
                                         .find(|operation| operation.id == id)
-                                        .map_or(true, |operation| operation.params.show_in_preview)
+                                        .is_none_or(|operation| operation.params.show_in_preview)
                                 })
                             })
                             .collect::<Vec<_>>(),

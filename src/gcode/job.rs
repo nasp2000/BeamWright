@@ -42,6 +42,7 @@ pub struct JobReport {
 
 /// Parameters resolved for one object.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 struct Resolved {
     speed: f64,
     power: f64,
