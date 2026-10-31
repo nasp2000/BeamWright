@@ -1391,6 +1391,16 @@ impl BeamWrightApp {
                         self.apply_text_on_path();
                         ui.close();
                     }
+                    ui.menu_button("Transform around", |ui| {
+                        use crate::editor::state::TransformCenter;
+                        for (mode, label) in [
+                            (TransformCenter::Selection, "Selection centre"),
+                            (TransformCenter::Page, "Page centre"),
+                            (TransformCenter::Object, "Each object's centre"),
+                        ] {
+                            ui.selectable_value(&mut self.editor.transform_center, mode, label);
+                        }
+                    });
                     if ui
                         .add_enabled(enabled, egui::Button::new("Reset transforms"))
                         .clicked()

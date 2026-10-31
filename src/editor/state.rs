@@ -39,6 +39,18 @@ impl Default for GridOptions {
     }
 }
 
+/// What transformations rotate and scale around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TransformCenter {
+    /// The centre of the selection's bounds.
+    #[default]
+    Selection,
+    /// The centre of the work area.
+    Page,
+    /// Each object's own centre.
+    Object,
+}
+
 /// Copy distribution modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
@@ -133,6 +145,8 @@ pub struct EditorState {
     pub snap_tolerance_px: f64,
     /// Draw millimetre rulers along the top and left edges.
     pub show_rulers: bool,
+    /// Centre used by rotate, scale and flip.
+    pub transform_center: TransformCenter,
     /// Path object whose nodes are being edited.
     pub node_object: Option<String>,
     /// Indices of the selected nodes in that path.
@@ -164,6 +178,7 @@ impl EditorState {
             snap_limits: false,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            transform_center: TransformCenter::Selection,
             node_object: None,
             node_selection: Vec::new(),
         }
@@ -1628,10 +1643,20 @@ impl EditorState {
         let Some((min, max)) = self.selected_bounds() else {
             return false;
         };
-        let center = Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
-        let moved = Transform2::translate(-center.x, -center.y);
-        let back = Transform2::translate(center.x, center.y);
-        let combined = back.compose(&transform.compose(&moved));
+        let mode = self.transform_center;
+        let page_center = Point2::new(self.document.width_mm / 2.0, self.document.height_mm / 2.0);
+        let centre_for = move |min: Point2, max: Point2| match mode {
+            TransformCenter::Page => page_center,
+            TransformCenter::Selection | TransformCenter::Object => {
+                Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y))
+            }
+        };
+        let around = |center: Point2| {
+            let moved = Transform2::translate(-center.x, -center.y);
+            let back = Transform2::translate(center.x, center.y);
+            back.compose(&transform.compose(&moved))
+        };
+        let combined = around(centre_for(min, max));
         self.record();
         let ids = self.selection.ids().to_vec();
         let mut changed = false;
@@ -1644,11 +1669,20 @@ impl EditorState {
             if layer_locked {
                 continue;
             }
+            let per_object = self
+                .document
+                .object(&id)
+                .and_then(Object::bounds)
+                .map(|(min, max)| around(centre_for(min, max)));
             if let Some(object) = self.document.object_mut(&id) {
                 if object.locked {
                     continue;
                 }
-                object.transform = combined.compose(&object.transform);
+                let applied = match mode {
+                    TransformCenter::Object => per_object.unwrap_or(combined),
+                    _ => combined,
+                };
+                object.transform = applied.compose(&object.transform);
                 changed = true;
             }
         }
@@ -4223,6 +4257,51 @@ mod tests {
         editor.nudge_selection(10.0, 0.0);
         assert!((editor.document.object(&id).unwrap().bounds().unwrap().0.x - 10.0).abs() < 1e-9);
         assert!(editor.undo());
+    }
+
+    #[test]
+    fn rotation_can_use_the_page_centre() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 2.0));
+        editor.select_all();
+        editor.transform_center = TransformCenter::Page;
+        assert!(editor.rotate_selection(std::f64::consts::FRAC_PI_2));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!(min.x > 140.0);
+        assert!(max.y < 0.0);
+    }
+
+    #[test]
+    fn each_object_can_rotate_around_its_own_centre() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 2.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 2.0))
+            .unwrap();
+        editor.select_all();
+        editor.transform_center = TransformCenter::Object;
+        editor.rotate_selection(std::f64::consts::FRAC_PI_2);
+        for id in [first, second] {
+            let (min, max) = editor.document.object(&id).unwrap().bounds().unwrap();
+            assert!((max.x - min.x - 2.0).abs() < 1e-6);
+            assert!((max.y - min.y - 10.0).abs() < 1e-6);
+        }
+        let (first_min, first_max) = editor
+            .document
+            .object(&editor.document.objects[0].id)
+            .unwrap()
+            .bounds()
+            .unwrap();
+        let (second_min, _) = editor
+            .document
+            .object(&editor.document.objects[1].id)
+            .unwrap()
+            .bounds()
+            .unwrap();
+        assert!((f64::midpoint(first_min.x, first_max.x) - 5.0).abs() < 1e-6);
+        assert!((second_min.x - 24.0).abs() < 1e-6);
     }
 
     #[test]
