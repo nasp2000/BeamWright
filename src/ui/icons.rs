@@ -1275,10 +1275,11 @@ pub fn tooltip(label: &str) -> Option<&'static str> {
         "Apply profile" => "Apply a saved operation profile",
         "Duplicate operation" => "Copy the active operation",
         "Assign operation to layer" => "Assign the active operation to the layer objects",
-        "Open library..." => "Open the materials and operations library",
+        "Open library..." | "Materials and operations..." => {
+            "Open the materials and operations library"
+        }
         "Import profiles..." => "Import a profile library from a .json file",
         "Export profiles..." => "Save the profile library to a .json file",
-        "Materials and operations..." => "Open the materials and operations library",
         "Bring to front" => "Move the selection to the front",
         "Send to back" => "Move the selection to the back",
         "Centre on page" => "Centre the selection on the work area",
@@ -1327,8 +1328,7 @@ pub fn tooltip(label: &str) -> Option<&'static str> {
         "Guides..." => "Add and remove horizontal and vertical guides",
         "Zoom in" => "Zoom in",
         "Zoom out" => "Zoom out",
-        "Fit page" => "Fit the page in the window",
-        "Fit" => "Fit the page in the window",
+        "Fit page" | "Fit" => "Fit the page in the window",
         "Zoom to selection" => "Zoom to the selected objects",
         "Dark mode" => "Switch between dark and light themes",
         "Layers panel (F9)" => "Show or hide the layers panel",
