@@ -170,7 +170,7 @@ impl FileDialog {
         let mut open = true;
         egui::Window::new(self.mode.title())
             .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.screen_rect().center())
+            .default_pos(ctx.content_rect().center())
             .collapsible(false)
             .resizable(true)
             .default_width(560.0)
