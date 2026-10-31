@@ -316,6 +316,28 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "trim" => {
+                self.select_scope(arguments)?;
+                let count = self
+                    .editor
+                    .trim_selection()
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "trimmed": count,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
+            "delete_overlapping_segments" => {
+                self.select_scope(arguments)?;
+                let count = self
+                    .editor
+                    .delete_overlapping_segments()
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "changed": count,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "join_paths" => {
                 self.select_scope(arguments)?;
                 let id = self.editor.join_paths().map_err(BeamError::InvalidInput)?;
@@ -599,6 +621,20 @@ fn tool_definitions() -> Vec<Value> {
             }}),
         ),
         tool_with(
+            "trim",
+            "Trim the selected shapes with the last selected closed shape as the trimmer.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "delete_overlapping_segments",
+            "Remove segments shared exactly by two selected paths.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
             "join_paths",
             "Join open paths into one path (all objects when ids are omitted).",
             json!({"type": "object", "properties": {
@@ -802,6 +838,32 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn trim_and_overlap_tools() {
+        let mut server = McpServer::new();
+        let line = call(
+            &mut server,
+            "add_line",
+            json!({"x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 0.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let trimmer = call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 4.0, "y": -1.0, "width": 2.0, "height": 2.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let result = call(&mut server, "trim", json!({"ids": [line, trimmer]}));
+        assert_eq!(result["result"]["trimmed"], 1);
+        assert_eq!(result["result"]["objects"], 3);
+        let error = call(&mut server, "delete_overlapping_segments", json!({}));
+        assert!(error.get("error").is_some());
     }
 
     #[test]

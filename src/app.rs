@@ -869,6 +869,26 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Trim segments"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_trim();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Delete overlapping segments"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_delete_overlaps();
+                        ui.close();
+                    }
+                    if ui
                         .add_enabled(enabled, egui::Button::new("Offset..."))
                         .clicked()
                     {
@@ -2340,6 +2360,20 @@ impl BeamWrightApp {
             self.status = format!("{} outline intersection(s)", hits.len());
         }
         self.show_report(report);
+    }
+
+    fn apply_trim(&mut self) {
+        match self.editor.trim_selection() {
+            Ok(count) => self.status = format!("Trimmed {count} object(s)"),
+            Err(error) => self.status = format!("Trim failed: {error}"),
+        }
+    }
+
+    fn apply_delete_overlaps(&mut self) {
+        match self.editor.delete_overlapping_segments() {
+            Ok(count) => self.status = format!("Removed overlaps in {count} object(s)"),
+            Err(error) => self.status = format!("Overlap removal failed: {error}"),
+        }
     }
 
     fn apply_outline_stroke(&mut self) {

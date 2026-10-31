@@ -10,6 +10,16 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
+/// One straight segment in world space.
+type LineSegment = ((f64, f64), (f64, f64));
+
+/// An object cut by the trimmer, ready to be replaced by its kept pieces.
+struct Trimmed {
+    index: usize,
+    pieces: Vec<Vec<(f64, f64)>>,
+    closed: bool,
+}
+
 /// One contour produced by an outline: points plus whether it is closed.
 type OutlineContour = (Vec<(f64, f64)>, bool);
 
@@ -635,6 +645,192 @@ impl EditorState {
             return Err(format!("'{}' is too thin to outline", object.name));
         }
         Ok(contours)
+    }
+
+    /// Cut objects where they cross the last selected closed shape and drop the
+    /// parts inside it.
+    ///
+    /// The last selected object is the trimmer and is left unchanged. Every other
+    /// selected object is split at the crossings; kept pieces become separate
+    /// paths, and an object that lies entirely inside is removed. Returns how
+    /// many objects were changed.
+    pub fn trim_selection(&mut self) -> std::result::Result<usize, String> {
+        use crate::geometry::boolean::{point_in_polygon, split_polyline};
+
+        let indices = self.selected_indices();
+        if indices.len() < 2 {
+            return Err("Select the shapes to trim and a closed trimmer".to_string());
+        }
+        let trimmer_index = indices[indices.len() - 1];
+        let trimmer = Self::closed_world_contour(&self.document.objects[trimmer_index])
+            .ok_or_else(|| {
+                format!(
+                    "'{}' is not a closed trimmer",
+                    self.document.objects[trimmer_index].name
+                )
+            })?;
+        let mut plans: Vec<Trimmed> = Vec::new();
+        let mut changed = 0;
+        for index in indices[..indices.len() - 1].iter().copied() {
+            self.ensure_editable(index)?;
+            let object = &self.document.objects[index];
+            let path = object.world_path();
+            if path.is_empty() {
+                continue;
+            }
+            let points: Vec<(f64, f64)> = path
+                .flatten(0.2)
+                .into_iter()
+                .map(|point| (point.x, point.y))
+                .collect();
+            let pieces = split_polyline(&points, path.closed, &trimmer);
+            let uncut = pieces.len() == 1;
+            let mut kept = Vec::new();
+            let mut removed = false;
+            for piece in pieces {
+                if piece.len() < 2 {
+                    continue;
+                }
+                let middle = (piece.len() - 1) / 2;
+                let mid = (
+                    f64::midpoint(piece[middle].0, piece[middle + 1].0),
+                    f64::midpoint(piece[middle].1, piece[middle + 1].1),
+                );
+                if point_in_polygon(mid.0, mid.1, &trimmer) {
+                    removed = true;
+                } else {
+                    kept.push(piece);
+                }
+            }
+            if removed {
+                changed += 1;
+            }
+            plans.push(Trimmed {
+                index,
+                pieces: kept,
+                closed: path.closed && uncut,
+            });
+        }
+        if changed == 0 {
+            return Err("Nothing crosses the trimmer".to_string());
+        }
+
+        self.record();
+        self.selection.clear();
+        let mut objects = Vec::with_capacity(self.document.objects.len());
+        let mut plan = plans.into_iter().peekable();
+        for (index, object) in self.document.objects.iter().enumerate() {
+            let Some(entry) = plan.next_if(|entry| entry.index == index) else {
+                objects.push(object.clone());
+                continue;
+            };
+            for (position, points) in entry.pieces.iter().enumerate() {
+                let mut piece = object.clone();
+                piece.id = uuid::Uuid::new_v4().to_string();
+                piece.shape = Shape::Path(Path::from_points(points, entry.closed));
+                piece.transform = Transform2::identity();
+                piece.name = format!("{} part {}", object.name, position + 1);
+                self.selection.add(piece.id.clone());
+                objects.push(piece);
+            }
+        }
+        self.document.objects = objects;
+        Ok(changed)
+    }
+
+    /// Remove segments that two selected outlines share exactly.
+    ///
+    /// Only segments with the same two endpoints (in either direction) are
+    /// compared; partially collinear overlaps are left alone and reported as
+    /// unsupported. Remaining runs become open paths. Returns how many objects
+    /// were changed.
+    pub fn delete_overlapping_segments(&mut self) -> std::result::Result<usize, String> {
+        fn same(a: (f64, f64), b: (f64, f64)) -> bool {
+            (a.0 - b.0).abs() <= 1e-6 && (a.1 - b.1).abs() <= 1e-6
+        }
+
+        let indices = self.selected_indices();
+        if indices.len() < 2 {
+            return Err("Select at least two paths".to_string());
+        }
+        let mut segments: Vec<Vec<LineSegment>> = Vec::new();
+        for index in &indices {
+            self.ensure_editable(*index)?;
+            let points: Vec<(f64, f64)> = self.document.objects[*index]
+                .world_path()
+                .flatten(0.2)
+                .into_iter()
+                .map(|point| (point.x, point.y))
+                .collect();
+            segments.push(points.windows(2).map(|pair| (pair[0], pair[1])).collect());
+        }
+        let mut remove: Vec<Vec<bool>> = segments
+            .iter()
+            .map(|list| vec![false; list.len()])
+            .collect();
+        let mut found = false;
+        for first in 0..segments.len() {
+            for second in first + 1..segments.len() {
+                for (first_index, a) in segments[first].iter().enumerate() {
+                    for (second_index, b) in segments[second].iter().enumerate() {
+                        let equal = (same(a.0, b.0) && same(a.1, b.1))
+                            || (same(a.0, b.1) && same(a.1, b.0));
+                        if equal {
+                            remove[first][first_index] = true;
+                            remove[second][second_index] = true;
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !found {
+            return Err("No overlapping segments found".to_string());
+        }
+
+        self.record();
+        self.selection.clear();
+        let mut objects = Vec::with_capacity(self.document.objects.len());
+        let mut changed = 0;
+        for (index, object) in self.document.objects.iter().enumerate() {
+            let Some(position) = indices.iter().position(|selected| *selected == index) else {
+                objects.push(object.clone());
+                continue;
+            };
+            let list = &segments[position];
+            let flags = &remove[position];
+            let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+            let mut current: Vec<(f64, f64)> = Vec::new();
+            for (segment, gone) in list.iter().zip(flags) {
+                if *gone {
+                    if current.len() >= 2 {
+                        runs.push(std::mem::take(&mut current));
+                    } else {
+                        current.clear();
+                    }
+                } else {
+                    if current.is_empty() {
+                        current.push(segment.0);
+                    }
+                    current.push(segment.1);
+                }
+            }
+            if current.len() >= 2 {
+                runs.push(current);
+            }
+            changed += 1;
+            for (run_index, run) in runs.iter().enumerate() {
+                let mut piece = object.clone();
+                piece.id = uuid::Uuid::new_v4().to_string();
+                piece.shape = Shape::Path(Path::from_points(run, false));
+                piece.transform = Transform2::identity();
+                piece.name = format!("{} part {}", object.name, run_index + 1);
+                self.selection.add(piece.id.clone());
+                objects.push(piece);
+            }
+        }
+        self.document.objects = objects;
+        Ok(changed)
     }
 
     /// Replace each selected stroke by the outlines of its width.
@@ -2429,6 +2625,145 @@ mod tests {
             .unwrap();
         editor.selection.clear();
         assert_eq!(editor.intersections().len(), 2);
+    }
+
+    #[test]
+    fn trim_removes_the_parts_inside_the_trimmer() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let trimmer = editor
+            .add_rectangle(Point2::new(4.0, -1.0), Point2::new(6.0, 1.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(line);
+        editor.selection.add(trimmer.clone());
+        assert_eq!(editor.trim_selection().unwrap(), 1);
+        let mut pieces: Vec<(f64, f64)> = editor
+            .document
+            .objects
+            .iter()
+            .filter(|object| object.id != trimmer)
+            .filter_map(Object::bounds)
+            .map(|(min, max)| (min.x, max.x))
+            .collect();
+        pieces.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap());
+        assert_eq!(pieces.len(), 2);
+        assert!((pieces[0].0 - 0.0).abs() < 1e-6);
+        assert!((pieces[0].1 - 4.0).abs() < 1e-6);
+        assert!((pieces[1].0 - 6.0).abs() < 1e-6);
+        assert!((pieces[1].1 - 10.0).abs() < 1e-6);
+        assert!(editor.document.object(&trimmer).is_some());
+    }
+
+    #[test]
+    fn trim_removes_an_object_fully_inside() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(4.5, 0.0), Point2::new(5.5, 0.0))
+            .unwrap();
+        let trimmer = editor
+            .add_rectangle(Point2::new(4.0, -1.0), Point2::new(6.0, 1.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(line.clone());
+        editor.selection.add(trimmer);
+        assert_eq!(editor.trim_selection().unwrap(), 1);
+        assert!(editor.document.object(&line).is_none());
+        assert_eq!(editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn trim_rejects_an_open_or_non_crossing_trimmer() {
+        let mut editor = editor();
+        let first = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let second = editor
+            .add_line(Point2::new(0.0, 5.0), Point2::new(10.0, 5.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        editor.selection.add(second.clone());
+        let error = editor.trim_selection().unwrap_err();
+        assert!(error.contains("not a closed trimmer"), "{error}");
+        editor.selection.clear();
+        editor.selection.add(first);
+        assert!(editor.trim_selection().is_err());
+    }
+
+    #[test]
+    fn trim_is_undoable() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let trimmer = editor
+            .add_rectangle(Point2::new(4.0, -1.0), Point2::new(6.0, 1.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(line);
+        editor.selection.add(trimmer);
+        editor.trim_selection().unwrap();
+        assert_eq!(editor.document.objects.len(), 3);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn delete_overlapping_segments_splits_shared_edges() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(20.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        assert_eq!(editor.delete_overlapping_segments().unwrap(), 2);
+        // The first rectangle splits in two; the second keeps one run of three
+        // segments. Nothing is closed any more, because the shared edge is gone.
+        assert_eq!(editor.document.objects.len(), 3);
+        for object in &editor.document.objects {
+            assert!(matches!(&object.shape, Shape::Path(path) if !path.closed));
+        }
+    }
+
+    #[test]
+    fn delete_overlapping_segments_removes_identical_outlines() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        assert_eq!(editor.delete_overlapping_segments().unwrap(), 2);
+        assert_eq!(editor.document.objects.len(), 0);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn delete_overlapping_segments_reports_nothing_found() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        let error = editor.delete_overlapping_segments().unwrap_err();
+        assert!(error.contains("No overlapping"), "{error}");
     }
 
     #[test]

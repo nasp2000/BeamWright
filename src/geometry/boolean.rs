@@ -135,6 +135,85 @@ fn clean(poly: &[(f64, f64)]) -> Vec<(f64, f64)> {
     out
 }
 
+/// Split a polyline at every proper crossing with `other`.
+///
+/// Returns the pieces in path order; a polyline without crossings comes back
+/// unchanged as a single piece. Crossings at an existing vertex are not
+/// inserted, so a piece boundary is always a real intersection point.
+pub fn split_polyline(
+    line: &[(f64, f64)],
+    closed: bool,
+    other: &[(f64, f64)],
+) -> Vec<Vec<(f64, f64)>> {
+    let count = line.len();
+    if count < 2 || other.len() < 3 {
+        return vec![line.to_vec()];
+    }
+    let edges = if closed { count } else { count - 1 };
+    let mut cuts: Vec<(usize, f64, (f64, f64))> = Vec::new();
+    for edge in 0..edges {
+        let from = line[edge];
+        let to = line[(edge + 1) % count];
+        for index in 0..other.len() {
+            let other_from = other[index];
+            let other_to = other[(index + 1) % other.len()];
+            if let Some((along, across, point)) =
+                segment_intersection(from, to, other_from, other_to)
+            {
+                if along > EPSILON
+                    && along < 1.0 - EPSILON
+                    && across > EPSILON
+                    && across < 1.0 - EPSILON
+                {
+                    cuts.push((edge, along, point));
+                }
+            }
+        }
+    }
+    if cuts.is_empty() {
+        return vec![line.to_vec()];
+    }
+    cuts.sort_by(|left, right| {
+        left.0.cmp(&right.0).then(
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    let mut pieces = Vec::new();
+    let mut current = vec![line[0]];
+    let mut cut = 0;
+    for edge in 0..edges {
+        while cut < cuts.len() && cuts[cut].0 == edge {
+            let point = cuts[cut].2;
+            current.push(point);
+            pieces.push(std::mem::take(&mut current));
+            current.push(point);
+            cut += 1;
+        }
+        current.push(line[(edge + 1) % count]);
+    }
+    if current.len() >= 2 {
+        pieces.push(current);
+    }
+    // The path start is not a cut, so for a closed path the last and first
+    // pieces continue each other.
+    if closed && pieces.len() > 1 {
+        let joins = pieces
+            .last()
+            .zip(pieces.first())
+            .is_some_and(|(last, first)| last.last().is_some_and(|end| same_point(*end, first[0])));
+        if joins {
+            let first = pieces.remove(0);
+            if let Some(last) = pieces.last_mut() {
+                last.extend(first.into_iter().skip(1));
+            }
+        }
+    }
+    pieces.retain(|piece| piece.len() >= 2);
+    pieces
+}
+
 /// A directed edge fragment kept while assembling the result.
 type Fragment = ((f64, f64), (f64, f64));
 
@@ -568,6 +647,37 @@ mod tests {
         let intersection = boolean_contours(BooleanOp::Intersection, &bar, &cutter);
         assert_eq!(intersection.len(), 1);
         assert!((total_area(&intersection) - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn split_polyline_cuts_at_every_crossing() {
+        let line = [(0.0, 0.0), (10.0, 0.0)];
+        let square = square(4.0, -1.0, 2.0);
+        let pieces = split_polyline(&line, false, &square);
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0], vec![(0.0, 0.0), (4.0, 0.0)]);
+        assert_eq!(pieces[1], vec![(4.0, 0.0), (6.0, 0.0)]);
+        assert_eq!(pieces[2], vec![(6.0, 0.0), (10.0, 0.0)]);
+    }
+
+    #[test]
+    fn split_polyline_without_crossings_returns_one_piece() {
+        let line = [(0.0, 0.0), (10.0, 0.0)];
+        let square = square(20.0, 20.0, 2.0);
+        let pieces = split_polyline(&line, false, &square);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0], line.to_vec());
+    }
+
+    #[test]
+    fn split_polyline_wraps_around_a_closed_path() {
+        let ring = square(0.0, 0.0, 10.0);
+        let cutter = vec![(5.0, -1.0), (5.0, 1.0), (7.0, 1.0), (7.0, -1.0)];
+        let pieces = split_polyline(&ring, true, &cutter);
+        assert_eq!(pieces.len(), 2);
+        let mut lengths: Vec<usize> = pieces.iter().map(Vec::len).collect();
+        lengths.sort_unstable();
+        assert_eq!(lengths, vec![2, 6]);
     }
 
     #[test]
