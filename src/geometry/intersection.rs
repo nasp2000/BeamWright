@@ -30,6 +30,23 @@ pub fn segment_intersection_point(a: &Segment, b: &Segment) -> Option<(f64, f64)
     None
 }
 
+/// Point where two segments properly cross.
+///
+/// Segments that only touch at an endpoint, run collinearly, or do not meet at
+/// all are not reported. Use [`segment_intersection_point`] when endpoint
+/// contact also counts.
+pub fn segment_crossing_point(a: &Segment, b: &Segment) -> Option<(f64, f64)> {
+    let d1 = cross(b, a.x1, a.y1);
+    let d2 = cross(b, a.x2, a.y2);
+    let d3 = cross(a, b.x1, b.y1);
+    let d4 = cross(a, b.x2, b.y2);
+    if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+        let t = d3 / (d3 - d4);
+        return Some((a.x1 + t * (a.x2 - a.x1), a.y1 + t * (a.y2 - a.y1)));
+    }
+    None
+}
+
 pub fn segments_intersect(a: &Segment, b: &Segment) -> bool {
     // Cross-product based segment intersection test.
     let d1 = cross(b, a.x1, a.y1);
@@ -113,6 +130,45 @@ pub fn line_intersection(
 /// Midpoint of a segment.
 pub fn segment_midpoint(s: &Segment) -> (f64, f64) {
     (f64::midpoint(s.x1, s.x2), f64::midpoint(s.y1, s.y2))
+}
+
+#[cfg(test)]
+mod crossing_tests {
+    use super::{Segment, segment_crossing_point};
+
+    fn segment(x1: f64, y1: f64, x2: f64, y2: f64) -> Segment {
+        Segment { x1, y1, x2, y2 }
+    }
+
+    #[test]
+    fn proper_crossing_is_reported() {
+        let a = segment(0.0, 0.0, 2.0, 2.0);
+        let b = segment(0.0, 2.0, 2.0, 0.0);
+        let (x, y) = segment_crossing_point(&a, &b).unwrap();
+        assert!((x - 1.0).abs() < 1e-9);
+        assert!((y - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn touching_endpoints_are_not_crossings() {
+        let a = segment(0.0, 0.0, 4.0, 0.0);
+        let b = segment(4.0, 0.0, 4.0, 4.0);
+        assert_eq!(segment_crossing_point(&a, &b), None);
+    }
+
+    #[test]
+    fn collinear_overlap_is_not_a_crossing() {
+        let a = segment(0.0, 0.0, 4.0, 0.0);
+        let b = segment(1.0, 0.0, 3.0, 0.0);
+        assert_eq!(segment_crossing_point(&a, &b), None);
+    }
+
+    #[test]
+    fn separated_segments_do_not_cross() {
+        let a = segment(0.0, 0.0, 1.0, 0.0);
+        let b = segment(0.0, 1.0, 1.0, 1.0);
+        assert_eq!(segment_crossing_point(&a, &b), None);
+    }
 }
 
 #[cfg(test)]

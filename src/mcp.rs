@@ -315,6 +315,32 @@ impl McpServer {
                 let count = self.editor.close_paths().map_err(BeamError::InvalidInput)?;
                 Ok(json!({"closed": count}))
             }
+            "find_duplicates" => {
+                let groups = self.editor.duplicate_groups();
+                Ok(json!({"groups": groups, "count": groups.len()}))
+            }
+            "remove_duplicates" => {
+                let removed = self.editor.remove_duplicates();
+                Ok(json!({
+                    "removed": removed,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
+            "find_intersections" => {
+                let hits: Vec<Value> = self
+                    .editor
+                    .intersections()
+                    .iter()
+                    .map(|hit| {
+                        json!({
+                            "first": hit.first,
+                            "second": hit.second,
+                            "point": [hit.point.x, hit.point.y]
+                        })
+                    })
+                    .collect();
+                Ok(json!({"intersections": hits, "count": hits.len()}))
+            }
             "export_svg" => {
                 let path = required_path(arguments, "path")?;
                 let text = crate::export::export_svg(&self.editor.document)?;
@@ -568,6 +594,18 @@ fn tool_definitions() -> Vec<Value> {
                 "ids": {"type": "array", "items": {"type": "string"}}
             }}),
         ),
+        tool(
+            "find_duplicates",
+            "List groups of objects whose outlines are identical.",
+        ),
+        tool(
+            "remove_duplicates",
+            "Remove duplicate outlines, keeping the first copy.",
+        ),
+        tool(
+            "find_intersections",
+            "List outline intersections between the selected objects or the whole document.",
+        ),
         tool_with(
             "export_svg",
             "Export the current document as SVG.",
@@ -775,6 +813,42 @@ mod tests {
             server.editor.document.objects[0].shape,
             Shape::Path(ref path) if path.closed
         ));
+    }
+
+    #[test]
+    fn duplicate_and_intersection_tools() {
+        let mut server = McpServer::new();
+        let first = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 4.0, "height": 4.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 4.0, "height": 4.0}),
+        );
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 2.0, "y": 2.0, "width": 4.0, "height": 4.0}),
+        );
+        let duplicates = call(&mut server, "find_duplicates", json!({}));
+        assert_eq!(duplicates["result"]["count"], 1);
+        assert_eq!(
+            duplicates["result"]["groups"][0][0].as_str().unwrap(),
+            first
+        );
+        let intersections = call(&mut server, "find_intersections", json!({}));
+        // The two copies overlap each other collinearly and give no crossing,
+        // but each one crosses the offset rectangle twice.
+        assert_eq!(intersections["result"]["count"], 4);
+        let removed = call(&mut server, "remove_duplicates", json!({}));
+        assert_eq!(removed["result"]["removed"], 1);
+        assert_eq!(removed["result"]["objects"], 2);
     }
 
     #[test]

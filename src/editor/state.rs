@@ -10,6 +10,14 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
+/// One crossing between the outlines of two objects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathIntersection {
+    pub first: String,
+    pub second: String,
+    pub point: Point2,
+}
+
 /// Testable editor state: document, view and interaction state without egui.
 #[derive(Debug, Clone)]
 pub struct EditorState {
@@ -293,6 +301,188 @@ impl EditorState {
             self.document.objects.insert(insert_at + index, object);
         }
         Ok(contours.len())
+    }
+
+    /// Outline of an object flattened to straight segments, if it has geometry.
+    fn outline_segments(object: &Object) -> Vec<crate::geometry::Segment> {
+        let points = object.world_path().flatten(0.2);
+        points
+            .windows(2)
+            .filter_map(|pair| {
+                let (from, to) = (pair[0], pair[1]);
+                if from.distance(to) <= 1e-9 {
+                    None
+                } else {
+                    Some(crate::geometry::Segment {
+                        x1: from.x,
+                        y1: from.y,
+                        x2: to.x,
+                        y2: to.y,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    /// Geometry signature used to find duplicates: closed flag plus every
+    /// flattened point, in order.
+    fn outline_signature(object: &Object) -> Option<(bool, Vec<(f64, f64)>)> {
+        let path = object.world_path();
+        let points: Vec<(f64, f64)> = path
+            .flatten(0.1)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        if points.len() < 2 {
+            return None;
+        }
+        Some((path.closed, points))
+    }
+
+    fn same_signature(
+        first: &(bool, Vec<(f64, f64)>),
+        second: &(bool, Vec<(f64, f64)>),
+        tolerance: f64,
+    ) -> bool {
+        first.0 == second.0
+            && first.1.len() == second.1.len()
+            && first
+                .1
+                .iter()
+                .zip(&second.1)
+                .all(|(a, b)| (a.0 - b.0).abs() <= tolerance && (a.1 - b.1).abs() <= tolerance)
+    }
+
+    /// Groups of objects whose outlines are identical.
+    ///
+    /// Outlines are compared by their flattened world points in order, so two
+    /// copies of the same shape are detected while a shape drawn with a
+    /// different start point or direction is not. Objects without vector
+    /// geometry are ignored.
+    pub fn duplicate_groups(&self) -> Vec<Vec<String>> {
+        type Signature = (bool, Vec<(f64, f64)>);
+
+        let signatures: Vec<Option<Signature>> = self
+            .document
+            .objects
+            .iter()
+            .map(Self::outline_signature)
+            .collect();
+        let mut assigned = vec![false; signatures.len()];
+        let mut groups = Vec::new();
+        for index in 0..signatures.len() {
+            if assigned[index] {
+                continue;
+            }
+            let Some(signature) = &signatures[index] else {
+                continue;
+            };
+            let mut group = vec![self.document.objects[index].id.clone()];
+            for (other, other_signature) in signatures.iter().enumerate().skip(index + 1) {
+                if assigned[other] {
+                    continue;
+                }
+                let Some(other_signature) = other_signature else {
+                    continue;
+                };
+                if Self::same_signature(signature, other_signature, 1e-6) {
+                    assigned[other] = true;
+                    group.push(self.document.objects[other].id.clone());
+                }
+            }
+            if group.len() > 1 {
+                assigned[index] = true;
+                groups.push(group);
+            }
+        }
+        groups
+    }
+
+    /// Remove duplicate outlines, keeping the first object of each group.
+    ///
+    /// Locked objects are never removed. Returns how many objects were removed.
+    pub fn remove_duplicates(&mut self) -> usize {
+        let mut remove = Vec::new();
+        for group in self.duplicate_groups() {
+            let mut kept = false;
+            for id in group {
+                let Some(object) = self.document.object(&id) else {
+                    continue;
+                };
+                if object.locked {
+                    continue;
+                }
+                if kept {
+                    remove.push(id);
+                } else {
+                    kept = true;
+                }
+            }
+        }
+        if remove.is_empty() {
+            return 0;
+        }
+        self.record();
+        let count = remove.len();
+        self.selection.clear();
+        for id in remove {
+            self.selection.remove(&id);
+            self.document.remove_object(&id);
+        }
+        count
+    }
+
+    /// Every intersection between the outlines of the relevant objects.
+    ///
+    /// The selected objects are examined when at least two are selected;
+    /// otherwise the whole document is. Intersections closer than 0.001 mm
+    /// between the same pair of objects are reported once.
+    pub fn intersections(&self) -> Vec<PathIntersection> {
+        use crate::geometry::intersection::segment_crossing_point;
+
+        let indices = if self.selection.len() >= 2 {
+            self.selected_indices()
+        } else {
+            (0..self.document.objects.len()).collect()
+        };
+        let segments: Vec<(usize, Vec<crate::geometry::Segment>)> = indices
+            .iter()
+            .map(|index| {
+                (
+                    *index,
+                    Self::outline_segments(&self.document.objects[*index]),
+                )
+            })
+            .filter(|(_, segments)| !segments.is_empty())
+            .collect();
+        let mut found = Vec::new();
+        for (position, (first_index, first)) in segments.iter().enumerate() {
+            for (second_index, second) in segments.iter().skip(position + 1) {
+                let mut points: Vec<Point2> = Vec::new();
+                for a in first {
+                    for b in second {
+                        let Some((x, y)) = segment_crossing_point(a, b) else {
+                            continue;
+                        };
+                        let point = Point2::new(x, y);
+                        if points
+                            .iter()
+                            .all(|existing| existing.distance(point) > 1e-3)
+                        {
+                            points.push(point);
+                        }
+                    }
+                }
+                for point in points {
+                    found.push(PathIntersection {
+                        first: self.document.objects[*first_index].id.clone(),
+                        second: self.document.objects[*second_index].id.clone(),
+                        point,
+                    });
+                }
+            }
+        }
+        found
     }
 
     /// Join the selected open paths into one path, welding the nearest ends.
@@ -1937,6 +2127,103 @@ mod tests {
         assert_eq!(editor.document.objects.len(), 1);
         assert!(editor.undo());
         assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn detects_duplicate_outlines() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let third = editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0))
+            .unwrap();
+        let groups = editor.duplicate_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![first, second]);
+        assert!(!groups[0].contains(&third));
+    }
+
+    #[test]
+    fn duplicate_removal_keeps_one_copy() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        assert_eq!(editor.remove_duplicates(), 2);
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 3);
+    }
+
+    #[test]
+    fn duplicate_removal_does_nothing_without_duplicates() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0))
+            .unwrap();
+        assert_eq!(editor.remove_duplicates(), 0);
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn finds_intersections_between_selected_objects() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        editor.selection.add(second.clone());
+        let hits = editor.intersections();
+        assert_eq!(hits.len(), 2);
+        assert!(
+            hits.iter()
+                .all(|hit| hit.first == first && hit.second == second)
+        );
+        let points: Vec<(f64, f64)> = hits.iter().map(|hit| (hit.point.x, hit.point.y)).collect();
+        assert!(points.contains(&(2.0, 4.0)));
+        assert!(points.contains(&(4.0, 2.0)));
+    }
+
+    #[test]
+    fn intersections_ignore_disjoint_outlines() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0))
+            .unwrap();
+        assert_eq!(editor.intersections().len(), 0);
+    }
+
+    #[test]
+    fn intersections_use_the_whole_document_without_a_selection() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        editor.selection.clear();
+        assert_eq!(editor.intersections().len(), 2);
     }
 
     #[test]

@@ -703,6 +703,15 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui.button("Find duplicates...").clicked() {
+                        self.report_duplicates();
+                        ui.close();
+                    }
+                    if ui.button("Find intersections...").clicked() {
+                        self.report_intersections();
+                        ui.close();
+                    }
+                    ui.separator();
                     let can_combine = self.editor.selection.len() == 2;
                     ui.menu_button("Boolean", |ui| {
                         use crate::geometry::BooleanOp;
@@ -2113,6 +2122,70 @@ impl BeamWrightApp {
         if !self.report_open {
             self.file_report = None;
         }
+    }
+
+    fn report_duplicates(&mut self) {
+        let groups = self.editor.duplicate_groups();
+        let mut report = FileReport::new("Duplicate geometry", "current document")
+            .with_summary("Groups", groups.len().to_string());
+        let mut total = 0;
+        for (index, group) in groups.iter().enumerate() {
+            total += group.len();
+            let names: Vec<String> = group
+                .iter()
+                .filter_map(|id| self.editor.document.object(id))
+                .map(|object| object.name.clone())
+                .collect();
+            report
+                .warnings
+                .push(format!("Group {}: {}", index + 1, names.join(", ")));
+        }
+        report
+            .summary
+            .push(("Objects".to_string(), total.to_string()));
+        self.status = if groups.is_empty() {
+            "No duplicate geometry".to_string()
+        } else {
+            format!("{} duplicate group(s)", groups.len())
+        };
+        self.show_report(report);
+    }
+
+    fn report_intersections(&mut self) {
+        let hits = self.editor.intersections();
+        let mut report = FileReport::new("Path intersections", "current document")
+            .with_summary("Intersections", hits.len().to_string());
+        let name = |id: &str| {
+            self.editor
+                .document
+                .object(id)
+                .map_or_else(|| id.to_string(), |object| object.name.clone())
+        };
+        for (index, hit) in hits.iter().enumerate() {
+            if index >= 200 {
+                report.warnings.push(format!(
+                    "{} more intersection(s) not listed",
+                    hits.len() - index
+                ));
+                break;
+            }
+            report.warnings.push(format!(
+                "{} x {} at ({:.2}, {:.2}) mm",
+                name(&hit.first),
+                name(&hit.second),
+                hit.point.x,
+                hit.point.y
+            ));
+        }
+        if hits.is_empty() {
+            report
+                .summary
+                .push(("Pairs".to_string(), "none".to_string()));
+            self.status = "No outline intersections".to_string();
+        } else {
+            self.status = format!("{} outline intersection(s)", hits.len());
+        }
+        self.show_report(report);
     }
 
     fn apply_join_paths(&mut self) {
