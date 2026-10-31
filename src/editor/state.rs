@@ -1507,6 +1507,90 @@ impl EditorState {
     }
 
     /// Mirror the selection around its centre.
+    /// Scale the selection to an exact size around its centre.
+    ///
+    /// With `preserve_proportions` the smaller of the two factors is used on both
+    /// axes, so the shape is not distorted.
+    pub fn set_selection_size(
+        &mut self,
+        width: f64,
+        height: f64,
+        preserve_proportions: bool,
+    ) -> bool {
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        let Some((min, max)) = self.selected_bounds() else {
+            return false;
+        };
+        let current_width = max.x - min.x;
+        let current_height = max.y - min.y;
+        if current_width <= 1e-9 || current_height <= 1e-9 {
+            return false;
+        }
+        let mut sx = width / current_width;
+        let mut sy = height / current_height;
+        if preserve_proportions {
+            let factor = sx.min(sy);
+            sx = factor;
+            sy = factor;
+        }
+        self.transform_selection(Transform2::scale(sx, sy))
+    }
+
+    /// Shear the selection around its centre, in degrees per axis.
+    pub fn skew_selection(&mut self, x_degrees: f64, y_degrees: f64) -> bool {
+        if !x_degrees.is_finite() || !y_degrees.is_finite() {
+            return false;
+        }
+        if x_degrees == 0.0 && y_degrees == 0.0 {
+            return false;
+        }
+        let shear_x = x_degrees.to_radians().tan();
+        let shear_y = y_degrees.to_radians().tan();
+        let skew = Transform2 {
+            a: 1.0,
+            b: shear_y,
+            c: shear_x,
+            d: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+        };
+        self.transform_selection(skew)
+    }
+
+    /// Bake each selected object's transform into its geometry.
+    ///
+    /// Text and images keep their transform because their content is not vector
+    /// geometry. Returns how many objects were reset.
+    pub fn reset_transforms(&mut self) -> usize {
+        if self.selection.is_empty() {
+            return 0;
+        }
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        let mut reset = 0;
+        for id in ids {
+            let Some(object) = self.document.object_mut(&id) else {
+                continue;
+            };
+            if object.locked || !object.visible {
+                continue;
+            }
+            if matches!(object.shape, Shape::Text(_) | Shape::Image(_)) {
+                continue;
+            }
+            let world = object.world_path();
+            if world.is_empty() {
+                continue;
+            }
+            object.shape = Shape::Path(world);
+            object.transform = Transform2::identity();
+            reset += 1;
+        }
+        reset
+    }
+
     pub fn flip_selection(&mut self, horizontal: bool) -> bool {
         let transform = if horizontal {
             Transform2::scale(-1.0, 1.0)
@@ -3486,6 +3570,99 @@ mod tests {
         editor.nudge_selection(10.0, 0.0);
         assert!((editor.document.object(&id).unwrap().bounds().unwrap().0.x - 10.0).abs() < 1e-9);
         assert!(editor.undo());
+    }
+
+    #[test]
+    fn setting_the_size_scales_around_the_centre() {
+        let mut editor = editor();
+        let id = editor
+            .add_rectangle(Point2::new(10.0, 20.0), Point2::new(30.0, 30.0))
+            .unwrap();
+        editor.select_all();
+        // Centre (20, 25): 20 x 10 becomes 40 x 20 around it.
+        assert!(editor.set_selection_size(40.0, 20.0, false));
+        let (min, max) = editor.document.object(&id).unwrap().bounds().unwrap();
+        assert!((min.x - 0.0).abs() < 1e-6);
+        assert!((min.y - 15.0).abs() < 1e-6);
+        assert!((max.x - 40.0).abs() < 1e-6);
+        assert!((max.y - 35.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn preserving_proportions_uses_the_smaller_factor() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(20.0, 10.0));
+        editor.select_all();
+        assert!(editor.set_selection_size(40.0, 100.0, true));
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 40.0).abs() < 1e-6);
+        assert!((max.y - min.y - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn size_changes_are_validated_and_undoable() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.select_all();
+        assert!(!editor.set_selection_size(0.0, 10.0, false));
+        assert!(!editor.set_selection_size(f64::NAN, 10.0, false));
+        assert!(editor.set_selection_size(20.0, 20.0, false));
+        assert!(editor.undo());
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!((max.x - min.x - 10.0).abs() < 1e-6);
+        editor.selection.clear();
+        assert!(!editor.set_selection_size(5.0, 5.0, false));
+    }
+
+    #[test]
+    fn skew_shears_the_selection() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.select_all();
+        let (_, before) = editor.selected_bounds().unwrap();
+        assert!(editor.skew_selection(45.0, 0.0));
+        let (after_min, after_max) = editor.selected_bounds().unwrap();
+        assert!(after_max.x - after_min.x > before.x - 1e-9);
+        assert!(editor.undo());
+        assert!(!editor.skew_selection(0.0, 0.0));
+        assert!(!editor.skew_selection(f64::NAN, 0.0));
+    }
+
+    #[test]
+    fn resetting_bakes_the_transform_into_the_geometry() {
+        let mut editor = editor();
+        let id = editor
+            .add_rectangle(Point2::new(10.0, 10.0), Point2::new(20.0, 30.0))
+            .unwrap();
+        editor.select_all();
+        editor.rotate_selection(std::f64::consts::FRAC_PI_4);
+        let before: Vec<(f64, f64)> = editor
+            .document
+            .object(&id)
+            .unwrap()
+            .world_path()
+            .flatten(0.1)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        assert_eq!(editor.reset_transforms(), 1);
+        let object = editor.document.object(&id).unwrap();
+        assert_eq!(object.transform, Transform2::identity());
+        let after: Vec<(f64, f64)> = object
+            .world_path()
+            .flatten(0.1)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        assert_eq!(before.len(), after.len());
+        for (a, b) in before.iter().zip(&after) {
+            assert!((a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6);
+        }
+        assert!(editor.undo());
+        assert_ne!(
+            editor.document.object(&id).unwrap().transform,
+            Transform2::identity()
+        );
     }
 
     #[test]

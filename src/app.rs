@@ -106,6 +106,10 @@ pub struct BeamWrightApp {
     repeat_open: bool,
     repeat_options: crate::editor::RepeatOptions,
     clipboard: Vec<crate::document::Object>,
+    link_proportions: bool,
+    skew_open: bool,
+    skew_x: f64,
+    skew_y: f64,
     simplify_open: bool,
     simplify_tolerance: f64,
     nest_open: bool,
@@ -124,6 +128,15 @@ pub struct BeamWrightApp {
     playback_error: Option<String>,
     gcode_text: String,
     preview_snapshot: Option<Document>,
+}
+
+/// Scale around a point, for direct property edits.
+fn egui_transform_scale(
+    factor_x: f64,
+    factor_y: f64,
+    center: Point2,
+) -> crate::geometry::Transform2 {
+    crate::geometry::Transform2::scale_around(factor_x, factor_y, center.x, center.y)
 }
 
 /// One row in a profile list.
@@ -328,6 +341,10 @@ impl BeamWrightApp {
             repeat_open: false,
             repeat_options: crate::editor::RepeatOptions::default(),
             clipboard: Vec::new(),
+            link_proportions: false,
+            skew_open: false,
+            skew_x: 0.0,
+            skew_y: 0.0,
             simplify_open: false,
             simplify_tolerance: 0.2,
             nest_open: false,
@@ -945,6 +962,22 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.scale_selection(1.0 / 1.1, 1.0 / 1.1);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Reset transforms"))
+                        .clicked()
+                    {
+                        let count = self.editor.reset_transforms();
+                        self.status = format!("Reset {count} object(s)");
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Skew..."))
+                        .clicked()
+                    {
+                        self.skew_open = true;
                         ui.close();
                     }
                     ui.separator();
@@ -1753,10 +1786,43 @@ impl BeamWrightApp {
                     }
                     ui.end_row();
                     ui.label("Width");
-                    ui.weak(format!("{:.2}", max.x - min.x));
+                    let mut width = max.x - min.x;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .speed(0.1)
+                                .range(0.01..=100_000.0),
+                        )
+                        .changed()
+                    {
+                        let factor = width / (max.x - min.x).max(1e-9);
+                        let vertical = if self.link_proportions { factor } else { 1.0 };
+                        let center =
+                            Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
+                        object.transform = egui_transform_scale(factor, vertical, center)
+                            .compose(&object.transform);
+                    }
                     ui.end_row();
                     ui.label("Height");
-                    ui.weak(format!("{:.2}", max.y - min.y));
+                    let mut height = max.y - min.y;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut height)
+                                .speed(0.1)
+                                .range(0.01..=100_000.0),
+                        )
+                        .changed()
+                    {
+                        let factor = height / (max.y - min.y).max(1e-9);
+                        let horizontal = if self.link_proportions { factor } else { 1.0 };
+                        let center =
+                            Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
+                        object.transform = egui_transform_scale(horizontal, factor, center)
+                            .compose(&object.transform);
+                    }
+                    ui.end_row();
+                    ui.label("Proportions");
+                    ui.checkbox(&mut self.link_proportions, "Link width and height");
                     ui.end_row();
                 });
             ui.separator();
@@ -2809,6 +2875,49 @@ impl BeamWrightApp {
                 };
             }
             Err(error) => self.status = format!("{} failed: {error}", op.label()),
+        }
+    }
+
+    fn skew_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.skew_open;
+        let mut apply = false;
+        egui::Window::new("Skew")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Horizontal");
+                    ui.add(
+                        egui::DragValue::new(&mut self.skew_x)
+                            .speed(1.0)
+                            .range(-80.0..=80.0)
+                            .suffix(" deg"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Vertical");
+                    ui.add(
+                        egui::DragValue::new(&mut self.skew_y)
+                            .speed(1.0)
+                            .range(-80.0..=80.0)
+                            .suffix(" deg"),
+                    );
+                });
+                ui.weak("The shear is applied around the selection centre.");
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+            });
+        if apply {
+            if self.editor.skew_selection(self.skew_x, self.skew_y) {
+                self.status = "Selection skewed".to_string();
+                self.skew_open = false;
+            } else {
+                self.status = "Skew failed: select something and use a non-zero angle".to_string();
+            }
+        } else {
+            self.skew_open = open;
         }
     }
 
@@ -3983,6 +4092,9 @@ impl BeamWrightApp {
         }
         if self.repeat_open {
             self.repeat_window(ctx);
+        }
+        if self.skew_open {
+            self.skew_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

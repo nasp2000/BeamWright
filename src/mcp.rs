@@ -307,6 +307,37 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "resize_selection" => {
+                self.select_scope(arguments)?;
+                let width = number(arguments, "width").ok_or_else(|| missing("width"))?;
+                let height = number(arguments, "height").ok_or_else(|| missing("height"))?;
+                let preserve = arguments
+                    .get("preserve_proportions")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if !self.editor.set_selection_size(width, height, preserve) {
+                    return Err(BeamError::InvalidInput(
+                        "cannot resize the selection".to_string(),
+                    ));
+                }
+                Ok(self.status())
+            }
+            "skew_selection" => {
+                self.select_scope(arguments)?;
+                let x = number(arguments, "x_degrees").unwrap_or(0.0);
+                let y = number(arguments, "y_degrees").unwrap_or(0.0);
+                if !self.editor.skew_selection(x, y) {
+                    return Err(BeamError::InvalidInput(
+                        "cannot skew the selection".to_string(),
+                    ));
+                }
+                Ok(self.status())
+            }
+            "reset_transforms" => {
+                self.select_scope(arguments)?;
+                let count = self.editor.reset_transforms();
+                Ok(json!({"reset": count}))
+            }
             "copy_objects" => {
                 self.select_scope(arguments)?;
                 self.clipboard = self.editor.copy_selection();
@@ -829,6 +860,29 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "resize_selection",
+            "Scale the selection (all objects when ids are omitted) to an exact size.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "width": {"type": "number"},
+                "height": {"type": "number"},
+                "preserve_proportions": {"type": "boolean"}
+            }, "required": ["width", "height"]}),
+        ),
+        tool_with(
+            "skew_selection",
+            "Shear the selection (all objects when ids are omitted) around its centre.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "x_degrees": {"type": "number"},
+                "y_degrees": {"type": "number"}
+            }}),
+        ),
+        tool(
+            "reset_transforms",
+            "Bake the selected objects' transforms into their geometry.",
+        ),
+        tool_with(
             "copy_objects",
             "Copy the selected objects (all when ids are omitted) to the in-app clipboard.",
             json!({"type": "object", "properties": {
@@ -1169,6 +1223,36 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn transform_tools() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 10.0, "y": 10.0, "width": 20.0, "height": 10.0}),
+        );
+        assert!(
+            call(
+                &mut server,
+                "resize_selection",
+                json!({"width": 40.0, "height": 20.0})
+            )
+            .get("error")
+            .is_none()
+        );
+        let bounds =
+            call(&mut server, "list_objects", json!({}))["result"]["objects"][0]["bounds"].clone();
+        let width = bounds["max"][0].as_f64().unwrap() - bounds["min"][0].as_f64().unwrap();
+        assert!((width - 40.0).abs() < 1e-6);
+        assert!(
+            call(&mut server, "skew_selection", json!({"x_degrees": 30.0}))
+                .get("error")
+                .is_none()
+        );
+        let reset = call(&mut server, "reset_transforms", json!({}));
+        assert_eq!(reset["result"]["reset"], 1);
     }
 
     #[test]
