@@ -103,6 +103,24 @@ impl EditorState {
         )
     }
 
+    /// Create an open path from a freehand stroke, dropping duplicate points.
+    pub fn add_polyline(&mut self, points: &[Point2], closed: bool) -> Option<String> {
+        let mut simplified: Vec<(f64, f64)> = Vec::new();
+        for point in points {
+            let duplicate = simplified
+                .last()
+                .is_some_and(|(x, y)| (x - point.x).hypot(y - point.y) < 0.05);
+            if !duplicate {
+                simplified.push((point.x, point.y));
+            }
+        }
+        if simplified.len() < 2 {
+            return None;
+        }
+        let path = Path::from_points(&simplified, closed);
+        self.add_shape(Shape::Path(path), Transform2::identity())
+    }
+
     /// Create a regular polygon centred on `center` with the first vertex at
     /// `edge`, closing the outline.
     pub fn add_polygon(&mut self, center: Point2, edge: Point2, sides: usize) -> Option<String> {
@@ -1235,6 +1253,35 @@ mod tests {
         assert_eq!(editor.document.objects.len(), 1);
         assert!(editor.undo());
         assert_eq!(editor.document.objects.len(), 0);
+    }
+
+    #[test]
+    fn freehand_stroke_becomes_a_polyline() {
+        let mut editor = editor();
+        let points = [
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(2.0, 1.0),
+        ];
+        let id = editor.add_polyline(&points, false).unwrap();
+        let path = editor.document.object(&id).unwrap().world_path();
+        assert_eq!(path.segment_count(), 2);
+        assert!(!path.closed);
+    }
+
+    #[test]
+    fn freehand_drops_duplicate_points_and_rejects_short_strokes() {
+        let mut editor = editor();
+        let points = [
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 0.0),
+        ];
+        assert!(editor.add_polyline(&points, false).is_none());
+        let points = [Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)];
+        let id = editor.add_polyline(&points, true).unwrap();
+        let path = editor.document.object(&id).unwrap().world_path();
+        assert!(path.closed);
     }
 
     #[test]

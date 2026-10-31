@@ -26,7 +26,7 @@ enum PendingAction {
     Quit,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum DragState {
     Move {
         last: Point2,
@@ -41,6 +41,9 @@ enum DragState {
         start: Point2,
         end: Point2,
         additive: bool,
+    },
+    Sketch {
+        points: Vec<Point2>,
     },
     Pan {
         last: (f32, f32),
@@ -371,6 +374,7 @@ impl BeamWrightApp {
             fit,
             grid,
             polygon_tool,
+            pencil_tool,
             zoom_in,
             zoom_out,
             left,
@@ -396,6 +400,7 @@ impl BeamWrightApp {
                 input.consume_key(Modifiers::NONE, Key::F),
                 input.consume_key(Modifiers::NONE, Key::G),
                 input.consume_key(Modifiers::NONE, Key::P),
+                input.consume_key(Modifiers::NONE, Key::B),
                 input.consume_key(Modifiers::NONE, Key::Plus)
                     || input.consume_key(Modifiers::NONE, Key::Equals),
                 input.consume_key(Modifiers::NONE, Key::Minus),
@@ -449,6 +454,9 @@ impl BeamWrightApp {
         }
         if polygon_tool {
             self.editor.tool = Tool::Polygon;
+        }
+        if pencil_tool {
+            self.editor.tool = Tool::Pencil;
         }
         if zoom_in {
             self.editor.canvas.zoom_in();
@@ -718,6 +726,7 @@ impl BeamWrightApp {
                     Tool::Rect,
                     Tool::Ellipse,
                     Tool::Polygon,
+                    Tool::Pencil,
                     Tool::Pan,
                 ] {
                     if ui
@@ -1507,12 +1516,20 @@ impl BeamWrightApp {
                         let point = self.doc_point(rect, pos);
                         match self.editor.tool {
                             Tool::Select => self.begin_select(point, shift),
-                            Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Polygon => {
+                            Tool::Rect
+                            | Tool::Ellipse
+                            | Tool::Line
+                            | Tool::Polygon
+                            | Tool::Pencil => {
                                 if self.editor.layer_locked(&self.editor.active_layer_id)
                                     || !self.editor.layer_visible(&self.editor.active_layer_id)
                                 {
                                     self.status =
                                         "Cannot draw on a hidden or locked layer".to_string();
+                                } else if self.editor.tool == Tool::Pencil {
+                                    self.drag = Some(DragState::Sketch {
+                                        points: vec![point],
+                                    });
                                 } else {
                                     self.drag = Some(DragState::Draw {
                                         tool: self.editor.tool,
@@ -1561,6 +1578,9 @@ impl BeamWrightApp {
                         start: *start,
                         end: *end,
                     }),
+                    Some(DragState::Sketch { points }) => {
+                        Some(PreviewShape::Polyline(points.clone()))
+                    }
                     _ => None,
                 };
                 let theme = Theme {
@@ -1701,6 +1721,11 @@ impl BeamWrightApp {
             DragState::Draw { end, .. } | DragState::Marquee { end, .. } => {
                 *end = point;
             }
+            DragState::Sketch { points } => {
+                if points.last().is_none_or(|last| last.distance(point) >= 0.5) {
+                    points.push(point);
+                }
+            }
             DragState::Pan { last } => {
                 let dx = f64::from(pos.x - last.0);
                 let dy = f64::from(pos.y - last.1);
@@ -1731,6 +1756,11 @@ impl BeamWrightApp {
                 }
                 _ => {}
             },
+            DragState::Sketch { points } => {
+                if self.editor.add_polyline(&points, false).is_some() {
+                    self.status = "Freehand path created".to_string();
+                }
+            }
             DragState::Marquee {
                 start,
                 end,

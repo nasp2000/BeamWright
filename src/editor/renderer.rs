@@ -8,11 +8,12 @@ use crate::editor::EditorState;
 use crate::geometry::{Path, Point2};
 
 /// A shape being dragged out with a drawing tool, in document millimetres.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum PreviewShape {
     Rect { start: Point2, end: Point2 },
     Ellipse { start: Point2, end: Point2 },
     Line { start: Point2, end: Point2 },
+    Polyline(Vec<Point2>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -424,6 +425,15 @@ fn paint_preview(
                 ],
                 stroke,
             );
+        }
+        PreviewShape::Polyline(points) => {
+            let screen: Vec<Pos2> = points
+                .iter()
+                .map(|point| screen_pos(rect, editor, *point))
+                .collect();
+            if screen.len() >= 2 {
+                painter.add(egui::Shape::line(screen, stroke));
+            }
         }
     }
 }
