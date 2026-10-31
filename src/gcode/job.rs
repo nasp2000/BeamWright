@@ -206,6 +206,8 @@ pub fn build_toolpaths_cancellable(
                             &points,
                             resolved.tabs,
                             resolved.tab_width_mm,
+                            resolved.lead_in_mm,
+                            resolved.lead_out_mm,
                         );
                         let mut toolpath = toolpath
                             .with_operation(object.operation_id.as_deref())
@@ -487,6 +489,19 @@ fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval:
         loops += 1;
     }
     loops
+}
+
+fn kerfed(points: &[Point2], kerf_mm: f64) -> Vec<Point2> {
+    if kerf_mm <= 0.0 {
+        return points.to_vec();
+    }
+    let polygon: Vec<(f64, f64)> = points.iter().map(|point| (point.x, point.y)).collect();
+    let offset = crate::geometry::offset::offset_polygon_miter(&polygon, -kerf_mm / 2.0);
+    if offset.len() < 3 {
+        points.to_vec()
+    } else {
+        offset.into_iter().map(|(x, y)| Point2::new(x, y)).collect()
+    }
 }
 
 fn append_contour(
