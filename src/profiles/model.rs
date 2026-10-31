@@ -472,6 +472,7 @@ impl ProfileLibrary {
                 power: 80.0,
                 passes: 2,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
@@ -486,6 +487,7 @@ impl ProfileLibrary {
                 power: 25.0,
                 passes: 1,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,

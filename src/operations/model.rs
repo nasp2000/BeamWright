@@ -46,6 +46,22 @@ pub struct OperationParams {
     pub power: f64,
     pub passes: u32,
     pub line_interval_mm: f64,
+    /// Rotation of a linear fill, in degrees.
+    #[serde(default)]
+    pub fill_angle_degrees: f64,
+    /// Reverse every other fill line.
+    #[serde(default = "default_true")]
+    pub fill_alternate: bool,
+    /// Inset kept between the outline and the fill, in millimetres.
+    #[serde(default)]
+    pub fill_margin_mm: f64,
+    /// Perpendicular shift of the fill pattern, in millimetres.
+    #[serde(default)]
+    pub fill_offset_mm: f64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for OperationParams {
@@ -55,6 +71,10 @@ impl Default for OperationParams {
             power: 20.0,
             passes: 1,
             line_interval_mm: 0.1,
+            fill_angle_degrees: 0.0,
+            fill_alternate: true,
+            fill_margin_mm: 0.0,
+            fill_offset_mm: 0.0,
         }
     }
 }
@@ -97,6 +117,15 @@ impl Operation {
         }
         if self.params.line_interval_mm <= 0.0 {
             return Err("line interval must be positive".to_string());
+        }
+        if !self.params.fill_angle_degrees.is_finite() {
+            return Err("fill angle must be finite".to_string());
+        }
+        if !self.params.fill_margin_mm.is_finite() || self.params.fill_margin_mm < 0.0 {
+            return Err("fill margin must be zero or positive".to_string());
+        }
+        if !self.params.fill_offset_mm.is_finite() {
+            return Err("fill offset must be finite".to_string());
         }
         Ok(())
     }

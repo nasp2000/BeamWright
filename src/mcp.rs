@@ -244,6 +244,20 @@ impl McpServer {
                     if let Some(interval) = number(arguments, "line_interval_mm") {
                         operation.params.line_interval_mm = interval;
                     }
+                    if let Some(angle) = number(arguments, "fill_angle_degrees") {
+                        operation.params.fill_angle_degrees = angle;
+                    }
+                    if let Some(margin) = number(arguments, "fill_margin_mm") {
+                        operation.params.fill_margin_mm = margin;
+                    }
+                    if let Some(offset) = number(arguments, "fill_offset_mm") {
+                        operation.params.fill_offset_mm = offset;
+                    }
+                    if let Some(alternate) =
+                        arguments.get("fill_alternate").and_then(Value::as_bool)
+                    {
+                        operation.params.fill_alternate = alternate;
+                    }
                     operation.validate().map_err(BeamError::InvalidInput)?;
                 }
                 Ok(json!({"id": id, "operations": self.editor.document.operations.len()}))
@@ -832,7 +846,11 @@ fn tool_definitions() -> Vec<Value> {
                 "speed": {"type": "number"},
                 "power": {"type": "number"},
                 "passes": {"type": "integer"},
-                "line_interval_mm": {"type": "number"}
+                "line_interval_mm": {"type": "number"},
+                "fill_angle_degrees": {"type": "number"},
+                "fill_margin_mm": {"type": "number"},
+                "fill_offset_mm": {"type": "number"},
+                "fill_alternate": {"type": "boolean"}
             }}),
         ),
         tool_with(

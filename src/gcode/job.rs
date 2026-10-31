@@ -48,6 +48,10 @@ struct Resolved {
     passes: u32,
     line_interval_mm: f64,
     op_type: OperationType,
+    fill_angle_degrees: f64,
+    fill_alternate: bool,
+    fill_margin_mm: f64,
+    fill_offset_mm: f64,
 }
 
 fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
@@ -65,6 +69,10 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             passes: operation.params.passes.max(1),
             line_interval_mm: operation.params.line_interval_mm.max(0.01),
             op_type: operation.op_type,
+            fill_angle_degrees: operation.params.fill_angle_degrees,
+            fill_alternate: operation.params.fill_alternate,
+            fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
+            fill_offset_mm: operation.params.fill_offset_mm,
         }),
         None => {
             let params = OperationParams::default();
@@ -74,6 +82,10 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 passes: params.passes.max(1),
                 line_interval_mm: params.line_interval_mm.max(0.01),
                 op_type: OperationType::Line,
+                fill_angle_degrees: params.fill_angle_degrees,
+                fill_alternate: params.fill_alternate,
+                fill_margin_mm: params.fill_margin_mm.max(0.0),
+                fill_offset_mm: params.fill_offset_mm,
             })
         }
     }
@@ -122,35 +134,13 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                             | OperationType::FillWithOutline
                             | OperationType::FillWithOffset
                     ) {
-                        let polygon: Vec<(f64, f64)> =
-                            points.iter().map(|point| (point.x, point.y)).collect();
-                        let lines = crate::geometry::fill::fill_lines(
-                            &polygon,
-                            resolved.line_interval_mm,
-                            0.0,
+                        push_fill_toolpath(
+                            &mut toolpaths,
+                            object,
+                            &resolved,
+                            &points,
+                            &mut warnings,
                         );
-                        if lines.is_empty() {
-                            warnings.push(format!(
-                                "'{}' is too small to fill at {} mm spacing",
-                                object.name, resolved.line_interval_mm
-                            ));
-                        }
-                        let mut toolpath = Toolpath::new(
-                            object.name.clone(),
-                            resolved.speed,
-                            resolved.power,
-                            resolved.passes,
-                        );
-                        for ((x0, y0), (x1, y1)) in lines {
-                            toolpath.push(MoveKind::Travel, x0, y0);
-                            toolpath.push(MoveKind::Cut, x1, y1);
-                        }
-                        if resolved.op_type == OperationType::FillWithOutline {
-                            append_contour(&mut toolpath, &points);
-                        }
-                        if !toolpath.is_empty() {
-                            toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
-                        }
                     } else {
                         let mut toolpath = Toolpath::new(
                             object.name.clone(),
@@ -239,6 +229,133 @@ impl TransformBake {
             .apply(crate::geometry::Point2::new(local_x, local_y));
         (point.x, point.y)
     }
+}
+
+/// Build the fill toolpath for one object.
+///
+/// Handles linear, outlined and offset fills, including the margin, angle,
+/// pattern offset and alternating direction of a linear fill.
+fn push_fill_toolpath(
+    toolpaths: &mut Vec<Toolpath>,
+    object: &Object,
+    resolved: &Resolved,
+    points: &[Point2],
+    warnings: &mut Vec<String>,
+) {
+    let mut polygon: Vec<(f64, f64)> = points.iter().map(|point| (point.x, point.y)).collect();
+    // Flattened closed paths repeat the first point; offsets would treat it as
+    // an extra, degenerate corner.
+    if polygon.len() > 2 {
+        let first = polygon[0];
+        let last = polygon[polygon.len() - 1];
+        if (first.0 - last.0).abs() <= 1e-9 && (first.1 - last.1).abs() <= 1e-9 {
+            polygon.pop();
+        }
+    }
+    if resolved.op_type == OperationType::FillWithOffset {
+        let mut toolpath = Toolpath::new(
+            object.name.clone(),
+            resolved.speed,
+            resolved.power,
+            resolved.passes,
+        );
+        let loops = append_offset_fill(&mut toolpath, &polygon, resolved.line_interval_mm);
+        if loops == 0 {
+            warnings.push(format!(
+                "'{}' is too small to offset-fill at {} mm spacing",
+                object.name, resolved.line_interval_mm
+            ));
+        } else {
+            toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
+        }
+        return;
+    }
+    let mut fill_polygon = polygon;
+    if crate::geometry::boolean::polygon_area(&fill_polygon) < 0.0 {
+        fill_polygon.reverse();
+    }
+    if resolved.fill_margin_mm > 0.0 {
+        let inset =
+            crate::geometry::offset::offset_polygon_miter(&fill_polygon, -resolved.fill_margin_mm);
+        if inset.len() < 3
+            || crate::geometry::offset::offset_collapsed(
+                &fill_polygon,
+                &inset,
+                -resolved.fill_margin_mm,
+            )
+        {
+            warnings.push(format!(
+                "'{}' is too small to fill with a {} mm margin",
+                object.name, resolved.fill_margin_mm
+            ));
+            return;
+        }
+        fill_polygon = inset;
+    }
+    let lines = crate::geometry::fill::fill_lines_with(
+        &fill_polygon,
+        crate::geometry::fill::FillOptions {
+            spacing: resolved.line_interval_mm,
+            angle: resolved.fill_angle_degrees.to_radians(),
+            offset: resolved.fill_offset_mm,
+            alternate: resolved.fill_alternate,
+        },
+    );
+    if lines.is_empty() {
+        warnings.push(format!(
+            "'{}' is too small to fill at {} mm spacing",
+            object.name, resolved.line_interval_mm
+        ));
+    }
+    let mut toolpath = Toolpath::new(
+        object.name.clone(),
+        resolved.speed,
+        resolved.power,
+        resolved.passes,
+    );
+    for ((x0, y0), (x1, y1)) in lines {
+        toolpath.push(MoveKind::Travel, x0, y0);
+        toolpath.push(MoveKind::Cut, x1, y1);
+    }
+    if resolved.op_type == OperationType::FillWithOutline {
+        append_contour(&mut toolpath, points);
+    }
+    if !toolpath.is_empty() {
+        toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
+    }
+}
+
+/// Add concentric inward offsets of `polygon` to `toolpath`.
+///
+/// Each inset is one line interval, which turns an offset fill into closed loops
+/// instead of the parallel lines of a linear fill. Returns how many loops were
+/// added; zero means the shape is too small for the requested spacing.
+fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval: f64) -> usize {
+    use crate::geometry::boolean::polygon_area;
+    use crate::geometry::offset::{offset_collapsed, offset_polygon_miter};
+
+    if polygon.len() < 3 || interval <= 0.0 {
+        return 0;
+    }
+    let mut contour = polygon.to_vec();
+    if polygon_area(&contour) < 0.0 {
+        contour.reverse();
+    }
+    let mut loops = 0;
+    for step in 1..=1000 {
+        let inset = interval * f64::from(step);
+        let offset = offset_polygon_miter(&contour, -inset);
+        if offset.len() < 3
+            || offset_collapsed(&contour, &offset, -inset)
+            || polygon_area(&offset) <= 1e-9
+        {
+            break;
+        }
+        let points: Vec<Point2> = offset.iter().map(|(x, y)| Point2::new(*x, *y)).collect();
+        append_contour(toolpath, &points);
+        loops += 1;
+    }
+    loops
 }
 
 fn append_contour(toolpath: &mut Toolpath, points: &[Point2]) {
@@ -465,6 +582,7 @@ mod tests {
                 power: 35.0,
                 passes: 2,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             enabled: true,
         };
@@ -524,6 +642,7 @@ mod tests {
                 power: 10.0,
                 passes: 1,
                 line_interval_mm: 1.0,
+                ..OperationParams::default()
             },
             enabled: true,
         });
@@ -583,6 +702,7 @@ mod tests {
                 power: 80.0,
                 passes: 1,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             enabled: true,
         });
@@ -595,6 +715,7 @@ mod tests {
                 power: 15.0,
                 passes: 1,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             enabled: true,
         });
@@ -666,6 +787,180 @@ mod tests {
         assert!(cut < engrave, "the cut operation must come first");
     }
 
+    fn fill_document(params: OperationParams) -> Document {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        document.operations.push(Operation {
+            id: "fill".to_string(),
+            name: "Fill".to_string(),
+            op_type: OperationType::Fill,
+            params,
+            enabled: true,
+        });
+        let mut object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 10.0,
+                height: 4.0,
+                corner_radius: 0.0,
+            },
+        );
+        object.operation_id = Some("fill".to_string());
+        document.add_object(object);
+        document
+    }
+
+    #[test]
+    fn fill_angle_rotates_the_lines() {
+        let document = fill_document(OperationParams {
+            line_interval_mm: 1.0,
+            fill_angle_degrees: 90.0,
+            ..OperationParams::default()
+        });
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 1);
+        assert_eq!(warnings.len(), 0);
+        let mut previous_travel_x = None;
+        let mut cuts = 0;
+        for movement in &toolpaths[0].moves {
+            match movement.kind {
+                MoveKind::Travel => previous_travel_x = Some(movement.x),
+                MoveKind::Cut => {
+                    cuts += 1;
+                    let travel_x = previous_travel_x.expect("cut after travel");
+                    assert!((movement.x - travel_x).abs() < 1e-6);
+                }
+            }
+        }
+        assert!(cuts > 0);
+    }
+
+    #[test]
+    fn fill_margin_insets_the_pattern() {
+        let document = fill_document(OperationParams {
+            line_interval_mm: 1.0,
+            fill_margin_mm: 1.0,
+            ..OperationParams::default()
+        });
+        let (toolpaths, _) = build_toolpaths(&document);
+        for movement in &toolpaths[0].moves {
+            assert!(movement.x >= 1.0 - 1e-6 && movement.x <= 9.0 + 1e-6);
+            assert!(movement.y >= 1.0 - 1e-6 && movement.y <= 3.0 + 1e-6);
+        }
+    }
+
+    #[test]
+    fn fill_margin_that_does_not_fit_is_reported() {
+        let document = fill_document(OperationParams {
+            line_interval_mm: 1.0,
+            fill_margin_mm: 5.0,
+            ..OperationParams::default()
+        });
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("margin"));
+    }
+
+    #[test]
+    fn alternating_fill_reverses_every_other_line() {
+        let document = fill_document(OperationParams {
+            line_interval_mm: 1.0,
+            fill_alternate: true,
+            ..OperationParams::default()
+        });
+        let (toolpaths, _) = build_toolpaths(&document);
+        let mut starts = Vec::new();
+        let mut previous_cut: Option<(f64, f64)> = None;
+        for movement in &toolpaths[0].moves {
+            if movement.kind == MoveKind::Cut {
+                if let Some(previous) = previous_cut {
+                    if (movement.y - previous.1).abs() > 0.5 {
+                        starts.push(movement.x);
+                    }
+                }
+                previous_cut = Some((movement.x, movement.y));
+            }
+        }
+        assert!(starts.len() >= 2);
+        // Consecutive rows start on opposite sides of the shape.
+        assert!((starts[0] - starts[1]).abs() > 5.0);
+    }
+
+    #[test]
+    fn offset_fill_creates_concentric_loops() {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        let operation = Operation {
+            id: "offset".to_string(),
+            name: "Offset".to_string(),
+            op_type: OperationType::FillWithOffset,
+            params: OperationParams {
+                speed: 1000.0,
+                power: 50.0,
+                passes: 1,
+                line_interval_mm: 1.0,
+                ..OperationParams::default()
+            },
+            enabled: true,
+        };
+        document.operations.push(operation);
+        let mut object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 10.0,
+                height: 10.0,
+                corner_radius: 0.0,
+            },
+        );
+        object.operation_id = Some("offset".to_string());
+        document.add_object(object);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 1);
+        assert_eq!(warnings.len(), 0);
+        let travels = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Travel)
+            .count();
+        // A 10 x 10 square shrinks by 1 mm per side: 8, 6, 4 and 2 mm loops.
+        assert_eq!(travels, 4);
+        assert!(toolpaths[0].cut_length() > 0.0);
+    }
+
+    #[test]
+    fn offset_fill_reports_a_shape_that_is_too_small() {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        document.operations.push(Operation {
+            id: "offset".to_string(),
+            name: "Offset".to_string(),
+            op_type: OperationType::FillWithOffset,
+            params: OperationParams {
+                speed: 1000.0,
+                power: 50.0,
+                passes: 1,
+                line_interval_mm: 2.0,
+                ..OperationParams::default()
+            },
+            enabled: true,
+        });
+        let mut object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 2.0,
+                height: 2.0,
+                corner_radius: 0.0,
+            },
+        );
+        object.operation_id = Some("offset".to_string());
+        document.add_object(object);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(toolpaths.len(), 0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("offset-fill"));
+    }
+
     #[test]
     fn estimate_counts_passes_and_speed() {
         let mut toolpath = Toolpath::new("a", 600.0, 100.0, 1);
@@ -723,6 +1018,7 @@ mod tests {
                 power: 20.0,
                 passes: 1,
                 line_interval_mm: 0.1,
+                ..OperationParams::default()
             },
             enabled: true,
         });

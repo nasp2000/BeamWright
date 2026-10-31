@@ -19,7 +19,46 @@ pub fn fill_with_holes(
     lines
 }
 
+/// Options for a linear fill (PLAN.md §18.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FillOptions {
+    /// Distance between two fill lines, in millimetres.
+    pub spacing: f64,
+    /// Rotation of the fill pattern, in radians.
+    pub angle: f64,
+    /// Perpendicular shift of the whole pattern, in millimetres.
+    pub offset: f64,
+    /// Reverse every other line so the head does not return across the shape.
+    pub alternate: bool,
+}
+
+impl Default for FillOptions {
+    fn default() -> Self {
+        Self {
+            spacing: 0.1,
+            angle: 0.0,
+            offset: 0.0,
+            alternate: false,
+        }
+    }
+}
+
 pub fn fill_lines(poly: &[(f64, f64)], spacing: f64, angle: f64) -> Vec<((f64, f64), (f64, f64))> {
+    fill_lines_with(
+        poly,
+        FillOptions {
+            spacing,
+            angle,
+            offset: 0.0,
+            alternate: false,
+        },
+    )
+}
+
+/// Linear fill with angle, pattern offset and alternating direction.
+pub fn fill_lines_with(poly: &[(f64, f64)], options: FillOptions) -> Vec<((f64, f64), (f64, f64))> {
+    let spacing = options.spacing;
+    let angle = options.angle;
     if poly.len() < 3 || spacing <= 0.0 {
         return Vec::new();
     }
@@ -59,10 +98,15 @@ pub fn fill_lines(poly: &[(f64, f64)], spacing: f64, angle: f64) -> Vec<((f64, f
         while k + 1 < xs.len() {
             let x0 = xs[k];
             let x1 = xs[k + 1];
+            let shifted = y - options.offset;
             // rotate back
-            let p0 = (x0 * cos - y * sin, x0 * sin + y * cos);
-            let p1 = (x1 * cos - y * sin, x1 * sin + y * cos);
-            lines.push((p0, p1));
+            let p0 = (x0 * cos - shifted * sin, x0 * sin + shifted * cos);
+            let p1 = (x1 * cos - shifted * sin, x1 * sin + shifted * cos);
+            if options.alternate && lines.len() % 2 == 1 {
+                lines.push((p1, p0));
+            } else {
+                lines.push((p0, p1));
+            }
             k += 2;
         }
         y += spacing;
@@ -82,6 +126,73 @@ mod tests {
             fill_lines(&[], 1.0, 0.0),
             [] as [((f64, f64), (f64, f64)); 0]
         );
+    }
+
+    #[test]
+    fn angle_turns_the_lines() {
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let lines = super::fill_lines_with(
+            &square,
+            super::FillOptions {
+                spacing: 2.0,
+                angle: std::f64::consts::FRAC_PI_2,
+                offset: 0.0,
+                alternate: false,
+            },
+        );
+        assert_ne!(lines.len(), 0);
+        for ((x0, y0), (x1, y1)) in lines {
+            assert!((x0 - x1).abs() < 1e-6);
+            assert!((y1 - y0).abs() > 1.0);
+        }
+    }
+
+    #[test]
+    fn alternating_reverses_every_other_line() {
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let straight = super::fill_lines_with(
+            &square,
+            super::FillOptions {
+                spacing: 2.0,
+                angle: 0.0,
+                offset: 0.0,
+                alternate: false,
+            },
+        );
+        let alternating = super::fill_lines_with(
+            &square,
+            super::FillOptions {
+                spacing: 2.0,
+                angle: 0.0,
+                offset: 0.0,
+                alternate: true,
+            },
+        );
+        assert_eq!(straight.len(), alternating.len());
+        assert_eq!(straight[1].0, alternating[1].1);
+        assert_eq!(straight[1].1, alternating[1].0);
+    }
+
+    #[test]
+    fn offset_shifts_the_whole_pattern() {
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let base = super::fill_lines_with(
+            &square,
+            super::FillOptions {
+                spacing: 1.0,
+                ..super::FillOptions::default()
+            },
+        );
+        let shifted = super::fill_lines_with(
+            &square,
+            super::FillOptions {
+                spacing: 1.0,
+                offset: 0.5,
+                ..super::FillOptions::default()
+            },
+        );
+        assert_eq!(base.len(), shifted.len());
+        assert!((base[0].0.1 - shifted[0].0.1 - 0.5).abs() < 1e-6);
     }
 
     #[test]

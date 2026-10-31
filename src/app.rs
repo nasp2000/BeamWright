@@ -1607,7 +1607,33 @@ impl BeamWrightApp {
                         | OperationType::FillWithOutline
                         | OperationType::FillWithOffset
                 ) {
-                    ui.weak("Fill spacing is the line interval above.");
+                    ui.horizontal(|ui| {
+                        ui.label("Fill angle");
+                        ui.add(
+                            egui::DragValue::new(&mut operation.params.fill_angle_degrees)
+                                .speed(1.0)
+                                .range(-180.0..=180.0)
+                                .suffix(" deg"),
+                        );
+                        ui.label("Margin");
+                        ui.add(
+                            egui::DragValue::new(&mut operation.params.fill_margin_mm)
+                                .speed(0.1)
+                                .range(0.0..=50.0)
+                                .suffix(" mm"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Pattern offset");
+                        ui.add(
+                            egui::DragValue::new(&mut operation.params.fill_offset_mm)
+                                .speed(0.1)
+                                .range(-50.0..=50.0)
+                                .suffix(" mm"),
+                        );
+                        ui.checkbox(&mut operation.params.fill_alternate, "Alternate direction");
+                    });
+                    ui.weak("Fill spacing is the line interval above. Offset fill uses the interval between loops.");
                 }
             }
             ui.horizontal(|ui| {
