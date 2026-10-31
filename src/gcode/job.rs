@@ -692,7 +692,7 @@ pub fn render_job_cancellable(
     cancel: &dyn Fn() -> bool,
 ) -> Result<(String, JobReport)> {
     document.validate().map_err(BeamError::InvalidInput)?;
-    let (toolpaths, mut warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
+    let (mut toolpaths, mut warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
     if cancel() {
         return Err(cancelled());
     }
