@@ -135,6 +135,7 @@ mod tests {
         preferences.drawing.selection_color = "#FF0000".to_string();
         preferences.drawing.handle_style = "circle".to_string();
         preferences.drawing.zoom_step = 1.5;
+        preferences.drawing.select_whole_group = false;
         preferences.general.theme = "dark".to_string();
         preferences.save(&path).unwrap();
         let loaded = AppPreferences::load_or_default(&path).unwrap();
@@ -149,6 +150,7 @@ mod tests {
         assert_eq!(loaded.drawing.selection_color, "#FF0000");
         assert_eq!(loaded.drawing.handle_style, "circle");
         assert!((loaded.drawing.zoom_step - 1.5).abs() < 1e-9);
+        assert!(!loaded.drawing.select_whole_group);
         assert!(!loaded.drawing.snap_midpoints);
         assert_eq!(loaded.general.theme, "dark");
         assert!(!path.with_extension("json.tmp").exists());

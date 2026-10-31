@@ -417,3 +417,9 @@ fn cli_boolean_rejects_unknown_ids() {
     assert!(!output.exists());
     let _ = fs::remove_file(&source);
 }
+
+#[test]
+fn cli_bench_measures_a_small_project() {
+    let cli = Cli::try_parse_from(["BeamWright", "bench", "--objects", "20"]).unwrap();
+    run(cli).unwrap();
+}

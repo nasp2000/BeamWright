@@ -76,6 +76,9 @@ pub struct DrawingPrefs {
     /// Zoom factor for the zoom commands.
     #[serde(default = "default_zoom_step")]
     pub zoom_step: f64,
+    /// Clicking one object of a group selects the whole group.
+    #[serde(default = "default_true")]
+    pub select_whole_group: bool,
 }
 
 impl Default for DrawingPrefs {
@@ -97,6 +100,7 @@ impl Default for DrawingPrefs {
             selection_color: default_selection_color(),
             handle_style: default_handle_style(),
             zoom_step: default_zoom_step(),
+            select_whole_group: true,
         }
     }
 }

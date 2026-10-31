@@ -69,6 +69,12 @@ pub enum Commands {
     },
     /// Run the MCP server on stdin/stdout
     Mcp,
+    /// Measure build, export, save and G-code times on a synthetic project
+    Bench {
+        /// Number of objects to create
+        #[arg(long, default_value_t = 500)]
+        objects: usize,
+    },
 }
 
 #[allow(clippy::too_many_lines)]
@@ -211,6 +217,10 @@ pub fn run(cli: Cli) -> Result<()> {
             server.serve_stdio()?;
             Ok(())
         }
+        Some(Commands::Bench { objects }) => {
+            run_bench(objects);
+            Ok(())
+        }
         Some(Commands::ListLayers { path }) => {
             let document = open_document(&path)?;
             for layer in &document.layers {
@@ -225,6 +235,89 @@ pub fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+/// Build a synthetic project and time the main file and job operations.
+///
+/// This is the measurement tool from PLAN.md §25.3: run it on the target
+/// hardware to record import, export, save and G-code times.
+fn run_bench(count: usize) {
+    use std::time::Instant;
+
+    let count = count.clamp(1, 10_000);
+    let start = Instant::now();
+    let mut document = Document::new("Benchmark", 300.0, 200.0);
+    let layer = document.layers[0].id.clone();
+    for index in 0..count {
+        #[allow(clippy::cast_precision_loss)]
+        let column = index % 25;
+        #[allow(clippy::cast_precision_loss)]
+        let row = index / 25;
+        #[allow(clippy::cast_precision_loss)]
+        let x = 5.0 + column as f64 * 11.0;
+        #[allow(clippy::cast_precision_loss)]
+        let y = 5.0 + row as f64 * 11.0;
+        let shape = if index % 5 == 0 {
+            crate::document::Shape::Ellipse { rx: 4.0, ry: 3.0 }
+        } else {
+            crate::document::Shape::Rect {
+                width: 8.0,
+                height: 6.0,
+                corner_radius: 0.0,
+            }
+        };
+        let object = crate::document::Object::new(layer.clone(), shape)
+            .with_transform(crate::geometry::Transform2::translate(x, y));
+        document.add_object(object);
+    }
+    println!(
+        "Build: {:.1} ms ({} objects)",
+        start.elapsed().as_secs_f64() * 1000.0,
+        count
+    );
+
+    let timer = Instant::now();
+    match crate::export::export_svg(&document) {
+        Ok(svg) => println!(
+            "SVG export: {:.1} ms ({} bytes)",
+            timer.elapsed().as_secs_f64() * 1000.0,
+            svg.len()
+        ),
+        Err(error) => println!("SVG export failed: {error}"),
+    }
+
+    let timer = Instant::now();
+    match crate::gcode::render_job(&document, &crate::gcode::JobOptions::default()) {
+        Ok((_text, report)) => println!(
+            "G-code: {:.1} ms ({} paths, {} lines, {:.1} s estimated)",
+            timer.elapsed().as_secs_f64() * 1000.0,
+            report.paths,
+            report.lines,
+            report.seconds
+        ),
+        Err(error) => println!("G-code failed: {error}"),
+    }
+
+    let timer = Instant::now();
+    match serialization::to_json(&document) {
+        Ok(json) => {
+            println!(
+                "Serialize: {:.1} ms ({} bytes)",
+                timer.elapsed().as_secs_f64() * 1000.0,
+                json.len()
+            );
+            let timer = Instant::now();
+            match serialization::from_json(&json) {
+                Ok(loaded) => println!(
+                    "Deserialize: {:.1} ms ({} objects)",
+                    timer.elapsed().as_secs_f64() * 1000.0,
+                    loaded.objects.len()
+                ),
+                Err(error) => println!("Deserialize failed: {error}"),
+            }
+        }
+        Err(error) => println!("Serialize failed: {error}"),
     }
 }
 

@@ -182,6 +182,8 @@ pub struct EditorState {
     pub handle_style: HandleStyle,
     /// Zoom factor applied by the zoom commands.
     pub zoom_step: f64,
+    /// Clicking one member of a group selects the whole group.
+    pub select_whole_group: bool,
     /// Draw the document guides.
     pub guides_visible: bool,
     /// Snap drawing to visible guides.
@@ -222,6 +224,7 @@ impl EditorState {
             selection_color: "#008CFF".to_string(),
             handle_style: HandleStyle::Square,
             zoom_step: 1.25,
+            select_whole_group: true,
             guides_visible: true,
             snap_guides: true,
             transform_center: TransformCenter::Selection,
@@ -1618,16 +1621,25 @@ impl EditorState {
         tolerance_mm: f64,
     ) -> Option<String> {
         let hit = self.object_at(point, tolerance_mm);
+        let members = |editor: &Self, id: &str| -> Vec<String> {
+            if editor.select_whole_group {
+                editor
+                    .group_members(id)
+                    .unwrap_or_else(|| vec![id.to_string()])
+            } else {
+                vec![id.to_string()]
+            }
+        };
         match hit.clone() {
             Some(id) if additive => {
-                for member in self.group_members(&id).unwrap_or_else(|| vec![id.clone()]) {
+                for member in members(self, &id) {
                     self.selection.toggle(member);
                 }
                 Some(id)
             }
             Some(id) => {
                 self.selection.clear();
-                for member in self.group_members(&id).unwrap_or_else(|| vec![id.clone()]) {
+                for member in members(self, &id) {
                     self.selection.add(member);
                 }
                 Some(id)
@@ -3417,6 +3429,31 @@ mod tests {
         assert_eq!(editor.selection.len(), 2);
         assert!(editor.ungroup_selection());
         assert!(editor.group_members(&first).is_none());
+    }
+
+    #[test]
+    fn group_selection_can_be_disabled() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        editor.selection.add(second);
+        assert!(editor.group_selection());
+        editor.select_whole_group = false;
+        editor.selection.clear();
+        editor.select_at(Point2::new(0.0, 5.0), false, 0.5);
+        assert_eq!(editor.selection.len(), 1);
+        assert!(editor.selection.contains(&first));
+        editor.select_whole_group = true;
+        editor.selection.clear();
+        editor.select_at(Point2::new(0.0, 5.0), false, 0.5);
+        assert_eq!(editor.selection.len(), 2);
     }
 
     #[test]

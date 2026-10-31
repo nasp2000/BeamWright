@@ -321,6 +321,7 @@ impl BeamWrightApp {
         editor.handle_style =
             crate::editor::state::HandleStyle::from_label(&preferences.drawing.handle_style);
         editor.zoom_step = preferences.drawing.zoom_step;
+        editor.select_whole_group = preferences.drawing.select_whole_group;
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
@@ -4704,6 +4705,7 @@ impl BeamWrightApp {
                         &self.preferences.drawing.handle_style,
                     );
                     self.editor.zoom_step = self.preferences.drawing.zoom_step;
+                    self.editor.select_whole_group = self.preferences.drawing.select_whole_group;
                     self.editor.guides_visible = self.preferences.drawing.guides_visible;
                     self.editor.snap_guides = self.preferences.drawing.snap_guides;
                     self.dark_mode = self.preferences.general.theme == "dark";
