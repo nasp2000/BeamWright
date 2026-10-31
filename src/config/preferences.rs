@@ -130,6 +130,21 @@ mod tests {
     }
 
     #[test]
+    fn old_preferences_receive_the_bundled_text_font() {
+        let json = r#"{"default_unit":"mm","theme":"light","confirm_destructive":true,"backup_enabled":true,"default_directory":""}"#;
+        let general: GeneralPrefs = serde_json::from_str(json).unwrap();
+        assert_eq!(general.text_font, crate::textfont::BUNDLED_NAME);
+        assert!(general.validate().is_ok());
+    }
+
+    #[test]
+    fn an_empty_text_font_is_rejected() {
+        let mut preferences = AppPreferences::default();
+        preferences.general.text_font = "   ".to_string();
+        assert!(preferences.validate().is_err());
+    }
+
+    #[test]
     fn missing_file_loads_defaults() {
         let path = std::env::temp_dir().join("bw_prefs_missing.json");
         let _ = std::fs::remove_file(&path);
