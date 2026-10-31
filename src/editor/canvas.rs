@@ -1,3 +1,5 @@
+use crate::geometry::Point2;
+
 /// Canvas view transform.
 ///
 /// Document coordinates are millimetres with the origin at the bottom-left
@@ -78,6 +80,28 @@ impl CanvasState {
             .clamp(MIN_ZOOM, MAX_ZOOM);
         self.pan_x = (viewport_width - width_mm * self.zoom) / 2.0;
         self.pan_y = f64::midpoint(viewport_height, height_mm * self.zoom);
+    }
+
+    /// Fit a document rectangle into the viewport, centred.
+    pub fn fit_bounds(
+        &mut self,
+        min: Point2,
+        max: Point2,
+        viewport_width: f64,
+        viewport_height: f64,
+        margin: f64,
+    ) {
+        let width = (max.x - min.x).max(0.001);
+        let height = (max.y - min.y).max(0.001);
+        let available_width = (viewport_width - 2.0 * margin).max(1.0);
+        let available_height = (viewport_height - 2.0 * margin).max(1.0);
+        self.zoom = (available_width / width)
+            .min(available_height / height)
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        let mid_x = f64::midpoint(min.x, max.x);
+        let mid_y = f64::midpoint(min.y, max.y);
+        self.pan_x = f64::midpoint(viewport_width, 0.0) - mid_x * self.zoom;
+        self.pan_y = f64::midpoint(viewport_height, 0.0) + mid_y * self.zoom;
     }
 
     pub fn screen_to_doc(&self, screen_x: f64, screen_y: f64) -> (f64, f64) {

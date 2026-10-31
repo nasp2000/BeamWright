@@ -2213,6 +2213,59 @@ impl EditorState {
         bounds
     }
 
+    /// Move the selected objects to the top of the drawing order.
+    pub fn bring_selection_to_front(&mut self) -> usize {
+        self.reorder_selection(true)
+    }
+
+    /// Move the selected objects to the bottom of the drawing order.
+    pub fn send_selection_to_back(&mut self) -> usize {
+        self.reorder_selection(false)
+    }
+
+    fn reorder_selection(&mut self, to_front: bool) -> usize {
+        if self.selection.is_empty() {
+            return 0;
+        }
+        self.record();
+        let (selected, others): (Vec<Object>, Vec<Object>) = self
+            .document
+            .objects
+            .drain(..)
+            .partition(|object| self.selection.contains(&object.id));
+        self.document.objects = if to_front {
+            others.into_iter().chain(selected.iter().cloned()).collect()
+        } else {
+            selected.iter().cloned().chain(others).collect()
+        };
+        selected.len()
+    }
+
+    /// Centre the selection on the work area.
+    pub fn center_selection_on_page(&mut self) -> bool {
+        let Some((min, max)) = self.selected_bounds() else {
+            return false;
+        };
+        let center = Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
+        let page = Point2::new(self.document.width_mm / 2.0, self.document.height_mm / 2.0);
+        if center.distance(page) <= 1e-9 {
+            return true;
+        }
+        self.record();
+        self.move_selection(page.x - center.x, page.y - center.y);
+        true
+    }
+
+    /// Fit the selection into the viewport.
+    pub fn zoom_to_selection(&mut self, viewport_width: f64, viewport_height: f64) -> bool {
+        let Some((min, max)) = self.selected_bounds() else {
+            return false;
+        };
+        self.canvas
+            .fit_bounds(min, max, viewport_width, viewport_height, 32.0);
+        true
+    }
+
     pub fn fit_view(&mut self, viewport_width: f64, viewport_height: f64) {
         self.canvas.fit(
             self.document.width_mm,
@@ -3145,6 +3198,73 @@ mod tests {
             }),
             0
         );
+    }
+
+    #[test]
+    fn selected_objects_move_to_the_front_and_back() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(4.0, 0.0), Point2::new(6.0, 2.0))
+            .unwrap();
+        let third = editor
+            .add_rectangle(Point2::new(8.0, 0.0), Point2::new(10.0, 2.0))
+            .unwrap();
+        let order = |editor: &EditorState| -> Vec<String> {
+            editor
+                .document
+                .objects
+                .iter()
+                .map(|object| object.id.clone())
+                .collect()
+        };
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        assert_eq!(editor.bring_selection_to_front(), 1);
+        assert_eq!(
+            order(&editor),
+            vec![second.clone(), third.clone(), first.clone()]
+        );
+        assert!(editor.undo());
+        editor.selection.clear();
+        editor.selection.add(third.clone());
+        assert_eq!(editor.send_selection_to_back(), 1);
+        assert_eq!(order(&editor), vec![third, first, second]);
+        editor.selection.clear();
+        assert_eq!(editor.bring_selection_to_front(), 0);
+    }
+
+    #[test]
+    fn selection_can_be_centred_on_the_page() {
+        let mut editor = editor();
+        let id = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.select_all();
+        assert!(editor.center_selection_on_page());
+        let (min, max) = editor.document.object(&id).unwrap().bounds().unwrap();
+        assert!((f64::midpoint(min.x, max.x) - 100.0).abs() < 1e-6);
+        assert!((f64::midpoint(min.y, max.y) - 50.0).abs() < 1e-6);
+        assert!(editor.undo());
+        editor.selection.clear();
+        assert!(!editor.center_selection_on_page());
+    }
+
+    #[test]
+    fn zoom_to_selection_centres_the_bounds() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(20.0, 10.0), Point2::new(30.0, 20.0));
+        editor.select_all();
+        assert!(editor.zoom_to_selection(800.0, 600.0));
+        let (min, max) = editor.selected_bounds().unwrap();
+        let (mid_x, mid_y) = (f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y));
+        let (screen_x, screen_y) = editor.canvas.doc_to_screen(mid_x, mid_y);
+        assert!((screen_x - 400.0).abs() < 1e-6);
+        assert!((screen_y - 300.0).abs() < 1e-6);
+        editor.selection.clear();
+        assert!(!editor.zoom_to_selection(800.0, 600.0));
     }
 
     #[test]

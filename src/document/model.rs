@@ -116,6 +116,19 @@ pub struct Document {
     pub format_version: u32,
 }
 
+impl Document {
+    /// Clone this document keeping only the objects whose identifiers are listed.
+    ///
+    /// Layers and operations are preserved so styles and assignments stay valid.
+    pub fn subset(&self, ids: &[String]) -> Document {
+        let mut subset = self.clone();
+        subset
+            .objects
+            .retain(|object| ids.iter().any(|id| id == &object.id));
+        subset
+    }
+}
+
 impl Default for Document {
     fn default() -> Self {
         Self {

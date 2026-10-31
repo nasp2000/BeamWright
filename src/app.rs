@@ -133,6 +133,10 @@ pub struct BeamWrightApp {
     preview_order: bool,
     show_layers_panel: bool,
     show_properties_panel: bool,
+    doc_properties_open: bool,
+    zoom_to_selection_request: bool,
+    export_subset: bool,
+    recover_next: bool,
 }
 
 /// Scale around a point, for direct property edits.
@@ -380,6 +384,10 @@ impl BeamWrightApp {
             preview_order: false,
             show_layers_panel: true,
             show_properties_panel: true,
+            doc_properties_open: false,
+            zoom_to_selection_request: false,
+            export_subset: false,
+            recover_next: false,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -456,12 +464,24 @@ impl BeamWrightApp {
     }
 
     fn handle_file(&mut self, mode: FileMode, path: &Path) {
+        if self.recover_next && matches!(mode, FileMode::OpenProject) {
+            self.recover_next = false;
+            self.recover_project(path);
+            return;
+        }
+        let selection_only = self.export_subset && !self.editor.selection.is_empty();
+        self.export_subset = false;
+        let document = if selection_only {
+            self.editor.document.subset(self.editor.selection.ids())
+        } else {
+            self.editor.document.clone()
+        };
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.open_path(path),
             FileMode::SaveProject => self.save_to(path),
             FileMode::ExportPng => {
                 match crate::export::export_png(
-                    &self.editor.document,
+                    &document,
                     path,
                     &crate::export::PngOptions::default(),
                 ) {
@@ -477,11 +497,11 @@ impl BeamWrightApp {
                     Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
-            FileMode::ExportDxf => match crate::export::export_dxf(&self.editor.document) {
+            FileMode::ExportDxf => match crate::export::export_dxf(&document) {
                 Ok(dxf) => match std::fs::write(path, dxf) {
                     Ok(()) => {
                         let report = FileReport::new("Export DXF", path.display().to_string())
-                            .with_summary("Objects", self.editor.document.objects.len().to_string())
+                            .with_summary("Objects", document.objects.len().to_string())
                             .with_summary("Format", "LWPOLYLINE subset");
                         self.status = report.headline();
                         self.show_report(report);
@@ -492,7 +512,7 @@ impl BeamWrightApp {
             },
             FileMode::ExportGcode => {
                 match crate::gcode::export_job(
-                    &self.editor.document,
+                    &document,
                     path,
                     &crate::gcode::JobOptions::default(),
                 ) {
@@ -510,14 +530,11 @@ impl BeamWrightApp {
                     Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
-            FileMode::ExportSvg => match crate::export::export_svg(&self.editor.document) {
+            FileMode::ExportSvg => match crate::export::export_svg(&document) {
                 Ok(svg) => match std::fs::write(path, svg) {
                     Ok(()) => {
                         let report = FileReport::new("Export SVG", path.display().to_string())
-                            .with_summary(
-                                "Objects",
-                                self.editor.document.objects.len().to_string(),
-                            );
+                            .with_summary("Objects", document.objects.len().to_string());
                         self.status = report.headline();
                         self.show_report(report);
                     }
@@ -526,6 +543,80 @@ impl BeamWrightApp {
                 Err(error) => self.status = format!("Export failed: {error}"),
             },
         }
+    }
+
+    fn recover_project(&mut self, path: &Path) {
+        let backup = crate::document::serialization::backup_path(path);
+        match crate::document::serialization::load_from_file(&backup) {
+            Ok(document) => {
+                self.editor.set_document(document);
+                self.current_path = Some(path.to_path_buf());
+                self.saved_snapshot = None;
+                self.needs_fit = true;
+                let report = FileReport::new("Recover project", path.display().to_string())
+                    .with_summary("Backup", backup.display().to_string())
+                    .with_summary("Objects", self.editor.document.objects.len().to_string())
+                    .with_warnings(vec![
+                        "Recovered the previous version; the current project file was not read."
+                            .to_string(),
+                    ]);
+                self.status = format!("Recovered {}", backup.display());
+                self.show_report(report);
+            }
+            Err(error) => {
+                self.status = format!("Recovery failed: {error}");
+            }
+        }
+    }
+
+    fn document_properties_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.doc_properties_open;
+        egui::Window::new("Document properties")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let document = &self.editor.document;
+                egui::Grid::new("document_properties_window")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Name");
+                        ui.label(&document.name);
+                        ui.end_row();
+                        ui.label("Size");
+                        ui.label(format!(
+                            "{:.1} x {:.1} mm",
+                            document.width_mm, document.height_mm
+                        ));
+                        ui.end_row();
+                        ui.label("Unit");
+                        ui.label(document.unit.label());
+                        ui.end_row();
+                        ui.label("Origin");
+                        ui.label(format!("{:?}", document.origin));
+                        ui.end_row();
+                        ui.label("Layers");
+                        ui.label(document.layers.len().to_string());
+                        ui.end_row();
+                        ui.label("Objects");
+                        ui.label(document.objects.len().to_string());
+                        ui.end_row();
+                        ui.label("Operations");
+                        ui.label(document.operations.len().to_string());
+                        ui.end_row();
+                        ui.label("Format version");
+                        ui.label(document.format_version.to_string());
+                        ui.end_row();
+                        ui.label("File");
+                        ui.label(self.current_path.as_deref().map_or_else(
+                            || "not saved yet".to_string(),
+                            |path| path.display().to_string(),
+                        ));
+                        ui.end_row();
+                    });
+            });
+        self.doc_properties_open = open;
     }
 
     fn open_path(&mut self, path: &Path) {
@@ -870,8 +961,45 @@ impl BeamWrightApp {
                         self.open_dialog(FileMode::ExportGcode);
                         ui.close();
                     }
+                    ui.menu_button("Export selection", |ui| {
+                        let enabled = !self.editor.selection.is_empty();
+                        if ui
+                            .add_enabled(enabled, egui::Button::new("As SVG..."))
+                            .clicked()
+                        {
+                            self.export_subset = true;
+                            self.open_dialog(FileMode::ExportSvg);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(enabled, egui::Button::new("As DXF..."))
+                            .clicked()
+                        {
+                            self.export_subset = true;
+                            self.open_dialog(FileMode::ExportDxf);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(enabled, egui::Button::new("As G-code..."))
+                            .clicked()
+                        {
+                            self.export_subset = true;
+                            self.open_dialog(FileMode::ExportGcode);
+                            ui.close();
+                        }
+                    });
                     ui.separator();
-                    if ui.button("Quit").clicked() {
+                    if ui.button("Document properties...").clicked() {
+                        self.doc_properties_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Recover project...").clicked() {
+                        self.recover_next = true;
+                        self.open_dialog(FileMode::OpenProject);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Exit").clicked() {
                         self.request(PendingAction::Quit);
                         ui.close();
                     }
@@ -972,6 +1100,11 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui.button("Preferences...").clicked() {
+                        self.preferences_open = true;
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui
                         .add_enabled(self.editor.selection.len() >= 2, egui::Button::new("Group"))
                         .clicked()
@@ -990,8 +1123,158 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
+                ui.menu_button("Draw", |ui| {
+                    for (tool, label) in [
+                        (Tool::Select, "Selection"),
+                        (Tool::Line, "Line"),
+                        (Tool::Rect, "Rectangle"),
+                        (Tool::Ellipse, "Ellipse"),
+                        (Tool::Polygon, "Polygon"),
+                        (Tool::Star, "Star"),
+                        (Tool::Text, "Text"),
+                        (Tool::Pencil, "Freehand"),
+                    ] {
+                        if ui.selectable_label(self.editor.tool == tool, label).clicked() {
+                            self.editor.tool = tool;
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Insert image...").clicked() {
+                        self.open_dialog(FileMode::ImportFile);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() == 1,
+                            egui::Button::new("Edit nodes"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(id) = self.editor.selection.ids().first().cloned() {
+                            match self.editor.begin_node_edit(&id) {
+                                Ok(()) => self.status = "Editing nodes".to_string(),
+                                Err(error) => {
+                                    self.status = format!("Cannot edit nodes: {error}");
+                                }
+                            }
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Trim segments"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_trim();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Join paths"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_join_paths();
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Operations", |ui| {
+                    if ui.button("New operation").clicked() {
+                        let id = self.editor.add_operation(
+                            format!(
+                                "Operation {}",
+                                self.editor.document.operations.len() + 1
+                            ),
+                            crate::operations::OperationType::OutlineCutting,
+                        );
+                        self.active_operation = Some(id);
+                        ui.close();
+                    }
+                    if ui.button("Preview and G-code...").clicked() {
+                        self.open_preview();
+                        ui.close();
+                    }
+                    if ui.button("Estimate duration").clicked() {
+                        match crate::gcode::render_job(
+                            &self.editor.document,
+                            &crate::gcode::JobOptions::default(),
+                        ) {
+                            Ok((_, report)) => {
+                                self.status = format!(
+                                    "Paths: {} - {:.1} s estimated",
+                                    report.paths, report.seconds
+                                );
+                            }
+                            Err(error) => self.status = format!("Estimate failed: {error}"),
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Apply profile"),
+                        )
+                        .clicked()
+                    {
+                        self.profiles_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Assign operation to layer").clicked() {
+                        if let Some(operation) = self.active_operation.clone() {
+                            let layer = self.editor.active_layer_id.clone();
+                            let changed = self
+                                .editor
+                                .assign_operation_to_layer(&layer, Some(&operation));
+                            self.status =
+                                format!("Assigned operation to {changed} layer object(s)");
+                        }
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Materials and profiles", |ui| {
+                    if ui.button("Open library...").clicked() {
+                        self.profiles_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Import profiles...").clicked() {
+                        self.profiles_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Export profiles...").clicked() {
+                        self.profiles_open = true;
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Arrange", |ui| {
                     let enabled = !self.editor.selection.is_empty();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Bring to front"))
+                        .clicked()
+                    {
+                        let count = self.editor.bring_selection_to_front();
+                        self.status = format!("Brought {count} object(s) to the front");
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Send to back"))
+                        .clicked()
+                    {
+                        let count = self.editor.send_selection_to_back();
+                        self.status = format!("Sent {count} object(s) to the back");
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Centre on page"))
+                        .clicked()
+                    {
+                        self.editor.center_selection_on_page();
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui
                         .add_enabled(enabled, egui::Button::new("Rotate 90° left"))
                         .clicked()
@@ -1262,6 +1545,16 @@ impl BeamWrightApp {
                     }
                     if ui.button("Fit page").clicked() {
                         self.needs_fit = true;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Zoom to selection"),
+                        )
+                        .clicked()
+                    {
+                        self.zoom_to_selection_request = true;
                         ui.close();
                     }
                     ui.separator();
@@ -2463,6 +2756,11 @@ impl BeamWrightApp {
                     self.editor
                         .fit_view(f64::from(rect.width()), f64::from(rect.height()));
                     self.needs_fit = false;
+                }
+                if self.zoom_to_selection_request {
+                    self.editor
+                        .zoom_to_selection(f64::from(rect.width()), f64::from(rect.height()));
+                    self.zoom_to_selection_request = false;
                 }
                 let ctx = ui.ctx().clone();
                 let modal = self.dialog.is_some() || self.confirm.is_some() || self.about_open;
@@ -4569,6 +4867,9 @@ impl BeamWrightApp {
         }
         if self.skew_open {
             self.skew_window(ctx);
+        }
+        if self.doc_properties_open {
+            self.document_properties_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

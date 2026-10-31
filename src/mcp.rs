@@ -397,6 +397,21 @@ impl McpServer {
                 let count = self.editor.reset_transforms();
                 Ok(json!({"reset": count}))
             }
+            "bring_to_front" => {
+                self.select_scope(arguments)?;
+                let changed = self.editor.bring_selection_to_front();
+                Ok(json!({"moved": changed}))
+            }
+            "send_to_back" => {
+                self.select_scope(arguments)?;
+                let changed = self.editor.send_selection_to_back();
+                Ok(json!({"moved": changed}))
+            }
+            "center_on_page" => {
+                self.select_scope(arguments)?;
+                let centered = self.editor.center_selection_on_page();
+                Ok(json!({"centered": centered}))
+            }
             "copy_objects" => {
                 self.select_scope(arguments)?;
                 self.clipboard = self.editor.copy_selection();
@@ -1028,6 +1043,27 @@ fn tool_definitions() -> Vec<Value> {
             "Bake the selected objects' transforms into their geometry.",
         ),
         tool_with(
+            "bring_to_front",
+            "Move the selected objects to the top of the drawing order.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "send_to_back",
+            "Move the selected objects to the bottom of the drawing order.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "center_on_page",
+            "Centre the selected objects on the work area.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
             "copy_objects",
             "Copy the selected objects (all when ids are omitted) to the in-app clipboard.",
             json!({"type": "object", "properties": {
@@ -1547,6 +1583,40 @@ mod tests {
         );
         let reset = call(&mut server, "reset_transforms", json!({}));
         assert_eq!(reset["result"]["reset"], 1);
+    }
+
+    #[test]
+    fn ordering_and_centering_tools() {
+        let mut server = McpServer::new();
+        let first = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 2.0, "height": 2.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 10.0, "width": 2.0, "height": 2.0}),
+        );
+        let front = call(&mut server, "bring_to_front", json!({"ids": [first]}));
+        assert_eq!(front["result"]["moved"], 1);
+        assert_eq!(server.editor.document.objects[1].id, first);
+        let centered = call(&mut server, "center_on_page", json!({"ids": [first]}));
+        assert_eq!(centered["result"]["centered"], true);
+        let (min, max) = server
+            .editor
+            .document
+            .object(&first)
+            .unwrap()
+            .bounds()
+            .unwrap();
+        assert!((f64::midpoint(min.x, max.x) - 150.0).abs() < 1e-6);
+        let back = call(&mut server, "send_to_back", json!({"ids": [first]}));
+        assert_eq!(back["result"]["moved"], 1);
+        assert_eq!(server.editor.document.objects[0].id, first);
     }
 
     #[test]
