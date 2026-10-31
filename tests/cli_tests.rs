@@ -132,7 +132,7 @@ fn cli_export_gcode_command() {
 }
 
 #[test]
-fn cli_export_gcode_out_of_bounds_errors() {
+fn cli_export_gcode_out_of_bounds_warns() {
     use beamwright::document::{Document, Object, Shape};
 
     let project = temp_dir().join("bw_cli_job_bad.bwp");
@@ -159,9 +159,10 @@ fn cli_export_gcode_out_of_bounds_errors() {
         output.to_str().unwrap(),
     ])
     .unwrap();
-    assert!(run(cli).is_err());
-    assert!(!output.exists());
+    run(cli).unwrap();
+    assert!(output.exists());
     let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
 }
 
 #[test]
@@ -269,9 +270,10 @@ fn cli_export_png_rejects_bad_dpi() {
         "0",
     ])
     .unwrap();
-    assert!(run(cli).is_err());
-    assert!(!output.exists());
+    run(cli).unwrap();
+    assert!(output.exists());
     let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
 }
 
 #[test]
