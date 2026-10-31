@@ -258,6 +258,13 @@ pub struct BeamWrightApp {
     image_original_previews: std::collections::HashMap<String, egui::TextureHandle>,
     image_adjust: Option<String>,
     image_adjust_snapshot: Option<Document>,
+    machines: crate::machines::MachineLibrary,
+    machines_path: PathBuf,
+    machines_open: bool,
+    machine_wizard_open: bool,
+    machine_editor: crate::machines::MachineProfile,
+    machine_edit_id: Option<String>,
+    machine_error: Option<String>,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -645,6 +652,20 @@ impl BeamWrightApp {
             image_original_previews: std::collections::HashMap::new(),
             image_adjust: None,
             image_adjust_snapshot: None,
+            machines: crate::machines::MachineLibrary::load_or_default(
+                &crate::machines::default_path(),
+            )
+            .unwrap_or_default(),
+            machines_path: crate::machines::default_path(),
+            machines_open: false,
+            machine_wizard_open: crate::machines::MachineLibrary::load_or_default(
+                &crate::machines::default_path(),
+            )
+            .map(|library| !library.first_run_done)
+            .unwrap_or(true),
+            machine_editor: crate::machines::MachineProfile::default(),
+            machine_edit_id: None,
+            machine_error: None,
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -1592,6 +1613,10 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
+                    if icons::button(ui, Icon::Gear, "Machine profiles...").clicked() {
+                        self.machines_open = true;
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Exit, "Exit").clicked() {
                         self.request(PendingAction::Quit);
                         ui.close();
@@ -3693,7 +3718,9 @@ impl BeamWrightApp {
                 let modal = self.dialog.is_some()
                     || self.confirm.is_some()
                     || self.about_open
-                    || self.task.is_some();
+                    || self.task.is_some()
+                    || self.machines_open
+                    || self.machine_wizard_open;
                 let pointer = if modal {
                     None
                 } else {
@@ -4154,6 +4181,217 @@ impl BeamWrightApp {
             ContextAction::Preview => self.open_preview(),
             ContextAction::Preferences => self.preferences_open = true,
         }
+    }
+
+    fn machine_wizard(&mut self, ctx: &egui::Context) {
+        let mut create = false;
+        let mut skip = false;
+        egui::Window::new("Welcome - machine profile")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Save the work area of your machine so new projects start with the right size.",
+                );
+                ui.label(
+                    "This is preparation data only: BeamWright never connects to, configures or controls a machine.",
+                );
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.machine_editor.name);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Work width");
+                    ui.add(
+                        egui::DragValue::new(&mut self.machine_editor.work_width_mm)
+                            .speed(1.0)
+                            .range(10.0..=100_000.0)
+                            .suffix(" mm"),
+                    );
+                    ui.label("Height");
+                    ui.add(
+                        egui::DragValue::new(&mut self.machine_editor.work_height_mm)
+                            .speed(1.0)
+                            .range(10.0..=100_000.0)
+                            .suffix(" mm"),
+                    );
+                });
+                if let Some(error) = &self.machine_error {
+                    ui.colored_label(Color32::from_rgb(200, 60, 60), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Create profile").clicked() {
+                        create = true;
+                    }
+                    if ui.button("Skip for now").clicked() {
+                        skip = true;
+                    }
+                });
+            });
+        if create {
+            match self.machines.add(self.machine_editor.clone()) {
+                Ok(()) => {
+                    self.machines.first_run_done = true;
+                    let _ = self.machines.save(&self.machines_path);
+                    self.apply_machine_work_area();
+                    self.machine_wizard_open = false;
+                    self.status = format!("Machine profile '{}' created", self.machine_editor.name);
+                }
+                Err(error) => self.machine_error = Some(error),
+            }
+        } else if skip {
+            self.machines.first_run_done = true;
+            let _ = self.machines.save(&self.machines_path);
+            self.machine_wizard_open = false;
+        }
+    }
+
+    fn machines_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.machines_open;
+        egui::Window::new("Machine profiles")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Work areas used to prepare projects. No connection or controller settings are stored.",
+                );
+                ui.separator();
+                let machines = self.machines.machines.clone();
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("Saved");
+                        for machine in &machines {
+                            if ui
+                                .selectable_label(
+                                    self.machine_edit_id.as_deref() == Some(&machine.id),
+                                    format!(
+                                        "{} ({:.0} x {:.0} mm)",
+                                        machine.name, machine.work_width_mm, machine.work_height_mm
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.machine_edit_id = Some(machine.id.clone());
+                                self.machine_editor = machine.clone();
+                                self.machine_error = None;
+                            }
+                        }
+                        if machines.is_empty() {
+                            ui.weak("No profiles yet.");
+                        }
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.heading("Profile");
+                        ui.horizontal(|ui| {
+                            ui.label("Name");
+                            ui.text_edit_singleline(&mut self.machine_editor.name);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Work width");
+                            ui.add(
+                                egui::DragValue::new(&mut self.machine_editor.work_width_mm)
+                                    .speed(1.0)
+                                    .range(10.0..=100_000.0)
+                                    .suffix(" mm"),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Work height");
+                            ui.add(
+                                egui::DragValue::new(&mut self.machine_editor.work_height_mm)
+                                    .speed(1.0)
+                                    .range(10.0..=100_000.0)
+                                    .suffix(" mm"),
+                            );
+                        });
+                        ui.label("Notes");
+                        ui.text_edit_multiline(&mut self.machine_editor.notes);
+                        if let Some(error) = &self.machine_error {
+                            ui.colored_label(Color32::from_rgb(200, 60, 60), error);
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("New").clicked() {
+                                self.machine_editor = crate::machines::MachineProfile::default();
+                                self.machine_edit_id = None;
+                                self.machine_error = None;
+                            }
+                            if ui.button("Save profile").clicked() {
+                                match self.machine_editor.validate() {
+                                    Ok(()) => {
+                                        if let Some(id) = &self.machine_edit_id {
+                                            if let Some(index) = self
+                                                .machines
+                                                .machines
+                                                .iter()
+                                                .position(|machine| &machine.id == id)
+                                            {
+                                                self.machines.machines[index] =
+                                                    self.machine_editor.clone();
+                                            }
+                                        } else {
+                                            match self
+                                                .machines
+                                                .add(self.machine_editor.clone())
+                                            {
+                                                Ok(()) => {
+                                                    self.machine_edit_id =
+                                                        Some(self.machine_editor.id.clone());
+                                                }
+                                                Err(error) => {
+                                                    self.machine_error = Some(error);
+                                                }
+                                            }
+                                        }
+                                        match self.machines.validate() {
+                                            Ok(()) => match self.machines.save(&self.machines_path)
+                                            {
+                                                Ok(()) => {
+                                                    self.status = "Machine profiles saved"
+                                                        .to_string();
+                                                    self.machine_error = None;
+                                                }
+                                                Err(error) => {
+                                                    self.machine_error = Some(error);
+                                                }
+                                            },
+                                            Err(error) => self.machine_error = Some(error),
+                                        }
+                                    }
+                                    Err(error) => self.machine_error = Some(error),
+                                }
+                            }
+                            if ui.button("Use work area").clicked() {
+                                self.apply_machine_work_area();
+                            }
+                            if ui.button("Delete").clicked() {
+                                if let Some(id) = self.machine_edit_id.take() {
+                                    self.machines.remove(&id);
+                                    let _ = self.machines.save(&self.machines_path);
+                                    self.machine_editor =
+                                        crate::machines::MachineProfile::default();
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+        self.machines_open = open;
+    }
+
+    fn apply_machine_work_area(&mut self) {
+        self.editor.record_action("Machine work area");
+        self.editor.document.width_mm = self.machine_editor.work_width_mm;
+        self.editor.document.height_mm = self.machine_editor.work_height_mm;
+        self.needs_fit = true;
+        self.status = format!(
+            "Work area set to {:.0} x {:.0} mm",
+            self.machine_editor.work_width_mm, self.machine_editor.work_height_mm
+        );
     }
 
     fn open_image_adjust(&mut self) {
@@ -6547,6 +6785,12 @@ impl BeamWrightApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.machine_wizard_open {
+            self.machine_wizard(ctx);
+        }
+        if self.machines_open {
+            self.machines_window(ctx);
+        }
         if self.image_adjust.is_some() {
             self.image_adjust_window(ctx);
         }
