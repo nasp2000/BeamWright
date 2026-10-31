@@ -132,6 +132,9 @@ mod tests {
         preferences.drawing.snap_intersections = true;
         preferences.drawing.snap_guides = true;
         preferences.drawing.guides_visible = false;
+        preferences.drawing.selection_color = "#FF0000".to_string();
+        preferences.drawing.handle_style = "circle".to_string();
+        preferences.drawing.zoom_step = 1.5;
         preferences.general.theme = "dark".to_string();
         preferences.save(&path).unwrap();
         let loaded = AppPreferences::load_or_default(&path).unwrap();
@@ -143,10 +146,26 @@ mod tests {
         assert!(loaded.drawing.snap_intersections);
         assert!(loaded.drawing.snap_guides);
         assert!(!loaded.drawing.guides_visible);
+        assert_eq!(loaded.drawing.selection_color, "#FF0000");
+        assert_eq!(loaded.drawing.handle_style, "circle");
+        assert!((loaded.drawing.zoom_step - 1.5).abs() < 1e-9);
         assert!(!loaded.drawing.snap_midpoints);
         assert_eq!(loaded.general.theme, "dark");
         assert!(!path.with_extension("json.tmp").exists());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn invalid_drawing_appearance_is_rejected() {
+        let mut preferences = AppPreferences::default();
+        preferences.drawing.selection_color = "red".to_string();
+        assert!(preferences.validate().is_err());
+        preferences.drawing.selection_color = "#000000".to_string();
+        preferences.drawing.handle_style = "triangle".to_string();
+        assert!(preferences.validate().is_err());
+        preferences.drawing.handle_style = "square".to_string();
+        preferences.drawing.zoom_step = 1.0;
+        assert!(preferences.validate().is_err());
     }
 
     #[test]

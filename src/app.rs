@@ -315,6 +315,12 @@ impl BeamWrightApp {
         editor.snap_intersections = preferences.drawing.snap_intersections;
         editor.snap_limits = preferences.drawing.snap_limits;
         editor.show_rulers = preferences.drawing.show_rulers;
+        editor
+            .selection_color
+            .clone_from(&preferences.drawing.selection_color);
+        editor.handle_style =
+            crate::editor::state::HandleStyle::from_label(&preferences.drawing.handle_style);
+        editor.zoom_step = preferences.drawing.zoom_step;
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
@@ -1159,10 +1165,10 @@ impl BeamWrightApp {
             self.editor.tool = Tool::Pencil;
         }
         if zoom_in {
-            self.editor.canvas.zoom_in();
+            self.editor.zoom_in();
         }
         if zoom_out {
-            self.editor.canvas.zoom_out();
+            self.editor.zoom_out();
         }
         let step = if ctx.input(|input| input.modifiers.shift) {
             0.1
@@ -1887,11 +1893,11 @@ impl BeamWrightApp {
                 });
                 ui.menu_button("View", |ui| {
                     if ui.button("Zoom in").clicked() {
-                        self.editor.canvas.zoom_in();
+                        self.editor.zoom_in();
                         ui.close();
                     }
                     if ui.button("Zoom out").clicked() {
-                        self.editor.canvas.zoom_out();
+                        self.editor.zoom_out();
                         ui.close();
                     }
                     if ui.button("Fit page").clicked() {
@@ -2066,11 +2072,11 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 if ui.button("-").clicked() {
-                    self.editor.canvas.zoom_out();
+                    self.editor.zoom_out();
                 }
                 ui.label(format!("{:.0}%", self.editor.canvas.zoom * 100.0));
                 if ui.button("+").clicked() {
-                    self.editor.canvas.zoom_in();
+                    self.editor.zoom_in();
                 }
                 if ui.button("Fit").clicked() {
                     self.needs_fit = true;
@@ -4691,6 +4697,13 @@ impl BeamWrightApp {
                     self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
                     self.editor.snap_limits = self.preferences.drawing.snap_limits;
                     self.editor.show_rulers = self.preferences.drawing.show_rulers;
+                    self.editor
+                        .selection_color
+                        .clone_from(&self.preferences.drawing.selection_color);
+                    self.editor.handle_style = crate::editor::state::HandleStyle::from_label(
+                        &self.preferences.drawing.handle_style,
+                    );
+                    self.editor.zoom_step = self.preferences.drawing.zoom_step;
                     self.editor.guides_visible = self.preferences.drawing.guides_visible;
                     self.editor.snap_guides = self.preferences.drawing.snap_guides;
                     self.dark_mode = self.preferences.general.theme == "dark";

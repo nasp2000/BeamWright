@@ -39,6 +39,37 @@ impl Default for GridOptions {
     }
 }
 
+/// How node handles are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HandleStyle {
+    #[default]
+    Square,
+    Circle,
+}
+
+impl HandleStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            HandleStyle::Square => "Square",
+            HandleStyle::Circle => "Circle",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Self {
+        match label {
+            "circle" => HandleStyle::Circle,
+            _ => HandleStyle::Square,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            HandleStyle::Square => "square",
+            HandleStyle::Circle => "circle",
+        }
+    }
+}
+
 /// What transformations rotate and scale around.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransformCenter {
@@ -145,6 +176,12 @@ pub struct EditorState {
     pub snap_tolerance_px: f64,
     /// Draw millimetre rulers along the top and left edges.
     pub show_rulers: bool,
+    /// Colour used for selection outlines and handles.
+    pub selection_color: String,
+    /// Shape used for node handles.
+    pub handle_style: HandleStyle,
+    /// Zoom factor applied by the zoom commands.
+    pub zoom_step: f64,
     /// Draw the document guides.
     pub guides_visible: bool,
     /// Snap drawing to visible guides.
@@ -182,6 +219,9 @@ impl EditorState {
             snap_limits: false,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            selection_color: "#008CFF".to_string(),
+            handle_style: HandleStyle::Square,
+            zoom_step: 1.25,
             guides_visible: true,
             snap_guides: true,
             transform_center: TransformCenter::Selection,
@@ -2459,6 +2499,26 @@ impl EditorState {
     }
 
     /// Fit the selection into the viewport.
+    /// Zoom in by the configured step.
+    pub fn zoom_in(&mut self) {
+        let step = if self.zoom_step > 1.0 {
+            self.zoom_step
+        } else {
+            1.25
+        };
+        self.canvas.zoom = (self.canvas.zoom * step).min(crate::editor::canvas::MAX_ZOOM);
+    }
+
+    /// Zoom out by the configured step.
+    pub fn zoom_out(&mut self) {
+        let step = if self.zoom_step > 1.0 {
+            self.zoom_step
+        } else {
+            1.25
+        };
+        self.canvas.zoom = (self.canvas.zoom / step).max(crate::editor::canvas::MIN_ZOOM);
+    }
+
     pub fn zoom_to_selection(&mut self, viewport_width: f64, viewport_height: f64) -> bool {
         let Some((min, max)) = self.selected_bounds() else {
             return false;
@@ -5033,6 +5093,25 @@ mod tests {
                 .relink_image("missing", std::path::Path::new("x.png"), 4, 4)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn zoom_uses_the_configured_step() {
+        let mut editor = editor();
+        editor.zoom_step = 2.0;
+        editor.canvas.zoom = 1.0;
+        editor.zoom_in();
+        assert!((editor.canvas.zoom - 2.0).abs() < 1e-9);
+        editor.zoom_in();
+        assert!((editor.canvas.zoom - 4.0).abs() < 1e-9);
+        editor.zoom_out();
+        assert!((editor.canvas.zoom - 2.0).abs() < 1e-9);
+        editor.canvas.zoom = crate::editor::canvas::MAX_ZOOM;
+        editor.zoom_in();
+        assert!((editor.canvas.zoom - crate::editor::canvas::MAX_ZOOM).abs() < 1e-9);
+        editor.canvas.zoom = crate::editor::canvas::MIN_ZOOM;
+        editor.zoom_out();
+        assert!((editor.canvas.zoom - crate::editor::canvas::MIN_ZOOM).abs() < 1e-9);
     }
 
     #[test]

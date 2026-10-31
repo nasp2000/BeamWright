@@ -67,6 +67,15 @@ pub struct DrawingPrefs {
     /// Snap drawing to visible guides.
     #[serde(default)]
     pub snap_guides: bool,
+    /// Colour of selection outlines and handles.
+    #[serde(default = "default_selection_color")]
+    pub selection_color: String,
+    /// Node handle shape: `square` or `circle`.
+    #[serde(default = "default_handle_style")]
+    pub handle_style: String,
+    /// Zoom factor for the zoom commands.
+    #[serde(default = "default_zoom_step")]
+    pub zoom_step: f64,
 }
 
 impl Default for DrawingPrefs {
@@ -85,6 +94,9 @@ impl Default for DrawingPrefs {
             snap_limits: false,
             guides_visible: true,
             snap_guides: false,
+            selection_color: default_selection_color(),
+            handle_style: default_handle_style(),
+            zoom_step: default_zoom_step(),
         }
     }
 }
@@ -100,6 +112,15 @@ impl DrawingPrefs {
         if !self.snap_step_mm.is_finite() || self.snap_step_mm <= 0.0 {
             return Err("snap step must be positive".to_string());
         }
+        if crate::color::normalize_hex_color(&self.selection_color).is_none() {
+            return Err("selection colour must be a hex colour".to_string());
+        }
+        if self.handle_style != "square" && self.handle_style != "circle" {
+            return Err("handle style must be square or circle".to_string());
+        }
+        if !self.zoom_step.is_finite() || !(1.01..=3.0).contains(&self.zoom_step) {
+            return Err("zoom step must be between 1.01 and 3".to_string());
+        }
         Ok(())
     }
 }
@@ -110,6 +131,18 @@ fn default_snap_step() -> f64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_selection_color() -> String {
+    "#008CFF".to_string()
+}
+
+fn default_handle_style() -> String {
+    "square".to_string()
+}
+
+fn default_zoom_step() -> f64 {
+    1.25
 }
 
 #[cfg(test)]

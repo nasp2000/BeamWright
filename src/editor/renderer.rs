@@ -297,7 +297,18 @@ fn paint_nodes(painter: &Painter, rect: Rect, editor: &EditorState) {
             for handle in [handle_in, handle_out].into_iter().flatten() {
                 let handle_pos = screen_pos(rect, editor, *handle);
                 painter.line_segment([center, handle_pos], Stroke::new(1.0, handle_color));
-                painter.circle_filled(handle_pos, 3.0, handle_color);
+                match editor.handle_style {
+                    crate::editor::state::HandleStyle::Circle => {
+                        painter.circle_filled(handle_pos, 3.0, handle_color);
+                    }
+                    crate::editor::state::HandleStyle::Square => {
+                        painter.rect_filled(
+                            Rect::from_center_size(handle_pos, Vec2::splat(6.0)),
+                            0.0,
+                            handle_color,
+                        );
+                    }
+                }
             }
         }
         let selected = editor.node_is_selected(index);
@@ -638,7 +649,8 @@ fn paint_selection(painter: &Painter, rect: Rect, editor: &EditorState, theme: T
     if editor.selection.is_empty() {
         return;
     }
-    let color = theme.selection();
+    let color = crate::color::parse_hex_color(&editor.selection_color)
+        .map_or_else(|| theme.selection(), |(r, g, b)| Color32::from_rgb(r, g, b));
     let stroke = Stroke::new(1.5, color);
     if let Some((min, max)) = editor.selected_bounds() {
         let p0 = screen_pos(rect, editor, Point2::new(min.x, max.y));
