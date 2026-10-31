@@ -31,6 +31,58 @@ pub fn import_with_report(path: &Path) -> Result<ImportOutcome> {
     import_with_report_limited(path, crate::raster::MAX_PIXELS)
 }
 
+/// Import a file, checking `cancel` where the format allows it.
+pub fn import_with_report_cancellable(
+    path: &Path,
+    max_pixels: u64,
+    cancel: &dyn Fn() -> bool,
+) -> Result<ImportOutcome> {
+    if cancel() {
+        return Err(BeamError::InvalidInput("cancelled".to_string()));
+    }
+    let outcome = match detect_format(path) {
+        "svg" => {
+            let source = std::fs::read_to_string(path)?;
+            let report = crate::import::svg::import_svg_report_cancellable(&source, cancel)?;
+            ImportOutcome {
+                document: report.document,
+                warnings: report.warnings,
+            }
+        }
+        "dxf" => {
+            let source = std::fs::read_to_string(path)?;
+            if cancel() {
+                return Err(BeamError::InvalidInput("cancelled".to_string()));
+            }
+            let report = crate::import::dxf::import_dxf_report(&source)?;
+            ImportOutcome {
+                document: report.document,
+                warnings: report.warnings,
+            }
+        }
+        "bwp" => {
+            let (document, note) = crate::document::serialization::load_with_recovery(path)?;
+            ImportOutcome {
+                document,
+                warnings: note.into_iter().collect(),
+            }
+        }
+        "raster" => ImportOutcome {
+            document: crate::import::raster::import_raster_with_limit(path, max_pixels)?,
+            warnings: Vec::new(),
+        },
+        other => {
+            return Err(BeamError::Unsupported(format!(
+                "cannot import '{other}' files; supported formats: .svg, .dxf, raster images and .bwp"
+            )));
+        }
+    };
+    if cancel() {
+        return Err(BeamError::InvalidInput("cancelled".to_string()));
+    }
+    Ok(outcome)
+}
+
 /// Import a file, choosing the parser from its extension.
 ///
 /// `max_pixels` only affects raster images; it is the limit the preferences
@@ -130,6 +182,20 @@ mod tests {
         assert!(outcome.warnings[0].contains("recovered"));
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn imports_can_be_cancelled_before_and_during_parsing() {
+        let path = temp_dir().join("bw_fmt_cancel.svg");
+        std::fs::write(
+            &path,
+            "<svg width=\"10\" height=\"10\"><rect width=\"1\" height=\"1\"/></svg>",
+        )
+        .unwrap();
+        assert!(import_with_report_cancellable(&path, 50_000_000, &|| false).is_ok());
+        let error = import_with_report_cancellable(&path, 50_000_000, &|| true).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -953,8 +953,13 @@ impl BeamWrightApp {
         let label = format!("Importing {}", path.display());
         let worker_path = path.clone();
         self.task = Some(crate::task::BackgroundTask::spawn(label, move |cancel| {
-            let outcome = crate::import::format::import_with_report_limited(&worker_path, limit)
-                .map_err(|error| error.to_string());
+            let cancelled = || cancel.load(std::sync::atomic::Ordering::Relaxed);
+            let outcome = crate::import::format::import_with_report_cancellable(
+                &worker_path,
+                limit,
+                &cancelled,
+            )
+            .map_err(|error| error.to_string());
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return None;
             }

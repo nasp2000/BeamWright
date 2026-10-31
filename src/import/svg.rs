@@ -35,7 +35,12 @@ pub fn import_svg(src: &str) -> Result<Document> {
 }
 
 pub fn import_svg_report(src: &str) -> Result<ImportReport> {
-    let root = parse_tree(src)?;
+    import_svg_report_cancellable(src, &|| false)
+}
+
+/// Import an SVG, checking `cancel` between XML events and top-level elements.
+pub fn import_svg_report_cancellable(src: &str, cancel: &dyn Fn() -> bool) -> Result<ImportReport> {
+    let root = parse_tree_cancellable(src, cancel)?;
     if root.name != "svg" {
         return Err(BeamError::InvalidInput(
             "SVG root element is not <svg>".to_string(),
@@ -75,6 +80,9 @@ pub fn import_svg_report(src: &str) -> Result<ImportReport> {
     let layer_id = doc.layers[0].id.clone();
 
     for child in &root.children {
+        if cancel() {
+            return Err(BeamError::InvalidInput("cancelled".to_string()));
+        }
         process_node(
             child,
             root_transform,
@@ -113,12 +121,19 @@ impl Node {
 }
 
 fn parse_tree(src: &str) -> Result<Node> {
+    parse_tree_cancellable(src, &|| false)
+}
+
+fn parse_tree_cancellable(src: &str, cancel: &dyn Fn() -> bool) -> Result<Node> {
     let mut reader = Reader::from_str(src);
     reader.config_mut().trim_text(true);
     let mut stack: Vec<Node> = Vec::new();
     let mut root: Option<Node> = None;
 
     loop {
+        if cancel() {
+            return Err(BeamError::InvalidInput("cancelled".to_string()));
+        }
         match reader.read_event() {
             Ok(Event::Start(event)) => {
                 let node = make_node(&event)?;
@@ -860,6 +875,14 @@ mod tests {
         let doc = import_svg(SVG_ARC).unwrap();
         assert_eq!(doc.objects.len(), 1);
         assert!(doc.objects[0].world_path().segment_count() >= 3);
+    }
+
+    #[test]
+    fn parsing_can_be_cancelled() {
+        let svg = r#"<svg width="10" height="10"><rect width="1" height="1"/></svg>"#;
+        assert!(import_svg_report_cancellable(svg, &|| false).is_ok());
+        let error = import_svg_report_cancellable(svg, &|| true).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
     }
 
     #[test]
