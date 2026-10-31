@@ -307,7 +307,7 @@ pub fn stored_token() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn tokens_equal(left: &str, right: &str) -> bool {
+pub(crate) fn tokens_equal(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
     if left.len() != right.len() {

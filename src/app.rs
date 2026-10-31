@@ -1116,6 +1116,7 @@ impl BeamWrightApp {
         let mut open = self.doc_properties_open;
         let mut changed = false;
         egui::Window::new("Document properties")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1212,6 +1213,7 @@ impl BeamWrightApp {
     fn operations_compare_window(&mut self, ctx: &egui::Context) {
         let mut open = self.operations_compare_open;
         egui::Window::new("Compare operations")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -1250,6 +1252,7 @@ impl BeamWrightApp {
     fn guides_window(&mut self, ctx: &egui::Context) {
         let mut open = self.guides_open;
         egui::Window::new("Guides")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4564,6 +4567,7 @@ impl BeamWrightApp {
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
         let mut open = self.help_shortcuts_open;
         egui::Window::new("Keyboard shortcuts")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4626,6 +4630,7 @@ impl BeamWrightApp {
         let mut close_requested = false;
         let mut operations = self.editor.document.operations.clone();
         egui::Window::new("Cuts / Layers")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4998,6 +5003,7 @@ impl BeamWrightApp {
     fn machines_window(&mut self, ctx: &egui::Context) {
         let mut open = self.machines_open;
         egui::Window::new("Machine profiles")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6059,6 +6065,7 @@ impl BeamWrightApp {
             None => (0.0, 0.0, None),
         };
         egui::Window::new("Preview and G-code")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6164,6 +6171,7 @@ impl BeamWrightApp {
         };
         let mut open = self.report_open;
         egui::Window::new(format!("{} report", report.action))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6391,6 +6399,7 @@ impl BeamWrightApp {
         let mut open = self.skew_open;
         let mut apply = false;
         egui::Window::new("Skew")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6436,6 +6445,7 @@ impl BeamWrightApp {
         let mut open = self.repeat_open;
         let mut apply = false;
         egui::Window::new("Repeat selection")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6550,6 +6560,7 @@ impl BeamWrightApp {
         let mut preview = false;
         let mut apply = false;
         egui::Window::new("Nest selection")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6669,6 +6680,7 @@ impl BeamWrightApp {
         let mut open = self.simplify_open;
         let mut apply = false;
         egui::Window::new("Simplify path")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6702,6 +6714,7 @@ impl BeamWrightApp {
         let mut open = self.offset_open;
         let mut apply = false;
         egui::Window::new("Offset")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6735,6 +6748,7 @@ impl BeamWrightApp {
     fn grid_array_window(&mut self, ctx: &egui::Context) {
         let mut open = self.grid_array_open;
         egui::Window::new("Grid array")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6815,6 +6829,7 @@ impl BeamWrightApp {
         let mut open = self.preferences_open;
         let mut changed = false;
         egui::Window::new("Preferences")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6977,6 +6992,7 @@ impl BeamWrightApp {
         let mut open = self.profiles_open;
         let mut changed = false;
         egui::Window::new("Materials and operations")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .default_size([560.0, 520.0])
             .show(ctx, |ui| {

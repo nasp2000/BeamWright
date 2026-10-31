@@ -82,6 +82,15 @@ pub enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+    /// Run MCP over HTTP with Bearer authentication (remote agents)
+    McpHttp {
+        /// Address to listen on, e.g. 100.64.0.5:8766
+        #[arg(long, default_value = "127.0.0.1:8766")]
+        listen: String,
+        /// Bearer token; required for a non-loopback address
+        #[arg(long)]
+        token: Option<String>,
+    },
     /// Send one JSON-RPC request to the running editor
     LiveRequest {
         /// JSON-RPC request object
@@ -258,6 +267,28 @@ pub fn run(cli: Cli) -> Result<()> {
                 let mut server = crate::mcp::McpServer::new();
                 server.serve_stdio()?;
             }
+            Ok(())
+        }
+        Some(Commands::McpHttp { listen, token }) => {
+            let token = token.or_else(crate::bridge::configured_token).or_else(|| {
+                if crate::mcp_http::is_loopback(&listen) {
+                    crate::bridge::stored_token()
+                } else {
+                    None
+                }
+            });
+            let Some(token) = token else {
+                return Err(BeamError::InvalidInput(format!(
+                    "refusing to listen on {listen} without --token"
+                )));
+            };
+            crate::mcp_http::serve(
+                &listen,
+                &token,
+                "127.0.0.1",
+                crate::bridge::configured_port(),
+            )
+            .map_err(BeamError::InvalidInput)?;
             Ok(())
         }
         Some(Commands::LiveRequest {

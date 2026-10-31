@@ -22,6 +22,7 @@ pub mod import;
 pub mod layers;
 pub mod machines;
 pub mod mcp;
+pub mod mcp_http;
 pub mod objects;
 pub mod operations;
 pub mod profiles;
