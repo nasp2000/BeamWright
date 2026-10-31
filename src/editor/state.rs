@@ -741,6 +741,28 @@ impl EditorState {
         true
     }
 
+    /// Move an operation earlier (`delta` -1) or later (`delta` +1) in the job
+    /// order. Returns `false` at the ends of the list or for an unknown id.
+    pub fn move_operation(&mut self, id: &str, delta: isize) -> bool {
+        let Some(index) = self
+            .document
+            .operations
+            .iter()
+            .position(|operation| operation.id == id)
+        else {
+            return false;
+        };
+        let Some(target) = index.checked_add_signed(delta) else {
+            return false;
+        };
+        if target >= self.document.operations.len() || target == index {
+            return false;
+        }
+        self.record();
+        self.document.operations.swap(index, target);
+        true
+    }
+
     /// Assign an operation (or clear the assignment) on the whole selection.
     pub fn assign_operation(&mut self, operation_id: Option<&str>) -> usize {
         if self.selection.is_empty() {
@@ -1414,6 +1436,72 @@ mod tests {
             editor.document.object(&first).unwrap().group_id.is_some(),
             "undo restores the grouped state"
         );
+    }
+
+    #[test]
+    fn operations_can_be_reordered() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor.add_operation("First", OperationType::OutlineCutting);
+        let second = editor.add_operation("Second", OperationType::LineEngraving);
+        let third = editor.add_operation("Third", OperationType::Fill);
+        assert!(editor.move_operation(&third, -1));
+        let order: Vec<&str> = editor
+            .document
+            .operations
+            .iter()
+            .map(|operation| operation.name.as_str())
+            .collect();
+        assert_eq!(order, vec!["First", "Third", "Second"]);
+        assert!(editor.move_operation(&first, 1));
+        let order: Vec<&str> = editor
+            .document
+            .operations
+            .iter()
+            .map(|operation| operation.name.as_str())
+            .collect();
+        assert_eq!(order, vec!["Third", "First", "Second"]);
+        assert!(editor.undo());
+        let order: Vec<&str> = editor
+            .document
+            .operations
+            .iter()
+            .map(|operation| operation.name.as_str())
+            .collect();
+        assert_eq!(order, vec!["First", "Third", "Second"]);
+        let _ = second;
+    }
+
+    #[test]
+    fn reordering_stops_at_the_ends() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor.add_operation("First", OperationType::OutlineCutting);
+        let second = editor.add_operation("Second", OperationType::Fill);
+        assert!(!editor.move_operation(&first, -1));
+        assert!(!editor.move_operation(&second, 1));
+        assert!(!editor.move_operation("missing", 1));
+        assert_eq!(editor.document.operations.len(), 2);
+    }
+
+    #[test]
+    fn reordering_keeps_object_assignments() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor.add_operation("First", OperationType::OutlineCutting);
+        let second = editor.add_operation("Second", OperationType::Fill);
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.assign_operation(Some(&second));
+        assert!(editor.move_operation(&second, -1));
+        assert_eq!(
+            editor.document.objects[0].operation_id.as_deref(),
+            Some(second.as_str())
+        );
+        assert_eq!(editor.document.operations[0].id, second);
+        assert_eq!(editor.document.operations[1].id, first);
     }
 
     #[test]

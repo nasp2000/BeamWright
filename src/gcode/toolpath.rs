@@ -25,6 +25,8 @@ pub struct Toolpath {
     /// Laser power in the writer's `S` range (0–1000).
     pub power: f64,
     pub passes: u32,
+    /// Operation the toolpath belongs to, when one was assigned.
+    pub operation_id: Option<String>,
 }
 
 impl Toolpath {
@@ -35,7 +37,14 @@ impl Toolpath {
             speed,
             power,
             passes: passes.max(1),
+            operation_id: None,
         }
+    }
+
+    /// Attach the operation that produced this toolpath.
+    pub fn with_operation(mut self, operation_id: Option<&str>) -> Self {
+        self.operation_id = operation_id.map(str::to_string);
+        self
     }
 
     pub fn push(&mut self, kind: MoveKind, x: f64, y: f64) {

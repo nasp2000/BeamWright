@@ -1046,6 +1046,20 @@ impl BeamWrightApp {
                     .filter(|object| object.operation_id.as_deref() == Some(id.as_str()))
                     .count();
                 ui.weak(format!("({used})"));
+                if ui
+                    .small_button("\u{2191}")
+                    .on_hover_text("Run this operation earlier")
+                    .clicked()
+                {
+                    self.editor.move_operation(id, -1);
+                }
+                if ui
+                    .small_button("\u{2193}")
+                    .on_hover_text("Run this operation later")
+                    .clicked()
+                {
+                    self.editor.move_operation(id, 1);
+                }
             });
         }
         if let Some(active) = self.active_operation.clone() {

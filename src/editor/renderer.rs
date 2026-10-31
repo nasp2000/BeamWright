@@ -123,7 +123,19 @@ fn paint_toolpaths(
         Color32::from_rgb(60, 170, 170),
     ];
     for (index, toolpath) in toolpaths.iter().enumerate() {
-        let color = PALETTE[index % PALETTE.len()];
+        // One colour per operation, so paths that share power and feed match.
+        let color = match toolpath.operation_id.as_deref() {
+            Some(id) => {
+                let operation = editor
+                    .document
+                    .operations
+                    .iter()
+                    .position(|operation| operation.id == id)
+                    .unwrap_or(index);
+                PALETTE[operation % PALETTE.len()]
+            }
+            None => PALETTE[index % PALETTE.len()],
+        };
         let mut previous: Option<Pos2> = None;
         for movement in &toolpath.moves {
             let point = screen_pos(rect, editor, Point2::new(movement.x, movement.y));

@@ -149,7 +149,7 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                             append_contour(&mut toolpath, &points);
                         }
                         if !toolpath.is_empty() {
-                            toolpaths.push(toolpath);
+                            toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
                         }
                     } else {
                         let mut toolpath = Toolpath::new(
@@ -159,7 +159,7 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                             resolved.passes,
                         );
                         append_contour(&mut toolpath, &points);
-                        toolpaths.push(toolpath);
+                        toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
                     }
                 }
             }
@@ -217,7 +217,9 @@ fn raster_toolpath(
     if toolpath.is_empty() {
         return Ok(None);
     }
-    Ok(Some(toolpath))
+    Ok(Some(
+        toolpath.with_operation(object.operation_id.as_deref()),
+    ))
 }
 
 struct TransformBake {
@@ -246,8 +248,44 @@ fn append_contour(toolpath: &mut Toolpath, points: &[Point2]) {
     }
 }
 
+/// Order toolpaths by the position of their operation in the document.
+///
+/// The sort is stable, so objects inside one operation keep their document
+/// order, and toolpaths without an operation come last.
+pub fn order_by_operation(toolpaths: &mut [Toolpath], document: &Document) {
+    let rank = |toolpath: &Toolpath| {
+        toolpath
+            .operation_id
+            .as_deref()
+            .and_then(|id| {
+                document
+                    .operations
+                    .iter()
+                    .position(|operation| operation.id == id)
+            })
+            .unwrap_or(usize::MAX)
+    };
+    toolpaths.sort_by_key(rank);
+}
+
 /// Reorder toolpaths greedily by nearest start point.
+///
+/// Ordering never crosses an operation boundary: the laser keeps one power and
+/// feed for a whole group before moving on to the next operation.
 pub fn order_toolpaths(toolpaths: &mut [Toolpath]) {
+    let mut start = 0;
+    while start < toolpaths.len() {
+        let mut end = start + 1;
+        while end < toolpaths.len() && toolpaths[end].operation_id == toolpaths[start].operation_id
+        {
+            end += 1;
+        }
+        order_group(&mut toolpaths[start..end]);
+        start = end;
+    }
+}
+
+fn order_group(toolpaths: &mut [Toolpath]) {
     let mut position = Point2::origin();
     let mut index = 0;
     while index < toolpaths.len() {
@@ -328,6 +366,7 @@ pub fn estimate_seconds(toolpaths: &[Toolpath], travel_speed_mm_min: f64) -> f64
 /// Generate the G-code text and a report without writing a file.
 pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, JobReport)> {
     let (mut toolpaths, warnings) = build_toolpaths(document);
+    order_by_operation(&mut toolpaths, document);
     if options.assisted_ordering {
         order_toolpaths(&mut toolpaths);
     }
@@ -496,6 +535,126 @@ mod tests {
         let mut toolpaths = vec![first, second];
         order_toolpaths(&mut toolpaths);
         assert_eq!(toolpaths[0].name, "b");
+    }
+
+    fn two_operation_document() -> Document {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        let mut first = Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 10.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        first.name = "engrave".to_string();
+        first.operation_id = Some("engrave".to_string());
+        let mut second = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 10.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        second.name = "cut".to_string();
+        second.operation_id = Some("cut".to_string());
+        second.transform = crate::geometry::Transform2::translate(20.0, 0.0);
+        document.add_object(first);
+        document.add_object(second);
+        // The engraving object comes first in the document, but the cut
+        // operation is listed first, so the cut must run first.
+        document.operations.push(Operation {
+            id: "cut".to_string(),
+            name: "Cut".to_string(),
+            op_type: OperationType::OutlineCutting,
+            params: OperationParams {
+                speed: 500.0,
+                power: 80.0,
+                passes: 1,
+                line_interval_mm: 0.1,
+            },
+            enabled: true,
+        });
+        document.operations.push(Operation {
+            id: "engrave".to_string(),
+            name: "Engrave".to_string(),
+            op_type: OperationType::LineEngraving,
+            params: OperationParams {
+                speed: 3000.0,
+                power: 15.0,
+                passes: 1,
+                line_interval_mm: 0.1,
+            },
+            enabled: true,
+        });
+        document
+    }
+
+    #[test]
+    fn toolpaths_follow_the_operation_order() {
+        let document = two_operation_document();
+        let (mut toolpaths, _) = build_toolpaths(&document);
+        assert_eq!(toolpaths[0].name, "engrave");
+        order_by_operation(&mut toolpaths, &document);
+        assert_eq!(toolpaths[0].name, "cut");
+        assert_eq!(toolpaths[0].operation_id.as_deref(), Some("cut"));
+        assert_eq!(toolpaths[1].name, "engrave");
+    }
+
+    #[test]
+    fn assisted_ordering_keeps_operations_together() {
+        let mut a1 = Toolpath::new("a1", 1000.0, 100.0, 1).with_operation(Some("a"));
+        a1.push(MoveKind::Travel, 90.0, 0.0);
+        a1.push(MoveKind::Cut, 100.0, 0.0);
+        let mut b1 = Toolpath::new("b1", 1000.0, 100.0, 1).with_operation(Some("b"));
+        b1.push(MoveKind::Travel, 10.0, 0.0);
+        b1.push(MoveKind::Cut, 20.0, 0.0);
+        let mut a2 = Toolpath::new("a2", 1000.0, 100.0, 1).with_operation(Some("a"));
+        a2.push(MoveKind::Travel, 30.0, 0.0);
+        a2.push(MoveKind::Cut, 40.0, 0.0);
+        // Groups arrive contiguous (after `order_by_operation`); the nearest
+        // neighbour pass may reorder inside a group but never across one.
+        let mut toolpaths = vec![a1, a2, b1];
+        order_toolpaths(&mut toolpaths);
+        let order: Vec<&str> = toolpaths.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(order, vec!["a2", "a1", "b1"]);
+    }
+
+    #[test]
+    fn unassigned_toolpaths_run_last() {
+        let mut document = two_operation_document();
+        let layer_id = document.layers[0].id.clone();
+        let mut loose = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 4.0,
+                height: 4.0,
+                corner_radius: 0.0,
+            },
+        );
+        loose.name = "loose".to_string();
+        loose.transform = crate::geometry::Transform2::translate(40.0, 0.0);
+        document.add_object(loose);
+        let (mut toolpaths, _) = build_toolpaths(&document);
+        order_by_operation(&mut toolpaths, &document);
+        assert_eq!(toolpaths.last().unwrap().name, "loose");
+        assert!(toolpaths.last().unwrap().operation_id.is_none());
+    }
+
+    #[test]
+    fn gcode_emits_operations_in_panel_order() {
+        let document = two_operation_document();
+        let options = JobOptions {
+            assisted_ordering: false,
+            ..JobOptions::default()
+        };
+        let (text, report) = render_job(&document, &options).unwrap();
+        assert_eq!(report.paths, 2);
+        let cut = text.find("F500 S800").expect("cut feed");
+        let engrave = text.find("F3000 S150").expect("engrave feed");
+        assert!(cut < engrave, "the cut operation must come first");
     }
 
     #[test]
