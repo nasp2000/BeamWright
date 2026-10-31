@@ -363,13 +363,22 @@ pub fn estimate_seconds(toolpaths: &[Toolpath], travel_speed_mm_min: f64) -> f64
     seconds
 }
 
-/// Generate the G-code text and a report without writing a file.
-pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, JobReport)> {
+/// Toolpaths in the order they will be executed.
+pub fn planned_toolpaths(
+    document: &Document,
+    options: &JobOptions,
+) -> (Vec<Toolpath>, Vec<String>) {
     let (mut toolpaths, warnings) = build_toolpaths(document);
     order_by_operation(&mut toolpaths, document);
     if options.assisted_ordering {
         order_toolpaths(&mut toolpaths);
     }
+    (toolpaths, warnings)
+}
+
+/// Generate the G-code text and a report without writing a file.
+pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, JobReport)> {
+    let (toolpaths, warnings) = planned_toolpaths(document, options);
     validate_bounds(document, &toolpaths)?;
     for toolpath in &toolpaths {
         if toolpath.speed <= 0.0 {

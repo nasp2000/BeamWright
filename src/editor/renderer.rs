@@ -84,28 +84,95 @@ pub fn screen_pos(rect: Rect, editor: &EditorState, point: Point2) -> Pos2 {
 
 pub type ImageTextures = std::collections::HashMap<String, egui::TextureId>;
 
+/// Extra layers painted over the document: toolpaths, image previews and the
+/// playback position.
+#[derive(Default)]
+pub struct CanvasOverlays<'a> {
+    pub toolpaths: Option<&'a [crate::gcode::Toolpath]>,
+    pub images: Option<&'a ImageTextures>,
+    pub playback: Option<(&'a crate::gcode::Playback, f64)>,
+}
+
 pub fn paint_canvas(
     painter: &Painter,
     rect: Rect,
     editor: &EditorState,
     theme: Theme,
     preview: Option<PreviewShape>,
-    toolpaths: Option<&[crate::gcode::Toolpath]>,
-    images: &ImageTextures,
+    overlays: &CanvasOverlays<'_>,
 ) {
     painter.rect_filled(rect, 0.0, theme.canvas_background());
     paint_page(painter, rect, editor, theme);
     if editor.canvas.grid_visible {
         paint_grid(painter, rect, editor, theme);
     }
-    paint_objects(painter, rect, editor, theme, images);
-    if let Some(toolpaths) = toolpaths {
+    if let Some(images) = overlays.images {
+        paint_objects(painter, rect, editor, theme, images);
+    } else {
+        let empty = ImageTextures::new();
+        paint_objects(painter, rect, editor, theme, &empty);
+    }
+    if let Some(toolpaths) = overlays.toolpaths {
         paint_toolpaths(painter, rect, editor, toolpaths);
+    }
+    if let Some((playback, progress)) = overlays.playback {
+        paint_playback(painter, rect, editor, playback, progress);
     }
     if let Some(preview) = preview {
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+/// Draw the part of the job already simulated and the laser head.
+fn paint_playback(
+    painter: &Painter,
+    rect: Rect,
+    editor: &EditorState,
+    playback: &crate::gcode::Playback,
+    progress_mm: f64,
+) {
+    use crate::gcode::MoveKind;
+
+    let cut_color = Color32::from_rgb(235, 90, 40);
+    let travel_color = Color32::from_rgb(120, 170, 220);
+    let mut travelled = 0.0;
+    for segment in &playback.segments {
+        if travelled >= progress_mm {
+            break;
+        }
+        let remaining = progress_mm - travelled;
+        let ratio = if segment.length > 0.0 {
+            (remaining / segment.length).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let to = Point2::new(
+            segment.from.x + (segment.to.x - segment.from.x) * ratio,
+            segment.from.y + (segment.to.y - segment.from.y) * ratio,
+        );
+        let (width, color) = match segment.kind {
+            MoveKind::Cut => (2.0, cut_color),
+            MoveKind::Travel => (1.0, travel_color),
+        };
+        painter.line_segment(
+            [
+                screen_pos(rect, editor, segment.from),
+                screen_pos(rect, editor, to),
+            ],
+            Stroke::new(width, color),
+        );
+        travelled += segment.length;
+    }
+    if let Some(position) = playback.position_at(progress_mm) {
+        let head = screen_pos(rect, editor, position.point);
+        let color = match position.kind {
+            MoveKind::Cut => cut_color,
+            MoveKind::Travel => travel_color,
+        };
+        painter.circle_filled(head, 5.0, color);
+        painter.circle_stroke(head, 5.0, Stroke::new(1.0, Color32::WHITE));
+    }
 }
 
 fn paint_toolpaths(

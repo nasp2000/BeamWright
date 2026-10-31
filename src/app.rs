@@ -87,6 +87,14 @@ pub struct BeamWrightApp {
     grid_array_open: bool,
     grid_array: (usize, usize, f64, f64),
     search_query: String,
+    preview_open: bool,
+    playback: Option<crate::gcode::Playback>,
+    playback_progress: f64,
+    playback_playing: bool,
+    playback_speed: f32,
+    playback_error: Option<String>,
+    gcode_text: String,
+    preview_snapshot: Option<Document>,
 }
 
 struct ImagePreview {
@@ -152,6 +160,14 @@ impl BeamWrightApp {
             grid_array_open: false,
             grid_array: (3, 2, 20.0, 20.0),
             search_query: String::new(),
+            preview_open: false,
+            playback: None,
+            playback_progress: 0.0,
+            playback_playing: false,
+            playback_speed: 1.0,
+            playback_error: None,
+            gcode_text: String::new(),
+            preview_snapshot: None,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -726,6 +742,10 @@ impl BeamWrightApp {
                     ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
                     ui.checkbox(&mut self.editor.snap_enabled, "Snap to 1 mm");
                     ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
+                    if ui.button("Preview and G-code...").clicked() {
+                        self.open_preview();
+                        ui.close();
+                    }
                     ui.checkbox(&mut self.dark_mode, "Dark mode");
                     ui.separator();
                     if ui.button("Preferences...").clicked() {
@@ -1660,15 +1680,19 @@ impl BeamWrightApp {
                     .iter()
                     .map(|(id, preview)| (id.clone(), preview.texture.id()))
                     .collect();
-                paint_canvas(
-                    &painter,
-                    rect,
-                    &self.editor,
-                    theme,
-                    preview,
-                    toolpaths.as_deref(),
-                    &textures,
-                );
+                let playback_overlay = if self.preview_open {
+                    self.playback
+                        .as_ref()
+                        .map(|playback| (playback, self.playback_progress))
+                } else {
+                    None
+                };
+                let overlays = crate::editor::renderer::CanvasOverlays {
+                    toolpaths: toolpaths.as_deref(),
+                    images: Some(&textures),
+                    playback: playback_overlay,
+                };
+                paint_canvas(&painter, rect, &self.editor, theme, preview, &overlays);
 
                 if pointer_in_canvas {
                     let cursor = match self.editor.tool {
@@ -1843,6 +1867,158 @@ impl BeamWrightApp {
             Ok(()) => self.profile_message = "Profiles saved".to_string(),
             Err(error) => self.profile_message = format!("Cannot save profiles: {error}"),
         }
+    }
+
+    fn advance_playback(&mut self, ctx: &egui::Context) {
+        if self.preview_open
+            && self.preview_snapshot.as_ref() != Some(&self.editor.document)
+            && !ctx.input(|input| input.pointer.any_down())
+        {
+            self.refresh_preview();
+        }
+        if !self.playback_playing {
+            return;
+        }
+        let Some(playback) = &self.playback else {
+            self.playback_playing = false;
+            return;
+        };
+        let delta = f64::from(ctx.input(|input| input.stable_dt).min(0.1));
+        let rate = if playback.duration_seconds > 0.0 {
+            playback.total_length / playback.duration_seconds
+        } else {
+            0.0
+        };
+        let advance = delta * rate * f64::from(self.playback_speed);
+        self.playback_progress = (self.playback_progress + advance).min(playback.total_length);
+        if self.playback_progress >= playback.total_length {
+            self.playback_playing = false;
+        }
+        ctx.request_repaint();
+    }
+
+    fn open_preview(&mut self) {
+        self.preview_open = true;
+        self.refresh_preview();
+    }
+
+    /// Rebuild the simulated job and the G-code text from the document.
+    fn refresh_preview(&mut self) {
+        let options = crate::gcode::JobOptions::default();
+        match crate::gcode::render_job(&self.editor.document, &options) {
+            Ok((text, _report)) => {
+                let (toolpaths, _) =
+                    crate::gcode::planned_toolpaths(&self.editor.document, &options);
+                let playback =
+                    crate::gcode::Playback::from_toolpaths(&toolpaths, options.travel_speed_mm_min);
+                self.playback_progress = self.playback_progress.min(playback.total_length);
+                self.playback = Some(playback);
+                self.playback_error = None;
+                self.gcode_text = text;
+            }
+            Err(error) => {
+                self.playback = None;
+                self.playback_error = Some(error.to_string());
+                self.gcode_text.clear();
+            }
+        }
+        self.preview_snapshot = Some(self.editor.document.clone());
+    }
+
+    fn preview_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.preview_open;
+        let (total, duration, position) = match &self.playback {
+            Some(playback) => (
+                playback.total_length,
+                playback.duration_seconds,
+                playback.position_at(self.playback_progress),
+            ),
+            None => (0.0, 0.0, None),
+        };
+        egui::Window::new("Preview and G-code")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                if let Some(error) = self.playback_error.clone() {
+                    ui.colored_label(
+                        Color32::from_rgb(190, 60, 50),
+                        format!("Cannot build the job: {error}"),
+                    );
+                    if ui.button("Refresh").clicked() {
+                        self.refresh_preview();
+                    }
+                    return;
+                }
+                ui.horizontal(|ui| {
+                    let play_label = if self.playback_playing {
+                        "Pause"
+                    } else {
+                        "Play"
+                    };
+                    if ui.button(play_label).clicked() {
+                        if !self.playback_playing && self.playback_progress >= total && total > 0.0
+                        {
+                            self.playback_progress = 0.0;
+                        }
+                        self.playback_playing = !self.playback_playing;
+                    }
+                    if ui.button("Stop").clicked() {
+                        self.playback_playing = false;
+                        self.playback_progress = 0.0;
+                    }
+                    ui.add(
+                        egui::Slider::new(&mut self.playback_progress, 0.0..=total.max(0.001))
+                            .show_value(false),
+                    );
+                    ui.label(format!("{:.1} / {:.1} mm", self.playback_progress, total));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Speed");
+                    ui.add(
+                        egui::Slider::new(&mut self.playback_speed, 0.25..=16.0)
+                            .logarithmic(true)
+                            .suffix("x"),
+                    );
+                    if ui.button("Refresh").clicked() {
+                        self.refresh_preview();
+                    }
+                });
+                if let Some(position) = position {
+                    ui.label(format!(
+                        "Pass {} - {} - S{:.0} - ({:.2}, {:.2}) mm",
+                        position.pass,
+                        match position.kind {
+                            crate::gcode::MoveKind::Cut => "cut",
+                            crate::gcode::MoveKind::Travel => "travel",
+                        },
+                        position.power,
+                        position.point.x,
+                        position.point.y
+                    ));
+                } else {
+                    ui.weak("The document has no toolpaths yet.");
+                }
+                ui.weak(format!("Estimated job time: {duration:.1} s"));
+                ui.separator();
+                ui.heading("G-code");
+                let mut text = self.gcode_text.clone();
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .code_editor()
+                                .desired_rows(18)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                if ui.button("Copy G-code").clicked() {
+                    ui.ctx().copy_text(self.gcode_text.clone());
+                }
+            });
+        self.preview_open = open;
     }
 
     fn show_report(&mut self, report: FileReport) {
@@ -2653,6 +2829,9 @@ impl BeamWrightApp {
         if self.report_open {
             self.report_window(ctx);
         }
+        if self.preview_open {
+            self.preview_window(ctx);
+        }
         if self.about_open {
             let mut open = true;
             egui::Window::new("About BeamWright")
@@ -2701,6 +2880,7 @@ impl eframe::App for BeamWrightApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.advance_playback(ctx);
         let title = format!("BeamWright - {}", self.title());
         let current = ctx.input(|input| input.viewport().title.clone());
         if current.as_deref() != Some(title.as_str()) {
