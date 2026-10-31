@@ -73,6 +73,18 @@ pub fn import_into(library: &mut ProfileLibrary, path: &Path) -> Result<usize> {
             added += 1;
         }
     }
+    for image in imported.images {
+        if library.image(&image.id).is_none() {
+            library.images.push(image);
+            added += 1;
+        }
+    }
+    for project in imported.projects {
+        if library.project(&project.id).is_none() {
+            library.projects.push(project);
+            added += 1;
+        }
+    }
     Ok(added)
 }
 

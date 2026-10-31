@@ -70,6 +70,8 @@ pub struct BeamWrightApp {
     selected_operation: Option<String>,
     profile_message: String,
     profile_io_path: String,
+    selected_image_profile: Option<String>,
+    selected_project_profile: Option<String>,
     import_warnings: Vec<String>,
     preview_toolpaths: bool,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -116,6 +118,8 @@ impl BeamWrightApp {
             profile_io_path: crate::profiles::default_path()
                 .to_string_lossy()
                 .to_string(),
+            selected_image_profile: None,
+            selected_project_profile: None,
             import_warnings: Vec::new(),
             preview_toolpaths: false,
             image_previews: std::collections::HashMap::new(),
@@ -1931,6 +1935,287 @@ impl BeamWrightApp {
                             let count = self.editor.apply_operation_profile(&profile_clone);
                             self.status =
                                 format!("Applied '{}' to {count} object(s)", profile_clone.name);
+                        }
+                    }
+                }
+                ui.separator();
+                ui.heading("Image profiles");
+                let image_profiles: Vec<_> = self
+                    .profiles
+                    .images
+                    .iter()
+                    .filter(|profile| {
+                        query.is_empty()
+                            || format!("{} {}", profile.name, profile.notes)
+                                .to_lowercase()
+                                .contains(&query)
+                    })
+                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
+                    .collect();
+                for (id, name, builtin) in &image_profiles {
+                    ui.horizontal(|ui| {
+                        let selected = self.selected_image_profile.as_deref() == Some(id.as_str());
+                        if ui.selectable_label(selected, name).clicked() {
+                            self.selected_image_profile = Some(id.clone());
+                        }
+                        if *builtin {
+                            ui.weak("built-in");
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("+ Image profile").clicked() {
+                        let profile = self
+                            .profiles
+                            .add_image(crate::profiles::ImageProfile::new("New image profile"));
+                        self.selected_image_profile = Some(profile.id.clone());
+                        changed = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.selected_image_profile.is_some(),
+                            egui::Button::new("Duplicate"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_image_profile.clone() {
+                            if let Some(copy) = self.profiles.duplicate_image(&id) {
+                                self.selected_image_profile = Some(copy);
+                            }
+                        }
+                    }
+                    let removable = self
+                        .selected_image_profile
+                        .as_deref()
+                        .and_then(|id| self.profiles.image(id))
+                        .is_some_and(|profile| !profile.builtin);
+                    if ui
+                        .add_enabled(removable, egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_image_profile.clone() {
+                            match self.profiles.remove_image(&id) {
+                                Ok(()) => {
+                                    self.selected_image_profile = None;
+                                    changed = true;
+                                }
+                                Err(error) => self.profile_message = error,
+                            }
+                        }
+                    }
+                });
+                if let Some(id) = self.selected_image_profile.clone() {
+                    if let Some(profile) = self
+                        .profiles
+                        .images
+                        .iter_mut()
+                        .find(|profile| profile.id == id)
+                    {
+                        let editable = !profile.builtin;
+                        ui.add_enabled_ui(editable, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Name");
+                                changed |= ui.text_edit_singleline(&mut profile.name).changed();
+                            });
+                            let mut mode = profile.settings.mode;
+                            egui::ComboBox::from_label("Mode")
+                                .selected_text(mode.label())
+                                .show_ui(ui, |ui| {
+                                    for candidate in crate::objects::ImageMode::all() {
+                                        ui.selectable_value(
+                                            &mut mode,
+                                            candidate,
+                                            candidate.label(),
+                                        );
+                                    }
+                                });
+                            if mode != profile.settings.mode {
+                                profile.settings.mode = mode;
+                                changed = true;
+                            }
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut profile.settings.threshold, 0..=255)
+                                        .text("Threshold"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut profile.settings.brightness,
+                                        -100..=100,
+                                    )
+                                    .text("Brightness"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut profile.settings.contrast, 0.25..=3.0)
+                                        .text("Contrast"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut profile.settings.gamma, 0.2..=3.0)
+                                        .text("Gamma"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .checkbox(&mut profile.settings.invert, "Invert")
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut profile.settings.line_interval_mm)
+                                        .speed(0.01)
+                                        .range(0.01..=2.0)
+                                        .suffix(" mm"),
+                                )
+                                .changed();
+                        });
+                        if !editable {
+                            ui.weak("Built-in profile: duplicate it to edit.");
+                        }
+                        let profile_clone = profile.clone();
+                        if ui
+                            .add_enabled(
+                                !self.editor.selection.is_empty(),
+                                egui::Button::new("Apply to selected images"),
+                            )
+                            .clicked()
+                        {
+                            let count = self.editor.apply_image_profile(&profile_clone);
+                            self.status =
+                                format!("Applied image profile to {count} object(s)");
+                        }
+                    }
+                }
+                ui.separator();
+                ui.heading("Project profiles");
+                let project_profiles: Vec<_> = self
+                    .profiles
+                    .projects
+                    .iter()
+                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
+                    .collect();
+                for (id, name, builtin) in &project_profiles {
+                    ui.horizontal(|ui| {
+                        let selected =
+                            self.selected_project_profile.as_deref() == Some(id.as_str());
+                        if ui.selectable_label(selected, name).clicked() {
+                            self.selected_project_profile = Some(id.clone());
+                        }
+                        if *builtin {
+                            ui.weak("built-in");
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("+ Project profile").clicked() {
+                        let profile = self.profiles.add_project(
+                            crate::profiles::ProjectProfile::new("New project", 300.0, 200.0),
+                        );
+                        self.selected_project_profile = Some(profile.id.clone());
+                        changed = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.selected_project_profile.is_some(),
+                            egui::Button::new("Duplicate"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_project_profile.clone() {
+                            if let Some(copy) = self.profiles.duplicate_project(&id) {
+                                self.selected_project_profile = Some(copy);
+                            }
+                        }
+                    }
+                    let removable = self
+                        .selected_project_profile
+                        .as_deref()
+                        .and_then(|id| self.profiles.project(id))
+                        .is_some_and(|profile| !profile.builtin);
+                    if ui
+                        .add_enabled(removable, egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        if let Some(id) = self.selected_project_profile.clone() {
+                            match self.profiles.remove_project(&id) {
+                                Ok(()) => {
+                                    self.selected_project_profile = None;
+                                    changed = true;
+                                }
+                                Err(error) => self.profile_message = error,
+                            }
+                        }
+                    }
+                });
+                if let Some(id) = self.selected_project_profile.clone() {
+                    if let Some(profile) = self
+                        .profiles
+                        .projects
+                        .iter_mut()
+                        .find(|profile| profile.id == id)
+                    {
+                        let editable = !profile.builtin;
+                        ui.add_enabled_ui(editable, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Name");
+                                changed |= ui.text_edit_singleline(&mut profile.name).changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Width");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.width_mm)
+                                            .speed(1.0)
+                                            .range(1.0..=10000.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                                ui.label("Height");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.height_mm)
+                                            .speed(1.0)
+                                            .range(1.0..=10000.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Grid");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.grid_spacing_mm)
+                                            .speed(0.5)
+                                            .range(0.1..=100.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                                ui.label("Snap");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.snap_mm)
+                                            .speed(0.1)
+                                            .range(0.1..=100.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                        });
+                        if !editable {
+                            ui.weak("Built-in profile: duplicate it to edit.");
+                        }
+                        let profile_clone = profile.clone();
+                        if ui.button("Apply to project").clicked() {
+                            if self.editor.apply_project_profile(&profile_clone) {
+                                self.needs_fit = true;
+                                self.status =
+                                    format!("Applied project profile '{}'", profile_clone.name);
+                            } else {
+                                self.status = "Project profile is invalid".to_string();
+                            }
                         }
                     }
                 }

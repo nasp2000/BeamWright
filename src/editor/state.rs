@@ -648,6 +648,38 @@ impl EditorState {
         self.assign_operation(Some(&id))
     }
 
+    /// Apply image preparation settings to every selected image object.
+    pub fn apply_image_profile(&mut self, profile: &crate::profiles::ImageProfile) -> usize {
+        if self.selection.is_empty() || profile.settings.validate().is_err() {
+            return 0;
+        }
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        let mut changed = 0;
+        for id in ids {
+            if let Some(object) = self.document.object_mut(&id) {
+                if let Shape::Image(image) = &mut object.shape {
+                    image.settings = profile.settings;
+                    changed += 1;
+                }
+            }
+        }
+        changed
+    }
+
+    /// Apply project defaults: work area, grid spacing and snap step.
+    pub fn apply_project_profile(&mut self, profile: &crate::profiles::ProjectProfile) -> bool {
+        if profile.validate().is_err() {
+            return false;
+        }
+        self.record();
+        self.document.width_mm = profile.width_mm;
+        self.document.height_mm = profile.height_mm;
+        self.canvas.grid_spacing_mm = profile.grid_spacing_mm;
+        self.snap_step_mm = profile.snap_mm;
+        true
+    }
+
     /// The operation shared by the whole selection, when there is exactly one.
     pub fn selection_operation(&self) -> Option<&str> {
         let mut ids = self.selection.ids().iter().map(|id| {
@@ -1016,6 +1048,73 @@ mod tests {
         editor.select_all();
         assert!(!editor.distribute_selection(true));
         assert!(!editor.distribute_selection(false));
+    }
+
+    #[test]
+    fn image_profile_applies_to_selected_images_only() {
+        use crate::objects::{ImageMode, ImageObject};
+        use crate::profiles::ImageProfile;
+
+        let mut editor = editor();
+        let layer_id = editor.document.layers[0].id.clone();
+        editor.document.add_object(Object::new(
+            layer_id.clone(),
+            Shape::Image(ImageObject::new("photo.png", 10, 10, 96.0)),
+        ));
+        editor.document.add_object(Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 5.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        ));
+        editor.select_all();
+        let mut profile = ImageProfile::new("Dither");
+        profile.settings.mode = ImageMode::FloydSteinberg;
+        profile.settings.contrast = 1.4;
+        assert_eq!(editor.apply_image_profile(&profile), 1);
+        match &editor.document.objects[0].shape {
+            Shape::Image(image) => {
+                assert_eq!(image.settings.mode, ImageMode::FloydSteinberg);
+                assert!((image.settings.contrast - 1.4).abs() < 1e-9);
+            }
+            other => panic!("unexpected shape: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_profile_without_selection_does_nothing() {
+        use crate::profiles::ImageProfile;
+        let mut editor = editor();
+        assert_eq!(editor.apply_image_profile(&ImageProfile::new("x")), 0);
+    }
+
+    #[test]
+    fn project_profile_sets_work_area_and_can_be_undone() {
+        use crate::profiles::ProjectProfile;
+
+        let mut editor = editor();
+        let before = editor.document.width_mm;
+        let profile = ProjectProfile::new("Small", 120.0, 80.0);
+        assert!(editor.apply_project_profile(&profile));
+        assert_eq!(editor.document.width_mm, 120.0);
+        assert_eq!(editor.document.height_mm, 80.0);
+        assert_eq!(editor.canvas.grid_spacing_mm, 10.0);
+        assert!(editor.undo());
+        assert_eq!(editor.document.width_mm, before);
+    }
+
+    #[test]
+    fn invalid_project_profile_is_rejected() {
+        use crate::profiles::ProjectProfile;
+
+        let mut editor = editor();
+        let mut profile = ProjectProfile::new("Bad", 0.0, 80.0);
+        assert!(!editor.apply_project_profile(&profile));
+        profile.width_mm = 100.0;
+        profile.snap_mm = 0.0;
+        assert!(!editor.apply_project_profile(&profile));
     }
 
     #[test]
