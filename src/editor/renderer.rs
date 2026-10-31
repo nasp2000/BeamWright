@@ -1,6 +1,6 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
+use egui::{Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
 
 use crate::color::parse_hex_color;
 use crate::document::{Object, Shape};
@@ -392,19 +392,35 @@ fn paint_object(
 
     match &object.shape {
         Shape::Text(text) => {
-            let world = object.transform.apply(Point2::new(text.x, text.y));
             let scale = f64::midpoint(
                 object.transform.a.hypot(object.transform.b),
                 object.transform.c.hypot(object.transform.d),
             );
             let size = (text.size * scale * editor.canvas.zoom) as f32;
             if size >= 3.0 {
-                painter.text(
-                    screen_pos(rect, editor, world),
-                    Align2::LEFT_BOTTOM,
+                let color = fill_color.unwrap_or(stroke_color);
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
                     &text.content,
-                    FontId::proportional(size),
-                    fill_color.unwrap_or(stroke_color),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: FontId::proportional(size),
+                        color,
+                        extra_letter_spacing: (text.letter_spacing * scale * editor.canvas.zoom)
+                            as f32,
+                        line_height: Some((text.line_height() * scale * editor.canvas.zoom) as f32),
+                        ..egui::TextFormat::default()
+                    },
+                );
+                // Draw from the block's top-left; `left` already applies the
+                // text alignment, so the layout itself stays left-aligned.
+                let top_left = object
+                    .transform
+                    .apply(Point2::new(text.left(), text.y + text.block_height()));
+                painter.galley(
+                    screen_pos(rect, editor, top_left),
+                    painter.layout_job(job),
+                    color,
                 );
             }
         }

@@ -1226,6 +1226,7 @@ impl BeamWrightApp {
                     Tool::Ellipse,
                     Tool::Polygon,
                     Tool::Star,
+                    Tool::Text,
                     Tool::Pencil,
                     Tool::Pan,
                 ] {
@@ -2002,7 +2003,36 @@ impl BeamWrightApp {
                                 .range(0.1..=10000.0),
                         );
                         ui.end_row();
+                        ui.label("Letter spacing");
+                        ui.add(
+                            egui::DragValue::new(&mut text.letter_spacing)
+                                .speed(0.05)
+                                .range(-10.0..=50.0)
+                                .suffix(" mm"),
+                        );
+                        ui.end_row();
+                        ui.label("Line spacing");
+                        ui.add(
+                            egui::Slider::new(&mut text.line_spacing, 0.5..=5.0).fixed_decimals(2),
+                        );
+                        ui.end_row();
+                        ui.label("Align");
+                        let mut align = text.align;
+                        egui::ComboBox::from_id_salt("text_align")
+                            .selected_text(align.label())
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    crate::objects::TextAlign::Left,
+                                    crate::objects::TextAlign::Center,
+                                    crate::objects::TextAlign::Right,
+                                ] {
+                                    ui.selectable_value(&mut align, candidate, candidate.label());
+                                }
+                            });
+                        text.align = align;
+                        ui.end_row();
                     });
+                ui.weak("Use Shift+Enter in the content field for a second line.");
             }
             Shape::Image(image) => {
                 use crate::objects::ImageMode;
@@ -2290,6 +2320,7 @@ impl BeamWrightApp {
                                 | Tool::Line
                                 | Tool::Polygon
                                 | Tool::Star
+                                | Tool::Text
                                 | Tool::Pencil => {
                                     if self.editor.layer_locked(&self.editor.active_layer_id)
                                         || !self.editor.layer_visible(&self.editor.active_layer_id)
@@ -2618,6 +2649,9 @@ impl BeamWrightApp {
                         self.star_points,
                         self.star_inner,
                     );
+                }
+                Tool::Text => {
+                    self.editor.add_text(start);
                 }
                 _ => {}
             },

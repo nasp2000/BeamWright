@@ -454,6 +454,16 @@ impl EditorState {
         )
     }
 
+    /// Insert a text object whose anchor is `at`, selected and ready to edit.
+    pub fn add_text(&mut self, at: Point2) -> Option<String> {
+        let text = crate::objects::TextObject {
+            x: at.x,
+            y: at.y,
+            ..crate::objects::TextObject::default()
+        };
+        self.add_shape(Shape::Text(text), Transform2::identity())
+    }
+
     pub fn add_line(&mut self, start: Point2, end: Point2) -> Option<String> {
         let start = self.snap(start);
         let end = self.snap(end);
@@ -3894,6 +3904,22 @@ mod tests {
         );
         assert!(editor.undo());
         assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn text_is_inserted_at_the_click() {
+        let mut editor = editor();
+        let id = editor.add_text(Point2::new(12.0, 34.0)).unwrap();
+        let object = editor.document.object(&id).unwrap();
+        let crate::document::Shape::Text(text) = &object.shape else {
+            panic!("expected text");
+        };
+        assert_eq!(text.content, "Text");
+        assert!((text.x - 12.0).abs() < 1e-9);
+        assert!((text.y - 34.0).abs() < 1e-9);
+        assert!(editor.selection.contains(&id));
+        let (min, max) = object.bounds().unwrap();
+        assert!(max.x > min.x && max.y > min.y);
     }
 
     #[test]

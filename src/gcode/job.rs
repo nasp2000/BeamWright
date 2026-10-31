@@ -992,6 +992,7 @@ mod tests {
                 size: 4.0,
                 x: 0.0,
                 y: 0.0,
+                ..crate::objects::TextObject::default()
             }),
         ));
         let (toolpaths, warnings) = build_toolpaths(&document);

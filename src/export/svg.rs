@@ -46,18 +46,61 @@ fn write_object(out: &mut String, object: &Object, layer_rgb: (u8, u8, u8), page
         Shape::Text(text) => {
             let world = object.transform.apply(Point2::new(text.x, text.y));
             let scale = transform_scale(&object.transform);
-            let _ = writeln!(
-                out,
-                "    <text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\">{}</text>",
-                fmt_num(world.x),
-                fmt_num(page_height - world.y),
-                escape(&text.font),
-                fmt_num(text.size * scale),
-                fill,
-                stroke,
-                fmt_num(style.stroke_width_mm),
-                escape(&text.content)
-            );
+            let anchor = match text.align {
+                crate::objects::TextAlign::Left => "start",
+                crate::objects::TextAlign::Center => "middle",
+                crate::objects::TextAlign::Right => "end",
+            };
+            let lines: Vec<&str> = text.lines();
+            if lines.len() == 1 {
+                let _ = writeln!(
+                    out,
+                    "    <text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" text-anchor=\"{}\" letter-spacing=\"{}\">{}</text>",
+                    fmt_num(world.x),
+                    fmt_num(page_height - world.y),
+                    escape(&text.font),
+                    fmt_num(text.size * scale),
+                    fill,
+                    stroke,
+                    fmt_num(style.stroke_width_mm),
+                    anchor,
+                    fmt_num(text.letter_spacing * scale),
+                    escape(lines[0])
+                );
+            } else {
+                let _ = write!(
+                    out,
+                    "    <text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" text-anchor=\"{}\" letter-spacing=\"{}\">",
+                    fmt_num(world.x),
+                    fmt_num(page_height - world.y),
+                    escape(&text.font),
+                    fmt_num(text.size * scale),
+                    fill,
+                    stroke,
+                    fmt_num(style.stroke_width_mm),
+                    anchor,
+                    fmt_num(text.letter_spacing * scale)
+                );
+                for (index, line) in lines.iter().enumerate() {
+                    if index == 0 {
+                        let _ = write!(
+                            out,
+                            "<tspan x=\"{}\" dy=\"0\">{}</tspan>",
+                            fmt_num(world.x),
+                            escape(line)
+                        );
+                    } else {
+                        let _ = write!(
+                            out,
+                            "<tspan x=\"{}\" dy=\"{}\">{}</tspan>",
+                            fmt_num(world.x),
+                            fmt_num(text.line_height() * scale),
+                            escape(line)
+                        );
+                    }
+                }
+                let _ = writeln!(out, "</text>");
+            }
         }
         Shape::Image(image) => {
             let Some((min, max)) = object.bounds() else {
@@ -223,11 +266,35 @@ mod tests {
                 size: 5.0,
                 x: 0.0,
                 y: 0.0,
+                ..crate::objects::TextObject::default()
             }),
         );
         doc.add_object(object);
         let svg = export_svg(&doc).unwrap();
         assert!(svg.contains("a&lt;b&amp;c"));
+    }
+
+    #[test]
+    fn text_alignment_and_spacing_are_exported() {
+        let mut doc = Document::default();
+        let layer_id = doc.layers[0].id.clone();
+        let object = Object::new(
+            layer_id,
+            Shape::Text(crate::objects::TextObject {
+                content: "A\nB".to_string(),
+                letter_spacing: 1.5,
+                line_spacing: 1.5,
+                align: crate::objects::TextAlign::Center,
+                ..crate::objects::TextObject::default()
+            }),
+        );
+        doc.add_object(object);
+        let svg = export_svg(&doc).unwrap();
+        assert!(svg.contains("text-anchor=\"middle\""));
+        assert!(svg.contains("letter-spacing=\"1.5\""));
+        assert!(svg.contains("<tspan"));
+        assert!(svg.contains(">A</tspan>"));
+        assert!(svg.contains(">B</tspan>"));
     }
 
     #[test]

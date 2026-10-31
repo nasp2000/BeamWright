@@ -468,12 +468,24 @@ fn import_text(
         .to_string();
     let world = transform.apply(Point2::new(x, y));
     let scale = transform_scale(&transform);
+    let align = match node.attr("text-anchor") {
+        Some("middle") => crate::objects::TextAlign::Center,
+        Some("end") => crate::objects::TextAlign::Right,
+        _ => crate::objects::TextAlign::Left,
+    };
+    let letter_spacing = node
+        .attr("letter-spacing")
+        .and_then(parse_length)
+        .map_or(0.0, |length| length.numeric() * scale);
     let text = TextObject {
         content: content.to_string(),
         font,
         size: (size * scale).max(0.1),
         x: world.x,
         y: world.y,
+        letter_spacing,
+        align,
+        ..TextObject::default()
     };
     let mut object = Object::new(layer_id, Shape::Text(text));
     object.style = style.to_object_style(&transform);
@@ -848,6 +860,18 @@ mod tests {
         let doc = import_svg(SVG_ARC).unwrap();
         assert_eq!(doc.objects.len(), 1);
         assert!(doc.objects[0].world_path().segment_count() >= 3);
+    }
+
+    #[test]
+    fn imports_text_alignment_and_spacing() {
+        let svg = r#"<svg width="50" height="20"><text x="10" y="5" text-anchor="middle" letter-spacing="2" font-size="4">Hi</text></svg>"#;
+        let report = import_svg_report(svg).unwrap();
+        let object = report.document.objects.first().expect("text object");
+        let crate::document::Shape::Text(text) = &object.shape else {
+            panic!("expected text");
+        };
+        assert_eq!(text.align, crate::objects::TextAlign::Center);
+        assert!(text.letter_spacing > 0.0);
     }
 
     #[test]
