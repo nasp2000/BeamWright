@@ -217,3 +217,59 @@ fn cli_import_dxf_command() {
     let _ = fs::remove_file(&source);
     let _ = fs::remove_file(&output);
 }
+
+#[test]
+fn cli_export_png_command() {
+    use beamwright::document::{Document, Object, Shape};
+
+    let project = temp_dir().join("bw_cli_png.bwp");
+    let output = temp_dir().join("bw_cli_png.png");
+    let mut document = Document::default();
+    let layer_id = document.layers[0].id.clone();
+    let mut object = Object::new(
+        layer_id,
+        Shape::Rect {
+            width: 20.0,
+            height: 10.0,
+            corner_radius: 0.0,
+        },
+    );
+    object.style.fill = Some("#ff0000".to_string());
+    document.add_object(object);
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let _ = fs::remove_file(&output);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "export-png",
+        project.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--dpi",
+        "48",
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let image = image::open(&output).unwrap();
+    assert!(image.width() > 0);
+    let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn cli_export_png_rejects_bad_dpi() {
+    let project = temp_dir().join("bw_cli_png_dpi.bwp");
+    let output = temp_dir().join("bw_cli_png_dpi.png");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "export-png",
+        project.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--dpi",
+        "0",
+    ])
+    .unwrap();
+    assert!(run(cli).is_err());
+    assert!(!output.exists());
+    let _ = fs::remove_file(&project);
+}

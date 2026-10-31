@@ -31,6 +31,14 @@ pub enum Commands {
     ExportSvg { input: PathBuf, output: PathBuf },
     /// Export a project or SVG as DXF
     ExportDxf { input: PathBuf, output: PathBuf },
+    /// Export a project or SVG as PNG
+    ExportPng {
+        input: PathBuf,
+        output: PathBuf,
+        /// Output resolution in dots per inch
+        #[arg(long, default_value_t = 96.0)]
+        dpi: f64,
+    },
     /// Export a GRBL-compatible G-code job
     ExportGcode { input: PathBuf, output: PathBuf },
     /// Print the estimated job duration and G-code size
@@ -67,6 +75,24 @@ pub fn run(cli: Cli) -> Result<()> {
             let dxf = crate::export::export_dxf(&document)?;
             std::fs::write(&output, dxf)?;
             println!("Exported DXF -> {}", output.display());
+            Ok(())
+        }
+        Some(Commands::ExportPng { input, output, dpi }) => {
+            let document = open_document(&input)?;
+            let options = crate::export::PngOptions {
+                dpi,
+                transparent: false,
+            };
+            let report = crate::export::export_png(&document, &output, &options)?;
+            println!(
+                "Exported PNG -> {} ({} x {} px)",
+                output.display(),
+                report.width_px,
+                report.height_px
+            );
+            for warning in report.warnings {
+                eprintln!("warning: {warning}");
+            }
             Ok(())
         }
         Some(Commands::ExportGcode { input, output }) => {

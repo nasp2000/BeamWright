@@ -7,6 +7,7 @@ pub enum FileMode {
     ImportFile,
     ExportSvg,
     ExportDxf,
+    ExportPng,
     ExportGcode,
 }
 
@@ -18,6 +19,7 @@ impl FileMode {
             FileMode::ImportFile => "Import SVG, DXF or image",
             FileMode::ExportSvg => "Export SVG",
             FileMode::ExportDxf => "Export DXF",
+            FileMode::ExportPng => "Export PNG",
             FileMode::ExportGcode => "Export G-code",
         }
     }
@@ -26,7 +28,10 @@ impl FileMode {
         match self {
             FileMode::OpenProject | FileMode::ImportFile => "Open",
             FileMode::SaveProject => "Save",
-            FileMode::ExportSvg | FileMode::ExportDxf | FileMode::ExportGcode => "Export",
+            FileMode::ExportSvg
+            | FileMode::ExportDxf
+            | FileMode::ExportPng
+            | FileMode::ExportGcode => "Export",
         }
     }
 
@@ -35,6 +40,7 @@ impl FileMode {
             FileMode::SaveProject => "bwp",
             FileMode::ExportGcode => "nc",
             FileMode::ExportDxf => "dxf",
+            FileMode::ExportPng => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
         }
     }
@@ -55,6 +61,7 @@ impl FileMode {
             }
             FileMode::ExportSvg => extension == "svg",
             FileMode::ExportDxf => extension == "dxf",
+            FileMode::ExportPng => extension == "png",
             FileMode::ExportGcode => extension == "nc" || extension == "gcode",
         }
     }
@@ -220,6 +227,7 @@ impl FileDialog {
                 FileMode::SaveProject
                     | FileMode::ExportSvg
                     | FileMode::ExportDxf
+                    | FileMode::ExportPng
                     | FileMode::ExportGcode
             ) {
                 path.set_extension(self.mode.default_extension());
@@ -236,6 +244,7 @@ impl FileDialog {
             FileMode::SaveProject
             | FileMode::ExportSvg
             | FileMode::ExportDxf
+            | FileMode::ExportPng
             | FileMode::ExportGcode => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {

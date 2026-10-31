@@ -179,6 +179,7 @@ impl BeamWrightApp {
         let suggested = match mode {
             FileMode::ImportFile => "drawing.svg".to_string(),
             FileMode::ExportDxf => format!("{stem}.dxf"),
+            FileMode::ExportPng => format!("{stem}.png"),
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
@@ -194,6 +195,28 @@ impl BeamWrightApp {
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.open_path(path),
             FileMode::SaveProject => self.save_to(path),
+            FileMode::ExportPng => {
+                match crate::export::export_png(
+                    &self.editor.document,
+                    path,
+                    &crate::export::PngOptions::default(),
+                ) {
+                    Ok(report) => {
+                        self.status = format!(
+                            "Exported PNG to {} ({} × {} px{})",
+                            path.display(),
+                            report.width_px,
+                            report.height_px,
+                            if report.warnings.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", {} warning(s)", report.warnings.len())
+                            }
+                        );
+                    }
+                    Err(error) => self.status = format!("Export failed: {error}"),
+                }
+            }
             FileMode::ExportDxf => match crate::export::export_dxf(&self.editor.document) {
                 Ok(dxf) => match std::fs::write(path, dxf) {
                     Ok(()) => self.status = format!("Exported DXF to {}", path.display()),
@@ -451,6 +474,10 @@ impl BeamWrightApp {
                     }
                     if ui.button("Export DXF...").clicked() {
                         self.open_dialog(FileMode::ExportDxf);
+                        ui.close();
+                    }
+                    if ui.button("Export PNG...").clicked() {
+                        self.open_dialog(FileMode::ExportPng);
                         ui.close();
                     }
                     if ui.button("Export G-code...").clicked() {
