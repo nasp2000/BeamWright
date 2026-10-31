@@ -39,6 +39,9 @@ pub struct DrawingPrefs {
     pub grid_spacing_mm: f64,
     pub snap_tolerance_px: f64,
     pub show_rulers: bool,
+    /// Draw selection outlines and handles on the canvas.
+    #[serde(default = "default_true")]
+    pub show_selection: bool,
     #[serde(default = "default_snap_step")]
     pub snap_step_mm: f64,
     #[serde(default = "default_true")]
