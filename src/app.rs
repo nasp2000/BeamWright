@@ -85,6 +85,8 @@ pub struct BeamWrightApp {
     preferences_open: bool,
     polygon_sides: usize,
     grid_array_open: bool,
+    offset_open: bool,
+    offset_distance: f64,
     grid_array: (usize, usize, f64, f64),
     search_query: String,
     preview_open: bool,
@@ -158,6 +160,8 @@ impl BeamWrightApp {
             preferences_open: false,
             polygon_sides: 6,
             grid_array_open: false,
+            offset_open: false,
+            offset_distance: 1.0,
             grid_array: (3, 2, 20.0, 20.0),
             search_query: String::new(),
             preview_open: false,
@@ -678,6 +682,27 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.grid_array_open = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    let can_combine = self.editor.selection.len() == 2;
+                    ui.menu_button("Boolean", |ui| {
+                        use crate::geometry::BooleanOp;
+                        for op in BooleanOp::all() {
+                            if ui
+                                .add_enabled(can_combine, egui::Button::new(op.label()))
+                                .clicked()
+                            {
+                                self.apply_boolean(op);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Offset..."))
+                        .clicked()
+                    {
+                        self.offset_open = true;
                         ui.close();
                     }
                 });
@@ -2072,6 +2097,53 @@ impl BeamWrightApp {
         }
     }
 
+    fn apply_boolean(&mut self, op: crate::geometry::BooleanOp) {
+        match self.editor.boolean_selection(op) {
+            Ok(count) => {
+                self.status = if count == 1 {
+                    format!("{} applied", op.label())
+                } else {
+                    format!("{} applied ({count} shapes)", op.label())
+                };
+            }
+            Err(error) => self.status = format!("{} failed: {error}", op.label()),
+        }
+    }
+
+    fn offset_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.offset_open;
+        let mut apply = false;
+        egui::Window::new("Offset")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Distance");
+                ui.add(
+                    egui::DragValue::new(&mut self.offset_distance)
+                        .speed(0.1)
+                        .range(-100.0..=100.0)
+                        .suffix(" mm"),
+                );
+                ui.weak("Positive expands the outline; negative contracts it.");
+                ui.weak("Shapes that collapse are removed.");
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+            });
+        if apply {
+            match self.editor.offset_selection(self.offset_distance) {
+                Ok(count) => {
+                    self.status = format!("Offset applied to {count} shape(s)");
+                    self.offset_open = false;
+                }
+                Err(error) => self.status = format!("Offset failed: {error}"),
+            }
+        } else {
+            self.offset_open = open;
+        }
+    }
+
     fn grid_array_window(&mut self, ctx: &egui::Context) {
         let mut open = self.grid_array_open;
         egui::Window::new("Grid array")
@@ -2825,6 +2897,9 @@ impl BeamWrightApp {
         }
         if self.grid_array_open {
             self.grid_array_window(ctx);
+        }
+        if self.offset_open {
+            self.offset_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

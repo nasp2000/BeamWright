@@ -1,3 +1,5 @@
+use crate::geometry::boolean::polygon_area;
+
 /// Offset parameters (PLAN.md §6.8, §18).
 #[derive(Debug, Clone, Copy)]
 pub struct OffsetParams {
@@ -44,8 +46,9 @@ pub fn offset_polygon(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64)> {
         // edge normals
         let e1 = (curr.0 - prev.0, curr.1 - prev.1);
         let e2 = (next.0 - curr.0, next.1 - curr.1);
-        let n1 = normalize(-e1.1, e1.0);
-        let n2 = normalize(-e2.1, e2.0);
+        // Right normal: positive distance moves away from a CCW polygon.
+        let n1 = normalize(e1.1, -e1.0);
+        let n2 = normalize(e2.1, -e2.0);
         let nx = f64::midpoint(n1.0, n2.0);
         let ny = f64::midpoint(n1.1, n2.1);
         let (nx, ny) = normalize(nx, ny);
@@ -81,9 +84,9 @@ pub fn offset_polygon_miter(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64
             edges.push((a, b));
             continue;
         }
-        // left normal (outward for CCW)
-        let nx = -dy / len * distance;
-        let ny = dx / len * distance;
+        // Right normal: positive distance moves away from a CCW polygon.
+        let nx = dy / len * distance;
+        let ny = -dx / len * distance;
         edges.push(((a.0 + nx, a.1 + ny), (b.0 + nx, b.1 + ny)));
     }
     // intersect consecutive offset edges
@@ -98,6 +101,47 @@ pub fn offset_polygon_miter(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64
         }
     }
     out
+}
+
+/// Whether an offset polygon folded over itself or lost its area.
+///
+/// Two signals are checked. `offset_polygon_miter` returns one vertex per input
+/// vertex, so an offset edge that runs opposite to its source means the outline
+/// turned inside out locally. And a valid offset moves the area in the
+/// direction of `distance` (outward grows it, inward shrinks it); when it moves
+/// the other way the contraction passed the centre. Inputs that cannot be
+/// compared vertex by vertex are not reported as collapsed.
+pub fn offset_collapsed(original: &[(f64, f64)], offset: &[(f64, f64)], distance: f64) -> bool {
+    if offset.len() < 3 || original.len() < 3 {
+        return true;
+    }
+    let original_area = polygon_area(original).abs();
+    let offset_area = polygon_area(offset);
+    if offset_area <= 1e-9 {
+        return true;
+    }
+    if distance > 0.0 && offset_area <= original_area + 1e-9 {
+        return true;
+    }
+    if distance < 0.0 && offset_area >= original_area - 1e-9 {
+        return true;
+    }
+    if offset.len() != original.len() {
+        return false;
+    }
+    let count = original.len();
+    for index in 0..count {
+        let from = original[index];
+        let to = original[(index + 1) % count];
+        let offset_from = offset[index];
+        let offset_to = offset[(index + 1) % count];
+        let dot = (to.0 - from.0) * (offset_to.0 - offset_from.0)
+            + (to.1 - from.1) * (offset_to.1 - offset_from.1);
+        if dot < 0.0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn intersect_lines(
@@ -140,8 +184,8 @@ pub fn offset_polygon_round(
             out.push(curr);
             continue;
         }
-        let n1 = (-e1.1 / l1 * distance, e1.0 / l1 * distance);
-        let n2 = (-e2.1 / l2 * distance, e2.0 / l2 * distance);
+        let n1 = (e1.1 / l1 * distance, -e1.0 / l1 * distance);
+        let n2 = (e2.1 / l2 * distance, -e2.0 / l2 * distance);
         let p1 = (curr.0 + n1.0, curr.1 + n1.1);
         let p2 = (curr.0 + n2.0, curr.1 + n2.1);
         // insert arc from p1 to p2 around curr offset
@@ -257,6 +301,54 @@ mod offset_tests {
         let tri = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)];
         let r = offset_polygon(&tri, 0.1);
         assert_eq!(r.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::offset_collapsed;
+
+    fn square(size: f64) -> Vec<(f64, f64)> {
+        vec![(0.0, 0.0), (size, 0.0), (size, size), (0.0, size)]
+    }
+
+    #[test]
+    fn small_inset_is_valid() {
+        let original = square(10.0);
+        let inset = vec![(1.0, 1.0), (9.0, 1.0), (9.0, 9.0), (1.0, 9.0)];
+        assert!(!offset_collapsed(&original, &inset, -1.0));
+    }
+
+    #[test]
+    fn passing_the_centre_folds_the_polygon() {
+        let original = square(2.0);
+        let folded = vec![(-3.0, 5.0), (-3.0, -3.0), (5.0, -3.0), (5.0, 5.0)];
+        assert!(offset_collapsed(&original, &folded, -5.0));
+    }
+
+    #[test]
+    fn outward_growth_is_valid() {
+        let original = square(10.0);
+        let grown = vec![(-2.0, -2.0), (12.0, -2.0), (12.0, 12.0), (-2.0, 12.0)];
+        assert!(!offset_collapsed(&original, &grown, 2.0));
+        // A "growth" that shrank the outline is rejected.
+        let shrunk = vec![(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0)];
+        assert!(offset_collapsed(&original, &shrunk, 2.0));
+    }
+
+    #[test]
+    fn degenerate_results_are_collapsed() {
+        let original = square(4.0);
+        assert!(offset_collapsed(&original, &[], -1.0));
+        assert!(offset_collapsed(&original, &[(0.0, 0.0), (1.0, 1.0)], -1.0));
+    }
+
+    #[test]
+    fn different_vertex_counts_are_not_compared() {
+        let original = square(4.0);
+        // A valid triangular inset of a square keeps its area direction.
+        let triangle = vec![(0.0, 0.0), (2.0, 0.0), (0.0, 2.0)];
+        assert!(!offset_collapsed(&original, &triangle, -1.0));
     }
 }
 

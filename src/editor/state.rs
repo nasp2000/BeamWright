@@ -179,6 +179,185 @@ impl EditorState {
         Some(id)
     }
 
+    /// World-space outline of a closed object, flattened to a polygon.
+    fn closed_world_contour(object: &Object) -> Option<Vec<(f64, f64)>> {
+        let path = object.world_path();
+        if !path.is_closed() {
+            return None;
+        }
+        let mut points: Vec<(f64, f64)> = path
+            .flatten(0.2)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        if points.len() > 1 {
+            let first = points[0];
+            let last = points[points.len() - 1];
+            if (first.0 - last.0).abs() <= 1e-9 && (first.1 - last.1).abs() <= 1e-9 {
+                points.pop();
+            }
+        }
+        if points.len() < 3 { None } else { Some(points) }
+    }
+
+    /// Selected object indices, in document order.
+    fn selected_indices(&self) -> Vec<usize> {
+        self.document
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, object)| self.selection.contains(&object.id))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn ensure_editable(&self, index: usize) -> std::result::Result<(), String> {
+        let object = &self.document.objects[index];
+        if object.locked {
+            return Err(format!("'{}' is locked", object.name));
+        }
+        if self.layer_locked(&object.layer_id) {
+            return Err(format!("the layer of '{}' is locked", object.name));
+        }
+        Ok(())
+    }
+
+    /// Combine exactly two closed shapes with a boolean operation.
+    ///
+    /// The earlier object in document order is the subject, so `Difference`
+    /// subtracts the later (upper) object from the earlier one. One path object
+    /// is created per resulting contour, keeping the subject's style, layer and
+    /// operation; the two originals are removed.
+    pub fn boolean_selection(
+        &mut self,
+        op: crate::geometry::BooleanOp,
+    ) -> std::result::Result<usize, String> {
+        use crate::geometry::boolean::{boolean_contours, polygon_area};
+
+        let selected = self.selected_indices();
+        if selected.len() != 2 {
+            return Err("Select exactly two closed shapes".to_string());
+        }
+        let (first_index, second_index) = (selected[0], selected[1]);
+        self.ensure_editable(first_index)?;
+        self.ensure_editable(second_index)?;
+        let subject =
+            Self::closed_world_contour(&self.document.objects[first_index]).ok_or_else(|| {
+                format!(
+                    "'{}' is not a closed shape",
+                    self.document.objects[first_index].name
+                )
+            })?;
+        let clip =
+            Self::closed_world_contour(&self.document.objects[second_index]).ok_or_else(|| {
+                format!(
+                    "'{}' is not a closed shape",
+                    self.document.objects[second_index].name
+                )
+            })?;
+        let mut contours = boolean_contours(op, &subject, &clip);
+        if contours.is_empty() {
+            return Err(format!("{} leaves no area", op.label()));
+        }
+        for contour in &mut contours {
+            if polygon_area(contour) < 0.0 {
+                contour.reverse();
+            }
+        }
+        contours.sort_by(|left, right| {
+            polygon_area(right)
+                .partial_cmp(&polygon_area(left))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        self.record();
+        let template = self.document.objects[first_index].clone();
+        self.document.objects.remove(second_index);
+        self.document.objects.remove(first_index);
+        let insert_at = first_index.min(self.document.objects.len());
+        self.selection.clear();
+        for (index, contour) in contours.iter().enumerate() {
+            let name = if contours.len() == 1 {
+                format!("{} {}", op.label(), template.name)
+            } else {
+                format!("{} {} {}", op.label(), template.name, index + 1)
+            };
+            let mut object = Object::new(
+                template.layer_id.clone(),
+                Shape::Path(Path::from_points(contour, true)),
+            )
+            .with_style(template.style.clone());
+            object.name = name;
+            object.operation_id.clone_from(&template.operation_id);
+            self.selection.add(object.id.clone());
+            self.document.objects.insert(insert_at + index, object);
+        }
+        Ok(contours.len())
+    }
+
+    /// Offset every selected closed shape by `distance` millimetres.
+    ///
+    /// Positive values expand the outline and negative values contract it. A
+    /// shape that collapses is removed. Returns the number of shapes that kept a
+    /// valid outline; the document is left untouched when every shape would
+    /// collapse.
+    pub fn offset_selection(&mut self, distance: f64) -> std::result::Result<usize, String> {
+        type OffsetUpdate = (usize, Vec<(f64, f64)>, bool);
+
+        use crate::geometry::boolean::polygon_area;
+        use crate::geometry::offset::{offset_collapsed, offset_polygon_miter};
+
+        if !distance.is_finite() || distance == 0.0 {
+            return Err("Offset distance must be a non-zero number".to_string());
+        }
+        let targets = self.selected_indices();
+        if targets.is_empty() {
+            return Err("Select at least one closed shape".to_string());
+        }
+        let mut updates: Vec<OffsetUpdate> = Vec::new();
+        let mut valid = 0;
+        for index in targets {
+            self.ensure_editable(index)?;
+            let mut contour = Self::closed_world_contour(&self.document.objects[index])
+                .ok_or_else(|| {
+                    format!(
+                        "'{}' is not a closed shape",
+                        self.document.objects[index].name
+                    )
+                })?;
+            if polygon_area(&contour) < 0.0 {
+                contour.reverse();
+            }
+            let result = offset_polygon_miter(&contour, distance);
+            let collapsed = offset_collapsed(&contour, &result, distance);
+            if !collapsed {
+                valid += 1;
+            }
+            updates.push((index, result, collapsed));
+        }
+        if valid == 0 {
+            return Err("The offset is too large; no shape would remain".to_string());
+        }
+
+        self.record();
+        let mut removed = Vec::new();
+        for (index, points, collapsed) in &updates {
+            if *collapsed {
+                removed.push(*index);
+                continue;
+            }
+            let object = &mut self.document.objects[*index];
+            object.shape = Shape::Path(Path::from_points(points, true));
+            object.transform = Transform2::identity();
+        }
+        removed.sort_unstable_by(|left, right| right.cmp(left));
+        for index in removed {
+            let object = self.document.objects.remove(index);
+            self.selection.remove(&object.id);
+        }
+        Ok(valid)
+    }
+
     pub fn object_at(&self, point: Point2, tolerance_mm: f64) -> Option<String> {
         for object in self.document.objects.iter().rev() {
             if !object.visible || object.locked {
@@ -1502,6 +1681,205 @@ mod tests {
         );
         assert_eq!(editor.document.operations[0].id, second);
         assert_eq!(editor.document.operations[1].id, first);
+    }
+
+    fn area_of(editor: &EditorState, id: &str) -> f64 {
+        let object = editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .expect("object");
+        let points: Vec<(f64, f64)> = object
+            .world_path()
+            .flatten(0.05)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        crate::geometry::boolean::polygon_area(&points).abs()
+    }
+
+    #[test]
+    fn union_merges_two_overlapping_shapes() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        editor.selection.add(second);
+        assert_eq!(
+            editor
+                .boolean_selection(crate::geometry::BooleanOp::Union)
+                .unwrap(),
+            1
+        );
+        assert_eq!(editor.document.objects.len(), 1);
+        let id = editor.document.objects[0].id.clone();
+        assert!((area_of(&editor, &id) - 28.0).abs() < 1e-3);
+        assert!(editor.selection.contains(&id));
+        assert!(editor.document.objects[0].name.starts_with("Union"));
+    }
+
+    #[test]
+    fn difference_subtracts_the_upper_shape() {
+        let mut editor = editor();
+        let lower = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let upper = editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(lower);
+        editor.selection.add(upper);
+        editor
+            .boolean_selection(crate::geometry::BooleanOp::Difference)
+            .unwrap();
+        assert_eq!(editor.document.objects.len(), 1);
+        let id = editor.document.objects[0].id.clone();
+        assert!((area_of(&editor, &id) - 12.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn boolean_keeps_style_and_operation() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        let operation = editor.add_operation("Engrave", OperationType::LineEngraving);
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        editor.assign_operation(Some(&operation));
+        editor
+            .boolean_selection(crate::geometry::BooleanOp::Intersection)
+            .unwrap();
+        let object = &editor.document.objects[0];
+        assert_eq!(object.operation_id.as_deref(), Some(operation.as_str()));
+        assert_eq!(object.layer_id, editor.document.layers[0].id);
+    }
+
+    #[test]
+    fn boolean_requires_two_closed_shapes() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        assert!(
+            editor
+                .boolean_selection(crate::geometry::BooleanOp::Union)
+                .is_err()
+        );
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(rect);
+        editor.selection.add(line);
+        let error = editor
+            .boolean_selection(crate::geometry::BooleanOp::Union)
+            .unwrap_err();
+        assert!(error.contains("closed"));
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn boolean_without_area_is_rejected() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(10.0, 10.0), Point2::new(14.0, 14.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        let error = editor
+            .boolean_selection(crate::geometry::BooleanOp::Intersection)
+            .unwrap_err();
+        assert!(error.contains("no area"));
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn boolean_is_undoable() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(2.0, 2.0), Point2::new(6.0, 6.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        editor
+            .boolean_selection(crate::geometry::BooleanOp::Union)
+            .unwrap();
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn offset_expands_and_contracts_a_rectangle() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        assert_eq!(editor.offset_selection(2.0).unwrap(), 1);
+        assert!((area_of(&editor, &rect) - 196.0).abs() < 1e-3);
+        assert!(editor.undo());
+        assert_eq!(editor.offset_selection(-2.0).unwrap(), 1);
+        assert!((area_of(&editor, &rect) - 36.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn offset_removes_a_collapsed_shape() {
+        let mut editor = editor();
+        let small = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(small);
+        let error = editor.offset_selection(-5.0).unwrap_err();
+        assert!(error.contains("too large"));
+        assert_eq!(editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn offset_requires_a_selection_and_a_distance() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor.selection.clear();
+        assert!(editor.offset_selection(1.0).is_err());
+        editor.select_all();
+        assert!(editor.offset_selection(0.0).is_err());
+        assert!(editor.offset_selection(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn offset_skips_open_paths() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(line);
+        let error = editor.offset_selection(1.0).unwrap_err();
+        assert!(error.contains("closed"));
     }
 
     #[test]
