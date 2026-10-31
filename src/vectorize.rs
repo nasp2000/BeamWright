@@ -1,6 +1,7 @@
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
 
@@ -71,10 +72,7 @@ pub fn trace(
     while let Some(start) = edges.keys().next().copied() {
         let mut points = vec![start];
         let mut current = start;
-        loop {
-            let Some(next) = edges.get_mut(&current).and_then(Vec::pop) else {
-                break;
-            };
+        while let Some(next) = edges.get_mut(&current).and_then(Vec::pop) {
             points.push(next);
             current = next;
             if current == start {
@@ -87,8 +85,8 @@ pub fn trace(
                 .iter()
                 .map(|(x, y)| {
                     Point2::new(
-                        *x as f64 / width as f64 * width_mm,
-                        height_mm - *y as f64 / height as f64 * height_mm,
+                        f64::from(*x) / width as f64 * width_mm,
+                        height_mm - f64::from(*y) / height as f64 * height_mm,
                     )
                 })
                 .collect();
@@ -203,6 +201,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assert_is_empty)]
     fn an_empty_bitmap_has_no_contours() {
         let image = bitmap(4, 4, vec![false; 16]);
         assert!(trace(&image, 4.0, 4.0, 0.0).is_empty());
