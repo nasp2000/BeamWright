@@ -96,6 +96,10 @@ pub struct ImageSettings {
     pub enhance_amount: f32,
 }
 
+fn default_halftone_angle() -> f64 {
+    22.5
+}
+
 impl Default for ImageSettings {
     fn default() -> Self {
         Self {
