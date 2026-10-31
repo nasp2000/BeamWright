@@ -2423,6 +2423,54 @@ impl EditorState {
         id
     }
 
+    /// Declare that an operation must run after another one, or clear it.
+    ///
+    /// At most one dependency is stored by this command; the model holds a list
+    /// so a project can declare more.
+    pub fn set_operation_dependency(&mut self, id: &str, depends_on: Option<&str>) -> bool {
+        if !self
+            .document
+            .operations
+            .iter()
+            .any(|operation| operation.id == id)
+        {
+            return false;
+        }
+        if let Some(dependency) = depends_on {
+            if dependency == id
+                || !self
+                    .document
+                    .operations
+                    .iter()
+                    .any(|operation| operation.id == dependency)
+            {
+                return false;
+            }
+        }
+        let new_dependencies: Vec<String> = depends_on.map(str::to_string).into_iter().collect();
+        let Some(operation) = self
+            .document
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == id)
+        else {
+            return false;
+        };
+        if operation.depends_on == new_dependencies {
+            return true;
+        }
+        self.record();
+        if let Some(operation) = self
+            .document
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == id)
+        {
+            operation.depends_on = new_dependencies;
+        }
+        true
+    }
+
     /// Duplicate an operation, returning the new id.
     ///
     /// The copy keeps the type and parameters, gets a new identifier and a name
@@ -2570,6 +2618,7 @@ impl EditorState {
             op_type: profile.op_type,
             params: profile.params.clone(),
             enabled: true,
+            depends_on: Vec::new(),
         };
         let id = operation.id.clone();
         self.document.operations.push(operation);
@@ -3450,6 +3499,32 @@ mod tests {
             0
         );
         assert_eq!(editor.assign_operation_to_layer(&layer, Some("missing")), 0);
+    }
+
+    #[test]
+    fn operation_dependencies_can_be_set() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor.add_operation("First", OperationType::Line);
+        let second = editor.add_operation("Second", OperationType::Fill);
+        assert!(editor.set_operation_dependency(&second, Some(&first)));
+        assert_eq!(
+            editor.document.operations[1].depends_on,
+            vec![first.clone()]
+        );
+        assert!(editor.set_operation_dependency(&second, None));
+        assert_eq!(editor.document.operations[1].depends_on.len(), 0);
+        assert!(!editor.set_operation_dependency(&first, Some(&first)));
+        assert!(!editor.set_operation_dependency(&first, Some("missing")));
+        assert!(!editor.set_operation_dependency("missing", None));
+        assert!(editor.undo());
+        assert_eq!(
+            editor.document.operations[1].depends_on,
+            vec![first.clone()]
+        );
+        assert!(editor.undo());
+        assert_eq!(editor.document.operations[1].depends_on.len(), 0);
     }
 
     #[test]

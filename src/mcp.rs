@@ -296,6 +296,17 @@ impl McpServer {
                     .assign_operation_to_layer(&layer, Some(&operation));
                 Ok(json!({"assigned": assigned, "layer": layer}))
             }
+            "set_operation_dependency" => {
+                let operation =
+                    string(arguments, "operation").ok_or_else(|| missing("operation"))?;
+                let depends_on = arguments.get("depends_on").and_then(Value::as_str);
+                if !self.editor.set_operation_dependency(&operation, depends_on) {
+                    return Err(BeamError::InvalidInput(
+                        "cannot set that operation dependency".to_string(),
+                    ));
+                }
+                Ok(json!({"operation": operation}))
+            }
             "duplicate_operation" => {
                 let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
                 let copy = self
@@ -997,6 +1008,14 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["operation"]}),
         ),
         tool_with(
+            "set_operation_dependency",
+            "Make an operation run after another one (omit depends_on to clear).",
+            json!({"type": "object", "properties": {
+                "operation": {"type": "string"},
+                "depends_on": {"type": "string"}
+            }, "required": ["operation"]}),
+        ),
+        tool_with(
             "duplicate_operation",
             "Duplicate an operation, keeping its parameters.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
@@ -1506,6 +1525,50 @@ mod tests {
             .get("error")
             .is_some()
         );
+    }
+
+    #[test]
+    fn operation_dependency_tool() {
+        let mut server = McpServer::new();
+        let first = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "First", "type": "line", "speed": 500.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "Second", "type": "fill", "speed": 900.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let set = call(
+            &mut server,
+            "set_operation_dependency",
+            json!({"operation": second, "depends_on": first}),
+        );
+        assert!(set.get("error").is_none());
+        assert_eq!(
+            server.editor.document.operations[1].depends_on,
+            vec![first.clone()]
+        );
+        let clear = call(
+            &mut server,
+            "set_operation_dependency",
+            json!({"operation": second}),
+        );
+        assert!(clear.get("error").is_none());
+        assert_eq!(server.editor.document.operations[1].depends_on.len(), 0);
+        let bad = call(
+            &mut server,
+            "set_operation_dependency",
+            json!({"operation": second, "depends_on": "missing"}),
+        );
+        assert!(bad.get("error").is_some());
     }
 
     #[test]

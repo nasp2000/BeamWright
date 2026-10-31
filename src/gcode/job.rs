@@ -381,21 +381,55 @@ fn append_contour(toolpath: &mut Toolpath, points: &[Point2]) {
     }
 }
 
-/// Order toolpaths by the position of their operation in the document.
+/// Operation identifiers in execution order.
+///
+/// The panel order breaks ties, but an operation never runs before one it
+/// depends on. Dependencies on operations that no longer exist are ignored here;
+/// [`Document::validate`] rejects them before a job is written.
+pub fn ordered_operation_ids(document: &Document) -> Vec<String> {
+    let mut emitted: Vec<String> = Vec::new();
+    let mut remaining: Vec<usize> = (0..document.operations.len()).collect();
+    while !remaining.is_empty() {
+        let mut progressed = false;
+        for (position, index) in remaining.iter().enumerate() {
+            let operation = &document.operations[*index];
+            let ready = operation.depends_on.iter().all(|dependency| {
+                !document
+                    .operations
+                    .iter()
+                    .any(|candidate| candidate.id == *dependency)
+                    || emitted.iter().any(|id| id == dependency)
+            });
+            if ready {
+                emitted.push(operation.id.clone());
+                remaining.remove(position);
+                progressed = true;
+                break;
+            }
+        }
+        if !progressed {
+            // A cycle should have been rejected by validation; keep the panel
+            // order for whatever remains instead of looping.
+            for index in remaining {
+                emitted.push(document.operations[index].id.clone());
+            }
+            break;
+        }
+    }
+    emitted
+}
+
+/// Order toolpaths by the position of their operation in execution order.
 ///
 /// The sort is stable, so objects inside one operation keep their document
 /// order, and toolpaths without an operation come last.
 pub fn order_by_operation(toolpaths: &mut [Toolpath], document: &Document) {
+    let order = ordered_operation_ids(document);
     let rank = |toolpath: &Toolpath| {
         toolpath
             .operation_id
             .as_deref()
-            .and_then(|id| {
-                document
-                    .operations
-                    .iter()
-                    .position(|operation| operation.id == id)
-            })
+            .and_then(|id| order.iter().position(|ordered| ordered == id))
             .unwrap_or(usize::MAX)
     };
     toolpaths.sort_by_key(rank);
@@ -511,6 +545,7 @@ pub fn planned_toolpaths(
 
 /// Generate the G-code text and a report without writing a file.
 pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, JobReport)> {
+    document.validate().map_err(BeamError::InvalidInput)?;
     let (toolpaths, warnings) = planned_toolpaths(document, options);
     validate_bounds(document, &toolpaths)?;
     for toolpath in &toolpaths {
@@ -587,6 +622,31 @@ mod tests {
     }
 
     #[test]
+    fn dependencies_override_the_panel_order() {
+        let mut document = two_operation_document();
+        document.operations.swap(0, 1);
+        if let Some(engrave) = document
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == "engrave")
+        {
+            engrave.depends_on = vec!["cut".to_string()];
+        }
+        assert_eq!(
+            ordered_operation_ids(&document),
+            vec!["cut".to_string(), "engrave".to_string()]
+        );
+        let options = JobOptions {
+            assisted_ordering: false,
+            ..JobOptions::default()
+        };
+        let (text, _) = render_job(&document, &options).unwrap();
+        let cut = text.find("F500 S800").expect("cut feed");
+        let engrave = text.find("F3000 S150").expect("engrave feed");
+        assert!(cut < engrave);
+    }
+
+    #[test]
     fn operation_parameters_are_applied() {
         let mut document = document_with_rect();
         let operation = Operation {
@@ -601,6 +661,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         };
         document.operations.push(operation);
         document.objects[0].operation_id = Some("op-1".to_string());
@@ -618,6 +679,7 @@ mod tests {
             op_type: OperationType::OutlineCutting,
             params: OperationParams::default(),
             enabled: false,
+            depends_on: Vec::new(),
         });
         document.objects[0].operation_id = Some("op-1".to_string());
         let (toolpaths, warnings) = build_toolpaths(&document);
@@ -661,6 +723,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         });
         document.objects[0].operation_id = Some("fill".to_string());
         let (toolpaths, _) = build_toolpaths(&document);
@@ -721,6 +784,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         });
         document.operations.push(Operation {
             id: "engrave".to_string(),
@@ -734,6 +798,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         });
         document
     }
@@ -814,6 +879,7 @@ mod tests {
             op_type: OperationType::Fill,
             params,
             enabled: true,
+            depends_on: Vec::new(),
         });
         let mut object = Object::new(
             layer_id,
@@ -921,6 +987,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         };
         document.operations.push(operation);
         let mut object = Object::new(
@@ -962,6 +1029,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         });
         let mut object = Object::new(
             layer_id,
@@ -1040,6 +1108,7 @@ mod tests {
                 ..OperationParams::default()
             },
             enabled: true,
+            depends_on: Vec::new(),
         });
         document.objects[0].operation_id = Some("engrave".to_string());
         document

@@ -188,6 +188,51 @@ impl Document {
             }
         }
 
+        for operation in &self.operations {
+            for dependency in &operation.depends_on {
+                if !operation_ids.contains(dependency.as_str()) {
+                    return Err(format!(
+                        "operation {} depends on missing operation {dependency}",
+                        operation.id
+                    ));
+                }
+            }
+        }
+        // Kahn's algorithm: every operation must become ready, otherwise the
+        // dependency graph contains a cycle.
+        let mut pending: std::collections::HashMap<&str, usize> = self
+            .operations
+            .iter()
+            .map(|operation| (operation.id.as_str(), operation.depends_on.len()))
+            .collect();
+        let mut ready: std::collections::VecDeque<&str> = self
+            .operations
+            .iter()
+            .filter(|operation| operation.depends_on.is_empty())
+            .map(|operation| operation.id.as_str())
+            .collect();
+        let mut resolved = 0;
+        while let Some(id) = ready.pop_front() {
+            resolved += 1;
+            for operation in &self.operations {
+                if operation
+                    .depends_on
+                    .iter()
+                    .any(|dependency| dependency == id)
+                {
+                    if let Some(count) = pending.get_mut(operation.id.as_str()) {
+                        *count -= 1;
+                        if *count == 0 {
+                            ready.push_back(operation.id.as_str());
+                        }
+                    }
+                }
+            }
+        }
+        if resolved < self.operations.len() {
+            return Err("operation dependencies contain a cycle".to_string());
+        }
+
         let mut object_ids = std::collections::HashSet::new();
         for object in &self.objects {
             object.validate()?;
@@ -315,6 +360,35 @@ mod tests {
                 corner_radius: 0.0,
             },
         )
+    }
+
+    #[test]
+    fn operation_dependencies_are_validated() {
+        let mut document = Document::default();
+        let first = Operation::new("First", crate::operations::OperationType::Line);
+        let mut second = Operation::new("Second", crate::operations::OperationType::Fill);
+        let first_id = first.id.clone();
+        let second_id = second.id.clone();
+        second.depends_on = vec![first_id];
+        document.operations.push(first);
+        document.operations.push(second);
+        assert!(document.validate().is_ok());
+
+        document.operations[1].depends_on = vec!["missing".to_string()];
+        assert!(
+            document
+                .validate()
+                .unwrap_err()
+                .contains("missing operation")
+        );
+
+        document.operations[1].depends_on = vec![second_id];
+        assert!(document.validate().is_err());
+
+        document.operations[0].depends_on = vec![document.operations[1].id.clone()];
+        document.operations[1].depends_on = vec![document.operations[0].id.clone()];
+        let error = document.validate().unwrap_err();
+        assert!(error.contains("cycle"), "{error}");
     }
 
     #[test]

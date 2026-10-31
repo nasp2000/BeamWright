@@ -86,6 +86,9 @@ pub struct Operation {
     pub op_type: OperationType,
     pub params: OperationParams,
     pub enabled: bool,
+    /// Operations that must run before this one.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 impl Operation {
@@ -96,6 +99,7 @@ impl Operation {
             op_type,
             params: OperationParams::default(),
             enabled: true,
+            depends_on: Vec::new(),
         }
     }
 
@@ -127,6 +131,17 @@ impl Operation {
         if !self.params.fill_offset_mm.is_finite() {
             return Err("fill offset must be finite".to_string());
         }
+        for (index, dependency) in self.depends_on.iter().enumerate() {
+            if dependency.trim().is_empty() {
+                return Err("operation dependencies must not be empty".to_string());
+            }
+            if dependency == &self.id {
+                return Err("an operation cannot depend on itself".to_string());
+            }
+            if self.depends_on[..index].contains(dependency) {
+                return Err(format!("duplicate operation dependency: {dependency}"));
+            }
+        }
         Ok(())
     }
 }
@@ -142,6 +157,7 @@ mod tests {
             op_type: OperationType::OutlineCutting,
             params: OperationParams::default(),
             enabled: true,
+            depends_on: Vec::new(),
         }
     }
 

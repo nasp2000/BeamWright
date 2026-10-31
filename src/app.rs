@@ -134,6 +134,7 @@ pub struct BeamWrightApp {
     show_layers_panel: bool,
     show_properties_panel: bool,
     doc_properties_open: bool,
+    operations_compare_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
     recover_next: bool,
@@ -388,6 +389,7 @@ impl BeamWrightApp {
             show_layers_panel: true,
             show_properties_panel: true,
             doc_properties_open: false,
+            operations_compare_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
             recover_next: false,
@@ -622,6 +624,44 @@ impl BeamWrightApp {
                     });
             });
         self.doc_properties_open = open;
+    }
+
+    fn operations_compare_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.operations_compare_open;
+        egui::Window::new("Compare operations")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                if self.editor.document.operations.is_empty() {
+                    ui.weak("No operations yet.");
+                    return;
+                }
+                egui::Grid::new("operations_compare")
+                    .num_columns(7)
+                    .striped(true)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        for heading in [
+                            "Name", "Type", "Speed", "Power", "Passes", "Interval", "Enabled",
+                        ] {
+                            ui.strong(heading);
+                        }
+                        ui.end_row();
+                        for operation in &self.editor.document.operations {
+                            ui.label(&operation.name);
+                            ui.label(operation.op_type.label());
+                            ui.label(format!("{:.0} mm/min", operation.params.speed));
+                            ui.label(format!("{:.0} %", operation.params.power));
+                            ui.label(operation.params.passes.to_string());
+                            ui.label(format!("{:.2} mm", operation.params.line_interval_mm));
+                            ui.label(if operation.enabled { "yes" } else { "no" });
+                            ui.end_row();
+                        }
+                    });
+            });
+        self.operations_compare_open = open;
     }
 
     fn open_path(&mut self, path: &Path) {
@@ -1210,6 +1250,10 @@ impl BeamWrightApp {
                         self.active_operation = Some(id);
                         ui.close();
                     }
+                    if ui.button("Compare operations...").clicked() {
+                        self.operations_compare_open = true;
+                        ui.close();
+                    }
                     if ui.button("Preview and G-code...").clicked() {
                         self.open_preview();
                         ui.close();
@@ -1639,6 +1683,10 @@ impl BeamWrightApp {
                     ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
                     ui.checkbox(&mut self.show_layers_panel, "Layers panel (F9)");
                     ui.checkbox(&mut self.show_properties_panel, "Properties panel (F10)");
+                    if ui.button("Compare operations...").clicked() {
+                        self.operations_compare_open = true;
+                        ui.close();
+                    }
                     if ui.button("Preview and G-code...").clicked() {
                         self.open_preview();
                         ui.close();
@@ -2020,6 +2068,7 @@ impl BeamWrightApp {
         let mut copy_parameters = false;
         let mut paste_parameters = false;
         let mut save_as_profile = false;
+        let mut dependency_choice: Option<Option<String>> = None;
         if let Some(active) = self.active_operation.clone() {
             if let Some(operation) = self
                 .editor
@@ -2039,6 +2088,40 @@ impl BeamWrightApp {
                         }
                     });
                 operation.op_type = op_type;
+                ui.horizontal(|ui| {
+                    ui.label("Runs after");
+                    let selected = operation.depends_on.first().cloned();
+                    let selected_text = selected
+                        .as_ref()
+                        .and_then(|id| {
+                            operations
+                                .iter()
+                                .find(|(operation_id, ..)| operation_id == id)
+                                .map(|(_, name, ..)| name.clone())
+                        })
+                        .unwrap_or_else(|| "None".to_string());
+                    egui::ComboBox::from_id_salt("operation_dependency")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(selected.is_none(), "None").clicked() {
+                                dependency_choice = Some(None);
+                            }
+                            for (id, name, ..) in &operations {
+                                if *id == active {
+                                    continue;
+                                }
+                                if ui
+                                    .selectable_label(
+                                        selected.as_deref() == Some(id.as_str()),
+                                        name,
+                                    )
+                                    .clicked()
+                                {
+                                    dependency_choice = Some(Some(id.clone()));
+                                }
+                            }
+                        });
+                });
                 ui.horizontal(|ui| {
                     ui.label("Speed");
                     ui.add(
@@ -2168,6 +2251,12 @@ impl BeamWrightApp {
                     self.status = format!("Cleared operation on {changed} layer object(s)");
                 }
             });
+        }
+        if let Some(choice) = dependency_choice {
+            if let Some(active) = self.active_operation.clone() {
+                self.editor
+                    .set_operation_dependency(&active, choice.as_deref());
+            }
         }
         if let Some(active) = self.active_operation.clone() {
             if copy_parameters {
@@ -5011,6 +5100,9 @@ impl BeamWrightApp {
         }
         if self.doc_properties_open {
             self.document_properties_window(ctx);
+        }
+        if self.operations_compare_open {
+            self.operations_compare_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);
