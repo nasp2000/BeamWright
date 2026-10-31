@@ -1,14 +1,31 @@
 use crate::document::Document;
 
-/// Snapshot-based undo/redo.
+/// One undo step: the document state before a change, plus the action name.
+#[derive(Debug, Clone)]
+struct Entry {
+    document: Document,
+    action: String,
+}
+
+impl Entry {
+    fn new(document: &Document, action: &str) -> Self {
+        Self {
+            document: document.clone(),
+            action: action.to_string(),
+        }
+    }
+}
+
+/// Snapshot-based undo/redo with readable action names.
 ///
-/// Each entry is a complete document state. Documents are small enough for the
-/// editor's scope, and snapshots cannot drift out of sync the way hand-written
-/// inverse commands can.
+/// Each entry is a complete document state plus the name of the change that
+/// produced the next state. Documents are small enough for the editor's scope,
+/// and snapshots cannot drift out of sync the way hand-written inverse commands
+/// can.
 #[derive(Debug, Clone)]
 pub struct History {
-    undo: Vec<Document>,
-    redo: Vec<Document>,
+    undo: Vec<Entry>,
+    redo: Vec<Entry>,
     limit: usize,
 }
 
@@ -27,35 +44,48 @@ impl History {
         }
     }
 
-    /// Record the state *before* a change. Repeated identical snapshots are
-    /// ignored so a click without a drag does not create an empty undo step.
-    pub fn record(&mut self, document: &Document) {
-        if self.undo.last() == Some(document) {
+    /// Record the state *before* a change and the name of the change.
+    ///
+    /// Repeated identical snapshots are ignored so a click without a drag does
+    /// not create an empty undo step.
+    pub fn record(&mut self, document: &Document, action: &str) {
+        if self
+            .undo
+            .last()
+            .is_some_and(|entry| &entry.document == document)
+        {
             return;
         }
-        self.undo.push(document.clone());
+        self.undo.push(Entry::new(document, action));
         if self.undo.len() > self.limit {
             self.undo.remove(0);
         }
         self.redo.clear();
     }
 
-    /// Restore the previous state. Returns `false` when there is nothing to
-    /// undo, leaving `document` untouched.
-    pub fn undo(&mut self, document: &mut Document) -> bool {
-        let Some(previous) = self.undo.pop() else {
-            return false;
-        };
-        self.redo.push(std::mem::replace(document, previous));
-        true
+    /// Restore the previous state. Returns the name of the undone action, or
+    /// `None` when there is nothing to undo.
+    pub fn undo(&mut self, document: &mut Document) -> Option<String> {
+        let entry = self.undo.pop()?;
+        let action = entry.action.clone();
+        let current = std::mem::replace(document, entry.document);
+        self.redo.push(Entry {
+            document: current,
+            action: action.clone(),
+        });
+        Some(action)
     }
 
-    pub fn redo(&mut self, document: &mut Document) -> bool {
-        let Some(next) = self.redo.pop() else {
-            return false;
-        };
-        self.undo.push(std::mem::replace(document, next));
-        true
+    /// Reapply the last undone state. Returns the name of the redone action.
+    pub fn redo(&mut self, document: &mut Document) -> Option<String> {
+        let entry = self.redo.pop()?;
+        let action = entry.action.clone();
+        let current = std::mem::replace(document, entry.document);
+        self.undo.push(Entry {
+            document: current,
+            action: action.clone(),
+        });
+        Some(action)
     }
 
     pub fn clear(&mut self) {
@@ -69,6 +99,16 @@ impl History {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// Name of the action that [`Self::undo`] would revert.
+    pub fn undo_label(&self) -> Option<&str> {
+        self.undo.last().map(|entry| entry.action.as_str())
+    }
+
+    /// Name of the action that [`Self::redo`] would reapply.
+    pub fn redo_label(&self) -> Option<&str> {
+        self.redo.last().map(|entry| entry.action.as_str())
     }
 
     pub fn undo_len(&self) -> usize {
@@ -105,54 +145,83 @@ mod tests {
     fn undo_and_redo_restore_snapshots() {
         let mut document = Document::default();
         let mut history = History::new(10);
-        history.record(&document);
+        history.record(&document, "Draw rectangle");
         document = document_with_rect();
         assert_eq!(document.objects.len(), 1);
 
-        assert!(history.undo(&mut document));
+        assert_eq!(
+            history.undo(&mut document).as_deref(),
+            Some("Draw rectangle")
+        );
         assert!(document.objects.is_empty());
         assert!(history.can_redo());
 
-        assert!(history.redo(&mut document));
+        assert_eq!(
+            history.redo(&mut document).as_deref(),
+            Some("Draw rectangle")
+        );
         assert_eq!(document.objects.len(), 1);
+    }
+
+    #[test]
+    fn labels_track_the_next_undo_and_redo() {
+        let mut document = Document::default();
+        let mut history = History::new(10);
+        assert_eq!(history.undo_label(), None);
+        assert_eq!(history.redo_label(), None);
+
+        history.record(&document, "Move");
+        document = document_with_rect();
+        assert_eq!(history.undo_label(), Some("Move"));
+
+        assert_eq!(history.undo(&mut document).as_deref(), Some("Move"));
+        assert_eq!(history.undo_label(), None);
+        assert_eq!(history.redo_label(), Some("Move"));
+
+        assert_eq!(history.redo(&mut document).as_deref(), Some("Move"));
+        assert_eq!(history.undo_label(), Some("Move"));
+        assert_eq!(history.redo_label(), None);
     }
 
     #[test]
     fn new_edit_clears_redo() {
         let mut document = Document::default();
         let mut history = History::new(10);
-        history.record(&document);
+        history.record(&document, "Move");
         document = document_with_rect();
-        assert!(history.undo(&mut document));
-        history.record(&document);
+        assert!(history.undo(&mut document).is_some());
+        history.record(&document, "Delete");
         assert!(!history.can_redo());
+        assert_eq!(history.undo_label(), Some("Delete"));
     }
 
     #[test]
     fn duplicate_snapshots_are_ignored() {
         let document = Document::default();
         let mut history = History::new(10);
-        history.record(&document);
-        history.record(&document);
+        history.record(&document, "Move");
+        history.record(&document, "Move again");
         assert_eq!(history.undo_len(), 1);
+        assert_eq!(history.undo_label(), Some("Move"));
     }
 
     #[test]
     fn undo_on_empty_history_is_a_no_op() {
         let mut document = Document::default();
         let mut history = History::new(10);
-        assert!(!history.undo(&mut document));
-        assert!(!history.redo(&mut document));
+        assert_eq!(history.undo(&mut document), None);
+        assert_eq!(history.redo(&mut document), None);
     }
 
     #[test]
     fn limit_drops_oldest_snapshot() {
         let mut document = Document::default();
         let mut history = History::new(2);
-        for _ in 0..5 {
-            history.record(&document);
+        for action in ["One", "Two", "Three", "Four", "Five"] {
+            history.record(&document, action);
             document.name.push('x');
         }
         assert_eq!(history.undo_len(), 2);
+        assert_eq!(history.undo_label(), Some("Five"));
     }
 }

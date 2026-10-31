@@ -736,15 +736,31 @@ impl BeamWrightApp {
     }
 
     fn undo(&mut self) {
-        if self.editor.undo() {
-            self.status = "Undo".to_string();
-        }
+        self.status = match self.editor.undo() {
+            Some(action) => format!("Undo {action}"),
+            None => "Nothing to undo".to_string(),
+        };
     }
 
     fn redo(&mut self) {
-        if self.editor.redo() {
-            self.status = "Redo".to_string();
-        }
+        self.status = match self.editor.redo() {
+            Some(action) => format!("Redo {action}"),
+            None => "Nothing to redo".to_string(),
+        };
+    }
+
+    fn undo_label(&self) -> String {
+        self.editor
+            .history
+            .undo_label()
+            .map_or_else(|| "Undo".to_string(), |action| format!("Undo {action}"))
+    }
+
+    fn redo_label(&self) -> String {
+        self.editor
+            .history
+            .redo_label()
+            .map_or_else(|| "Redo".to_string(), |action| format!("Redo {action}"))
     }
 
     fn shortcuts(&mut self, ui: &Ui) {
@@ -1060,14 +1076,20 @@ impl BeamWrightApp {
                 });
                 ui.menu_button("Edit", |ui| {
                     if ui
-                        .add_enabled(self.editor.history.can_undo(), egui::Button::new("Undo"))
+                        .add_enabled(
+                            self.editor.history.can_undo(),
+                            egui::Button::new(self.undo_label()),
+                        )
                         .clicked()
                     {
                         self.undo();
                         ui.close();
                     }
                     if ui
-                        .add_enabled(self.editor.history.can_redo(), egui::Button::new("Redo"))
+                        .add_enabled(
+                            self.editor.history.can_redo(),
+                            egui::Button::new(self.redo_label()),
+                        )
                         .clicked()
                     {
                         self.redo();
@@ -1736,13 +1758,19 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(self.editor.history.can_undo(), egui::Button::new("Undo"))
+                    .add_enabled(
+                        self.editor.history.can_undo(),
+                        egui::Button::new(self.undo_label()),
+                    )
                     .clicked()
                 {
                     self.undo();
                 }
                 if ui
-                    .add_enabled(self.editor.history.can_redo(), egui::Button::new("Redo"))
+                    .add_enabled(
+                        self.editor.history.can_redo(),
+                        egui::Button::new(self.redo_label()),
+                    )
                     .clicked()
                 {
                     self.redo();
@@ -1932,7 +1960,7 @@ impl BeamWrightApp {
                     ui.colored_label(Color32::from_rgb(200, 60, 60), message);
                 }
                 if self.editor.document != before {
-                    self.editor.history.record(&before);
+                    self.editor.history.record(&before, "Edit layer");
                 }
                 ui.separator();
                 ui.label(format!(
@@ -2306,7 +2334,7 @@ impl BeamWrightApp {
             }
         }
         if self.editor.document != before {
-            self.editor.history.record(&before);
+            self.editor.history.record(&before, "Edit operation");
         }
     }
 
@@ -2332,7 +2360,7 @@ impl BeamWrightApp {
                     }
                 });
                 if self.editor.document != before {
-                    self.editor.history.record(&before);
+                    self.editor.history.record(&before, "Edit properties");
                 }
             });
     }
@@ -3295,7 +3323,7 @@ impl BeamWrightApp {
                 let dy = point.y - last.y;
                 if dx.abs() > 1e-9 || dy.abs() > 1e-9 {
                     if !*recorded {
-                        self.editor.record();
+                        self.editor.record_action("Move");
                         *recorded = true;
                     }
                     self.editor.move_selection(dx, dy);
@@ -3307,7 +3335,7 @@ impl BeamWrightApp {
                 let dy = point.y - last.y;
                 if dx.abs() > 1e-9 || dy.abs() > 1e-9 {
                     if !*recorded {
-                        self.editor.record();
+                        self.editor.record_action("Move node");
                         *recorded = true;
                     }
                     self.editor.move_selected_nodes(dx, dy);
@@ -3320,7 +3348,7 @@ impl BeamWrightApp {
                 recorded,
             } => {
                 if !*recorded {
-                    self.editor.record();
+                    self.editor.record_action("Edit handle");
                     *recorded = true;
                 }
                 self.editor.set_node_handle(*node, *outgoing, point);
@@ -5251,6 +5279,7 @@ fn preview_color_image(bitmap: &crate::raster::RasterBitmap) -> egui::ColorImage
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::Point2;
 
     #[test]
     fn preview_marks_burn_black() {
@@ -5288,5 +5317,21 @@ mod tests {
         let image = preview_color_image(&bitmap);
         assert_eq!(image.size, [1, 1]);
         assert_eq!(image.pixels[0], egui::Color32::BLACK);
+    }
+
+    #[test]
+    fn undo_status_names_the_action() {
+        let mut app = BeamWrightApp::new(None);
+        app.editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        app.editor.record_action("Move");
+        app.editor.move_selection(2.0, 0.0);
+
+        assert_eq!(app.undo_label(), "Undo Move");
+        app.undo();
+        assert_eq!(app.status, "Undo Move");
+        assert_eq!(app.redo_label(), "Redo Move");
+        app.redo();
+        assert_eq!(app.status, "Redo Move");
     }
 }

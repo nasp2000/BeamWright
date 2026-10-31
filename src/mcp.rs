@@ -854,7 +854,8 @@ impl McpServer {
             .find(|layer| !layer.locked)
             .map(|layer| layer.id.clone())
             .ok_or_else(|| BeamError::InvalidInput("no unlocked layer".to_string()))?;
-        self.editor.record();
+        self.editor
+            .record_action(&format!("Draw {}", shape.kind_name()));
         let object = Object::new(layer_id, shape).with_transform(transform);
         let id = object.id.clone();
         self.editor.document.add_object(object);

@@ -30,7 +30,7 @@ impl EditorState {
         if world.is_empty() {
             return Err(format!("'{}' has no geometry", object.name));
         }
-        self.record();
+        self.record_action("Edit nodes");
         if let Some(object) = self.document.object_mut(object_id) {
             object.shape = Shape::Path(world);
             object.transform = Transform2::identity();
@@ -87,7 +87,7 @@ impl EditorState {
     }
 
     fn record_node_edit(&mut self) {
-        self.record();
+        self.record_action("Edit node");
     }
 
     /// Nearest point on the edited path, as a segment index and parameter.
@@ -189,7 +189,7 @@ impl EditorState {
         if self.node_selection.is_empty() || (dx == 0.0 && dy == 0.0) {
             return false;
         }
-        self.record();
+        self.record_action("Nudge node");
         self.move_selected_nodes(dx, dy)
     }
 
@@ -477,7 +477,7 @@ mod tests {
         let points = editor.node_points();
         assert_eq!(points.len(), 4);
         assert!(points.contains(&Point2::new(15.0, 10.0)));
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(
             editor.document.object(&rect).unwrap().transform,
             Transform2::translate(5.0, 5.0)
@@ -536,7 +536,7 @@ mod tests {
         let (min, max) = editor.document.object(&path).unwrap().bounds().unwrap();
         assert!((max.x - 15.0).abs() < 1e-9);
         assert!((min.y).abs() < 1e-9);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert!(editor.node_points().contains(&Point2::new(10.0, 10.0)));
     }
 

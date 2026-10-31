@@ -185,7 +185,13 @@ impl EditorState {
     }
 
     pub fn record(&mut self) {
-        self.history.record(&self.document);
+        self.record_action("Edit");
+    }
+
+    /// Record the state before a change together with a user-facing action
+    /// name, so undo and redo can say what they will do.
+    pub fn record_action(&mut self, action: &str) {
+        self.history.record(&self.document, action);
     }
 
     pub fn set_document(&mut self, document: Document) {
@@ -525,7 +531,7 @@ impl EditorState {
         if paths.is_empty() {
             return Err("the text has no printable characters".to_string());
         }
-        self.record();
+        self.record_action("Text to outlines");
         let mut style = object.style.clone();
         if style.fill.is_none() && style.stroke.is_none() {
             style.fill = Some("#000000".to_string());
@@ -585,7 +591,7 @@ impl EditorState {
         if paths.is_empty() {
             return Err("the text could not be placed on the path".to_string());
         }
-        self.record();
+        self.record_action("Fit text to path");
         let mut style = text_object.style.clone();
         if style.fill.is_none() && style.stroke.is_none() {
             style.fill = Some("#000000".to_string());
@@ -655,7 +661,7 @@ impl EditorState {
         if layer.locked || !layer.visible {
             return None;
         }
-        self.record();
+        self.record_action(&format!("Draw {}", shape.kind_name()));
         let object = Object::new(self.active_layer_id.clone(), shape).with_transform(transform);
         let id = object.id.clone();
         self.document.add_object(object);
@@ -755,7 +761,7 @@ impl EditorState {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        self.record();
+        self.record_action("Boolean");
         let template = self.document.objects[first_index].clone();
         self.document.objects.remove(second_index);
         self.document.objects.remove(first_index);
@@ -899,7 +905,7 @@ impl EditorState {
         if remove.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Remove duplicates");
         let count = remove.len();
         self.selection.clear();
         for id in remove {
@@ -1090,7 +1096,7 @@ impl EditorState {
             return Err("Nothing crosses the trimmer".to_string());
         }
 
-        self.record();
+        self.record_action("Trim");
         self.selection.clear();
         let mut objects = Vec::with_capacity(self.document.objects.len());
         let mut plan = plans.into_iter().peekable();
@@ -1163,7 +1169,7 @@ impl EditorState {
             return Err("No overlapping segments found".to_string());
         }
 
-        self.record();
+        self.record_action("Delete overlapping segments");
         self.selection.clear();
         let mut objects = Vec::with_capacity(self.document.objects.len());
         let mut changed = 0;
@@ -1226,7 +1232,7 @@ impl EditorState {
             outlined.push(Outlined { index, contours });
         }
         let created: usize = outlined.iter().map(|entry| entry.contours.len()).sum();
-        self.record();
+        self.record_action("Outline stroke");
         self.selection.clear();
         let mut templates: Vec<(usize, Object, Vec<OutlineContour>)> = outlined
             .into_iter()
@@ -1323,7 +1329,7 @@ impl EditorState {
             joined.append(&path);
         }
 
-        self.record();
+        self.record_action("Join paths");
         let template = self.document.objects[first_index].clone();
         let mut insert_at = indices[0];
         for index in indices.iter().rev() {
@@ -1359,7 +1365,7 @@ impl EditorState {
         if closable.is_empty() {
             return Err("No open paths selected".to_string());
         }
-        self.record();
+        self.record_action("Close paths");
         let count = closable.len();
         for index in closable {
             if let Shape::Path(path) = &mut self.document.objects[index].shape {
@@ -1413,7 +1419,7 @@ impl EditorState {
             return Err("The offset is too large; no shape would remain".to_string());
         }
 
-        self.record();
+        self.record_action("Offset");
         let mut removed = Vec::new();
         for (index, points, collapsed) in &updates {
             if *collapsed {
@@ -1531,7 +1537,7 @@ impl EditorState {
         if self.selection.len() < 2 {
             return false;
         }
-        self.record();
+        self.record_action("Group");
         let group = uuid::Uuid::new_v4().to_string();
         let ids = self.selection.ids().to_vec();
         for id in ids {
@@ -1555,7 +1561,7 @@ impl EditorState {
         if !grouped {
             return false;
         }
-        self.record();
+        self.record_action("Ungroup");
         let ids = self.selection.ids().to_vec();
         for id in ids {
             if let Some(object) = self.document.object_mut(&id) {
@@ -1636,7 +1642,7 @@ impl EditorState {
     }
 
     /// Apply a transform around the selection centre.
-    fn transform_selection(&mut self, transform: Transform2) -> bool {
+    fn transform_selection(&mut self, transform: Transform2, action: &str) -> bool {
         if self.selection.is_empty() {
             return false;
         }
@@ -1657,7 +1663,7 @@ impl EditorState {
             back.compose(&transform.compose(&moved))
         };
         let combined = around(centre_for(min, max));
-        self.record();
+        self.record_action(action);
         let ids = self.selection.ids().to_vec();
         let mut changed = false;
         for id in ids {
@@ -1691,7 +1697,7 @@ impl EditorState {
 
     /// Rotate the selection by `radians` around its centre.
     pub fn rotate_selection(&mut self, radians: f64) -> bool {
-        self.transform_selection(Transform2::rotate(radians))
+        self.transform_selection(Transform2::rotate(radians), "Rotate")
     }
 
     /// Scale the selection around its centre.
@@ -1699,7 +1705,7 @@ impl EditorState {
         if sx <= 0.0 || sy <= 0.0 {
             return false;
         }
-        self.transform_selection(Transform2::scale(sx, sy))
+        self.transform_selection(Transform2::scale(sx, sy), "Scale")
     }
 
     /// Mirror the selection around its centre.
@@ -1731,7 +1737,7 @@ impl EditorState {
             sx = factor;
             sy = factor;
         }
-        self.transform_selection(Transform2::scale(sx, sy))
+        self.transform_selection(Transform2::scale(sx, sy), "Resize")
     }
 
     /// Shear the selection around its centre, in degrees per axis.
@@ -1752,7 +1758,7 @@ impl EditorState {
             tx: 0.0,
             ty: 0.0,
         };
-        self.transform_selection(skew)
+        self.transform_selection(skew, "Skew")
     }
 
     /// Bake each selected object's transform into its geometry.
@@ -1763,7 +1769,7 @@ impl EditorState {
         if self.selection.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Reset transforms");
         let ids = self.selection.ids().to_vec();
         let mut reset = 0;
         for id in ids {
@@ -1793,7 +1799,14 @@ impl EditorState {
         } else {
             Transform2::scale(1.0, -1.0)
         };
-        self.transform_selection(transform)
+        self.transform_selection(
+            transform,
+            if horizontal {
+                "Flip horizontally"
+            } else {
+                "Flip vertically"
+            },
+        )
     }
 
     /// Align the selection. A single object aligns to the work area; several
@@ -1840,7 +1853,7 @@ impl EditorState {
                 ),
             }
         };
-        self.record();
+        self.record_action("Align");
         for (id, min, max) in bounds {
             let (dx, dy) = delta(min, max);
             if dx.abs() < 1e-9 && dy.abs() < 1e-9 {
@@ -1882,7 +1895,7 @@ impl EditorState {
         let first = items[0].1;
         let last = items[items.len() - 1].1;
         let step = (last - first) / (items.len() - 1) as f64;
-        self.record();
+        self.record_action("Distribute");
         for (index, (id, center)) in items.iter().enumerate() {
             let target = first + step * index as f64;
             let delta = target - center;
@@ -1904,7 +1917,7 @@ impl EditorState {
         if self.selection.is_empty() {
             return;
         }
-        self.record();
+        self.record_action("Delete");
         let ids = self.selection.ids().to_vec();
         for id in &ids {
             self.document.remove_object(id);
@@ -1916,7 +1929,7 @@ impl EditorState {
         if self.selection.is_empty() {
             return;
         }
-        self.record();
+        self.record_action("Duplicate");
         let ids = self.selection.ids().to_vec();
         let mut new_ids = Vec::new();
         for id in ids {
@@ -1950,7 +1963,7 @@ impl EditorState {
         if objects.is_empty() {
             return objects;
         }
-        self.record();
+        self.record_action("Cut");
         for object in &objects {
             self.document.remove_object(&object.id);
         }
@@ -1966,7 +1979,7 @@ impl EditorState {
         if objects.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Paste");
         let fallback_layer = self.document.layers.first().map(|layer| layer.id.clone());
         let mut pasted = Vec::new();
         for source in objects {
@@ -2027,7 +2040,7 @@ impl EditorState {
         if self.selection.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action(if locked { "Lock" } else { "Unlock" });
         let ids = self.selection.ids().to_vec();
         let mut changed = 0;
         for id in ids {
@@ -2083,7 +2096,7 @@ impl EditorState {
         if sources.is_empty() {
             return Err("The selection is empty".to_string());
         }
-        self.record();
+        self.record_action("Repeat");
         let mut created = Vec::new();
         for copy in 1..=options.copies {
             #[allow(clippy::cast_precision_loss)]
@@ -2166,7 +2179,7 @@ impl EditorState {
         {
             return 0;
         }
-        self.record();
+        self.record_action("Grid duplicate");
         let originals: Vec<Object> = self
             .selection
             .ids()
@@ -2214,26 +2227,22 @@ impl EditorState {
         if self.selection.is_empty() {
             return;
         }
-        self.record();
+        self.record_action("Nudge");
         self.move_selection(dx, dy);
     }
 
-    pub fn undo(&mut self) -> bool {
-        if self.history.undo(&mut self.document) {
-            self.prune_selection();
-            true
-        } else {
-            false
-        }
+    /// Undo one step and return the action name that was reverted.
+    pub fn undo(&mut self) -> Option<String> {
+        let action = self.history.undo(&mut self.document)?;
+        self.prune_selection();
+        Some(action)
     }
 
-    pub fn redo(&mut self) -> bool {
-        if self.history.redo(&mut self.document) {
-            self.prune_selection();
-            true
-        } else {
-            false
-        }
+    /// Redo one step and return the action name that was reapplied.
+    pub fn redo(&mut self) -> Option<String> {
+        let action = self.history.redo(&mut self.document)?;
+        self.prune_selection();
+        Some(action)
     }
 
     fn prune_selection(&mut self) {
@@ -2279,7 +2288,11 @@ impl EditorState {
         if self.selection.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action(if to_front {
+            "Bring to front"
+        } else {
+            "Send to back"
+        });
         let (selected, others): (Vec<Object>, Vec<Object>) = self
             .document
             .objects
@@ -2332,7 +2345,7 @@ impl EditorState {
         };
         #[allow(clippy::cast_precision_loss)]
         let count = items.len() as f64;
-        self.record();
+        self.record_action("Distribute on page");
         for (position, (id, centre)) in items.iter().enumerate() {
             #[allow(clippy::cast_precision_loss)]
             let target = span * (position as f64 + 1.0) / (count + 1.0);
@@ -2358,7 +2371,7 @@ impl EditorState {
         if center.distance(page) <= 1e-9 {
             return true;
         }
-        self.record();
+        self.record_action("Centre on page");
         self.move_selection(page.x - center.x, page.y - center.y);
         true
     }
@@ -2416,7 +2429,7 @@ impl EditorState {
         name: impl Into<String>,
         op_type: crate::operations::OperationType,
     ) -> String {
-        self.record();
+        self.record_action("Add operation");
         let operation = crate::operations::Operation::new(name, op_type);
         let id = operation.id.clone();
         self.document.operations.push(operation);
@@ -2459,7 +2472,7 @@ impl EditorState {
         if operation.depends_on == new_dependencies {
             return true;
         }
-        self.record();
+        self.record_action("Set operation dependency");
         if let Some(operation) = self
             .document
             .operations
@@ -2482,7 +2495,7 @@ impl EditorState {
             .operations
             .iter()
             .position(|operation| operation.id == id)?;
-        self.record();
+        self.record_action("Duplicate operation");
         let mut copy = self.document.operations[index].clone();
         copy.id = uuid::Uuid::new_v4().to_string();
         copy.name = format!("{} copy", copy.name);
@@ -2501,7 +2514,7 @@ impl EditorState {
         else {
             return false;
         };
-        self.record();
+        self.record_action("Remove operation");
         self.document.operations.remove(index);
         for object in &mut self.document.objects {
             if object.operation_id.as_deref() == Some(id) {
@@ -2528,7 +2541,7 @@ impl EditorState {
         if target >= self.document.operations.len() || target == index {
             return false;
         }
-        self.record();
+        self.record_action("Reorder operation");
         self.document.operations.swap(index, target);
         true
     }
@@ -2569,7 +2582,7 @@ impl EditorState {
         if targets.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Assign to layer");
         for index in &targets {
             self.document.objects[*index].operation_id = operation_id.map(str::to_string);
         }
@@ -2591,7 +2604,7 @@ impl EditorState {
                 return 0;
             }
         }
-        self.record();
+        self.record_action("Assign operation");
         let ids = self.selection.ids().to_vec();
         let mut changed = 0;
         for id in ids {
@@ -2611,7 +2624,7 @@ impl EditorState {
         if self.selection.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Apply operation profile");
         let operation = crate::operations::Operation {
             id: uuid::Uuid::new_v4().to_string(),
             name: profile.name.clone(),
@@ -2630,7 +2643,7 @@ impl EditorState {
         if self.selection.is_empty() || profile.settings.validate().is_err() {
             return 0;
         }
-        self.record();
+        self.record_action("Apply image profile");
         let ids = self.selection.ids().to_vec();
         let mut changed = 0;
         for id in ids {
@@ -2649,7 +2662,7 @@ impl EditorState {
         if profile.validate().is_err() {
             return false;
         }
-        self.record();
+        self.record_action("Apply project profile");
         self.document.width_mm = profile.width_mm;
         self.document.height_mm = profile.height_mm;
         self.canvas.grid_spacing_mm = profile.grid_spacing_mm;
@@ -2736,9 +2749,9 @@ mod tests {
         let mut editor = editor();
         editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
         assert_eq!(editor.document.objects.len(), 1);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert!(editor.document.objects.is_empty());
-        assert!(editor.redo());
+        assert!(editor.redo().is_some());
         assert_eq!(editor.document.objects.len(), 1);
     }
 
@@ -2955,7 +2968,7 @@ mod tests {
         assert!(editor.flip_selection(true));
         let (min, max) = editor.selected_bounds().unwrap();
         assert!((max.x - min.x - 10.0).abs() < 1e-6);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         let (min, _max) = editor.selected_bounds().unwrap();
         assert!((min.x).abs() < 1e-6);
     }
@@ -3078,7 +3091,7 @@ mod tests {
         assert_eq!(editor.document.width_mm, 120.0);
         assert_eq!(editor.document.height_mm, 80.0);
         assert_eq!(editor.canvas.grid_spacing_mm, 10.0);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.width_mm, before);
     }
 
@@ -3129,7 +3142,7 @@ mod tests {
         let mut editor = editor();
         editor.add_polygon(Point2::new(20.0, 20.0), Point2::new(25.0, 20.0), 5);
         assert_eq!(editor.document.objects.len(), 1);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 0);
     }
 
@@ -3196,7 +3209,7 @@ mod tests {
         editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
         editor.duplicate_grid(2, 2, 20.0, 20.0);
         assert_eq!(editor.document.objects.len(), 4);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 1);
     }
 
@@ -3245,7 +3258,7 @@ mod tests {
         editor.group_selection();
         assert!(editor.ungroup_selection());
         assert_eq!(editor.document.objects.len(), 2);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert!(
             editor.document.object(&first).unwrap().group_id.is_some(),
             "undo restores the grouped state"
@@ -3383,7 +3396,7 @@ mod tests {
             order(&editor),
             vec![second.clone(), third.clone(), first.clone()]
         );
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         editor.selection.clear();
         editor.selection.add(third.clone());
         assert_eq!(editor.send_selection_to_back(), 1);
@@ -3416,7 +3429,7 @@ mod tests {
         assert!((centres[0] - 50.0).abs() < 1e-6);
         assert!((centres[1] - 100.0).abs() < 1e-6);
         assert!((centres[2] - 150.0).abs() < 1e-6);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         editor.selection.clear();
         assert!(!editor.distribute_selection_on_page(true));
     }
@@ -3432,7 +3445,7 @@ mod tests {
         let (min, max) = editor.document.object(&id).unwrap().bounds().unwrap();
         assert!((f64::midpoint(min.x, max.x) - 100.0).abs() < 1e-6);
         assert!((f64::midpoint(min.y, max.y) - 50.0).abs() < 1e-6);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         editor.selection.clear();
         assert!(!editor.center_selection_on_page());
     }
@@ -3479,7 +3492,7 @@ mod tests {
             editor.assign_operation_to_layer(&layer, Some(&operation)),
             0
         );
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(
             editor
                 .document
@@ -3518,12 +3531,12 @@ mod tests {
         assert!(!editor.set_operation_dependency(&first, Some(&first)));
         assert!(!editor.set_operation_dependency(&first, Some("missing")));
         assert!(!editor.set_operation_dependency("missing", None));
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(
             editor.document.operations[1].depends_on,
             vec![first.clone()]
         );
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.operations[1].depends_on.len(), 0);
     }
 
@@ -3556,7 +3569,7 @@ mod tests {
             editor.document.operations[1].params,
             editor.document.operations[0].params
         );
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.operations.len(), 1);
         assert!(editor.duplicate_operation("missing").is_none());
     }
@@ -3585,7 +3598,7 @@ mod tests {
             .map(|operation| operation.name.as_str())
             .collect();
         assert_eq!(order, vec!["Third", "First", "Second"]);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         let order: Vec<&str> = editor
             .document
             .operations
@@ -3771,7 +3784,7 @@ mod tests {
             .boolean_selection(crate::geometry::BooleanOp::Union)
             .unwrap();
         assert_eq!(editor.document.objects.len(), 1);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -3807,7 +3820,7 @@ mod tests {
             .unwrap();
         assert_eq!(editor.remove_duplicates(), 2);
         assert_eq!(editor.document.objects.len(), 1);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 3);
     }
 
@@ -3952,7 +3965,7 @@ mod tests {
         editor.selection.add(trimmer);
         editor.trim_selection().unwrap();
         assert_eq!(editor.document.objects.len(), 3);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -3991,7 +4004,7 @@ mod tests {
         editor.selection.add(second);
         assert_eq!(editor.delete_overlapping_segments().unwrap(), 2);
         assert_eq!(editor.document.objects.len(), 0);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -4105,7 +4118,7 @@ mod tests {
         editor.selection.add(rect);
         editor.outline_selection().unwrap();
         assert_eq!(editor.document.objects.len(), 2);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 1);
     }
 
@@ -4205,7 +4218,7 @@ mod tests {
         editor.selection.add(second);
         editor.join_paths().unwrap();
         assert_eq!(editor.document.objects.len(), 1);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -4245,7 +4258,7 @@ mod tests {
         };
         assert!(is_closed(&open));
         assert!(is_closed(&closed));
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
     }
 
     #[test]
@@ -4283,7 +4296,7 @@ mod tests {
         assert_eq!(cut.len(), 1);
         assert_eq!(editor.document.objects.len(), 1);
         assert!(editor.document.object(&original).is_none());
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -4331,7 +4344,7 @@ mod tests {
         assert_eq!(editor.unlock_selection(), 1);
         editor.nudge_selection(10.0, 0.0);
         assert!((editor.document.object(&id).unwrap().bounds().unwrap().0.x - 10.0).abs() < 1e-9);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
     }
 
     #[test]
@@ -4414,7 +4427,7 @@ mod tests {
         assert!(!editor.set_selection_size(0.0, 10.0, false));
         assert!(!editor.set_selection_size(f64::NAN, 10.0, false));
         assert!(editor.set_selection_size(20.0, 20.0, false));
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         let (min, max) = editor.selected_bounds().unwrap();
         assert!((max.x - min.x - 10.0).abs() < 1e-6);
         editor.selection.clear();
@@ -4430,7 +4443,7 @@ mod tests {
         assert!(editor.skew_selection(45.0, 0.0));
         let (after_min, after_max) = editor.selected_bounds().unwrap();
         assert!(after_max.x - after_min.x > before.x - 1e-9);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert!(!editor.skew_selection(0.0, 0.0));
         assert!(!editor.skew_selection(f64::NAN, 0.0));
     }
@@ -4465,7 +4478,7 @@ mod tests {
         for (a, b) in before.iter().zip(&after) {
             assert!((a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6);
         }
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_ne!(
             editor.document.object(&id).unwrap().transform,
             Transform2::identity()
@@ -4645,7 +4658,7 @@ mod tests {
                 .iter()
                 .all(|object| object.group_id.is_none())
         );
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document.objects.len(), 2);
     }
 
@@ -4679,7 +4692,7 @@ mod tests {
             .map(|(min, _)| min.x)
             .fold(f64::INFINITY, f64::min);
         assert!((9.0..=11.0).contains(&min));
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert!(editor.document.object(&id).is_some());
     }
 
@@ -4888,7 +4901,7 @@ mod tests {
             .unwrap();
         assert_eq!(editor.offset_selection(2.0).unwrap(), 1);
         assert!((area_of(&editor, &rect) - 196.0).abs() < 1e-3);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.offset_selection(-2.0).unwrap(), 1);
         assert!((area_of(&editor, &rect) - 36.0).abs() < 1e-3);
     }
@@ -5058,5 +5071,22 @@ mod tests {
         let snapped = editor.snap(Point2::new(12.0, 13.0));
         assert!((snapped.x - 10.0).abs() < 1e-9);
         assert!((snapped.y - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn undo_and_redo_report_action_names() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.record_action("Move");
+        editor.move_selection(2.0, 0.0);
+
+        assert_eq!(editor.history.undo_label(), Some("Move"));
+        assert_eq!(editor.undo().as_deref(), Some("Move"));
+        assert_eq!(editor.history.redo_label(), Some("Move"));
+        assert_eq!(editor.redo().as_deref(), Some("Move"));
+        assert_eq!(editor.undo().as_deref(), Some("Move"));
+        assert_eq!(editor.undo().as_deref(), Some("Draw Rectangle"));
     }
 }

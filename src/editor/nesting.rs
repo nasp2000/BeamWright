@@ -134,7 +134,7 @@ impl EditorState {
         if proposal.placements.is_empty() {
             return 0;
         }
-        self.record();
+        self.record_action("Nest selection");
         let mut moved = 0;
         for placement in &proposal.placements {
             if let Some(object) = self.document.object_mut(&placement.object_id) {
@@ -271,7 +271,7 @@ mod tests {
         let proposal = editor.nest_selection(1.0, 0.0, false).unwrap();
         editor.apply_nest(&proposal);
         assert_ne!(editor.document, before);
-        assert!(editor.undo());
+        assert!(editor.undo().is_some());
         assert_eq!(editor.document, before);
     }
 
