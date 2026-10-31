@@ -174,14 +174,19 @@ fn raster_toolpath(
             image.path
         )));
     }
-    let bitmap = crate::raster::process_file(path, &image.settings)?;
+    let bitmap = crate::raster::process_object(path, image)?;
     let mut toolpath = Toolpath::new(
         object.name.clone(),
         resolved.speed,
         resolved.power,
         resolved.passes,
     );
-    let pixel_mm = 25.4 / image.dpi;
+    let width_mm = image.width_mm();
+    let height_mm = image.height_mm();
+    #[allow(clippy::cast_precision_loss)]
+    let pixel_x = width_mm / bitmap.width as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let pixel_y = height_mm / bitmap.height as f64;
     for row in 0..bitmap.height {
         let mut run_start: Option<usize> = None;
         for column in 0..=bitmap.width {
@@ -191,7 +196,8 @@ fn raster_toolpath(
                 (false, Some(start)) => {
                     let local = TransformBake {
                         transform: object.transform,
-                        pixel_mm,
+                        pixel_x,
+                        pixel_y,
                         height_px: bitmap.height,
                     };
                     let (x0, y0) = local.point(start, row);
@@ -214,16 +220,17 @@ fn raster_toolpath(
 
 struct TransformBake {
     transform: crate::geometry::Transform2,
-    pixel_mm: f64,
+    pixel_x: f64,
+    pixel_y: f64,
     height_px: usize,
 }
 
 impl TransformBake {
     fn point(&self, x: usize, y: usize) -> (f64, f64) {
         #[allow(clippy::cast_precision_loss)]
-        let local_x = x as f64 * self.pixel_mm;
+        let local_x = x as f64 * self.pixel_x;
         #[allow(clippy::cast_precision_loss)]
-        let local_y = (self.height_px as f64 - y as f64) * self.pixel_mm;
+        let local_y = (self.height_px as f64 - y as f64) * self.pixel_y;
         let point = self
             .transform
             .apply(crate::geometry::Point2::new(local_x, local_y));
@@ -1047,6 +1054,37 @@ mod tests {
         assert_eq!(toolpaths[0].moves.len(), 4);
         assert_eq!(toolpaths[0].speed, 3000.0);
         assert!((toolpaths[0].power - 200.0).abs() < 1e-9);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rotated_image_swaps_its_physical_size() {
+        let path = std::env::temp_dir().join("beamwright_job_rotated.png");
+        let mut picture = image::GrayImage::new(4, 2);
+        for (x, _y, pixel) in picture.enumerate_pixels_mut() {
+            *pixel = if x < 2 {
+                image::Luma([0])
+            } else {
+                image::Luma([255])
+            };
+        }
+        picture.save(&path).unwrap();
+        let mut document = image_document(&path);
+        if let Shape::Image(image) = &mut document.objects[0].shape {
+            image.settings.rotation_degrees = 90.0;
+        }
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(warnings.len(), 0);
+        let Shape::Image(image) = &document.objects[0].shape else {
+            panic!("expected image");
+        };
+        assert!(image.width_mm() < image.height_mm());
+        let width = image.width_mm();
+        let height = image.height_mm();
+        for movement in &toolpaths[0].moves {
+            assert!(movement.x >= -1e-9 && movement.x <= width + 1e-9);
+            assert!(movement.y >= -1e-9 && movement.y <= height + 1e-9);
+        }
         let _ = std::fs::remove_file(&path);
     }
 

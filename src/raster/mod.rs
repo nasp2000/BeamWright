@@ -116,6 +116,50 @@ fn adjust(value: f32, settings: &ImageSettings) -> f32 {
     value.clamp(0.0, 255.0)
 }
 
+/// Load an image and apply the object's crop, rotation and working size.
+///
+/// The pipeline is non-destructive: the file is never written. Crop and rotation
+/// happen before the tone and dithering settings, and resampling uses nearest
+/// neighbour so a working resolution never invents grey detail.
+pub fn process_object(
+    path: &std::path::Path,
+    image: &crate::objects::ImageObject,
+) -> Result<RasterBitmap> {
+    image.validate().map_err(BeamError::InvalidInput)?;
+    let mut picture = image::open(path)
+        .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))?;
+    if let Some(crop) = image.crop {
+        picture = picture.crop_imm(crop.x, crop.y, crop.width, crop.height);
+    }
+    let rotation = image.settings.rotation_degrees;
+    picture = if (rotation - 90.0).abs() < 0.5 {
+        picture.rotate90()
+    } else if (rotation - 180.0).abs() < 0.5 {
+        picture.rotate180()
+    } else if (rotation - 270.0).abs() < 0.5 {
+        picture.rotate270()
+    } else {
+        picture
+    };
+    if image.settings.target_width_px > 0 && image.settings.target_height_px > 0 {
+        picture = picture.resize_exact(
+            image.settings.target_width_px,
+            image.settings.target_height_px,
+            image::imageops::FilterType::Nearest,
+        );
+    }
+    let pixels = u64::from(picture.width()) * u64::from(picture.height());
+    if pixels > MAX_PIXELS {
+        return Err(BeamError::InvalidInput(format!(
+            "image has {pixels} pixels; the limit is {MAX_PIXELS}"
+        )));
+    }
+    let luma = picture.to_luma8();
+    let width = usize::try_from(luma.width()).unwrap_or(0);
+    let height = usize::try_from(luma.height()).unwrap_or(0);
+    process_luma(luma.as_raw(), width, height, &image.settings)
+}
+
 /// Load an image file and produce its burn bitmap.
 pub fn process_file(path: &std::path::Path, settings: &ImageSettings) -> Result<RasterBitmap> {
     let image = image::open(path)
@@ -133,6 +177,78 @@ pub fn process_file(path: &std::path::Path, settings: &ImageSettings) -> Result<
         luma.height() as usize,
         settings,
     )
+}
+
+#[cfg(test)]
+mod object_tests {
+    use super::*;
+    use crate::objects::{ImageCrop, ImageObject};
+
+    fn write_image(name: &str, width: u32, height: u32) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(name);
+        let mut picture = image::GrayImage::new(width, height);
+        for (x, _y, pixel) in picture.enumerate_pixels_mut() {
+            *pixel = if x < width / 2 {
+                image::Luma([0])
+            } else {
+                image::Luma([255])
+            };
+        }
+        picture.save(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn crop_and_rotation_change_the_bitmap_dimensions() {
+        let path = write_image("bw_raster_transform.png", 8, 4);
+        let mut object = ImageObject::new(path.to_string_lossy(), 8, 4, 96.0);
+        object.crop = Some(ImageCrop {
+            x: 2,
+            y: 1,
+            width: 4,
+            height: 2,
+        });
+        let bitmap = process_object(&path, &object).unwrap();
+        assert_eq!((bitmap.width, bitmap.height), (4, 2));
+        object.settings.rotation_degrees = 90.0;
+        let bitmap = process_object(&path, &object).unwrap();
+        assert_eq!((bitmap.width, bitmap.height), (2, 4));
+        object.settings.target_width_px = 1;
+        object.settings.target_height_px = 2;
+        let bitmap = process_object(&path, &object).unwrap();
+        assert_eq!((bitmap.width, bitmap.height), (1, 2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn invalid_crop_is_rejected_before_processing() {
+        let path = write_image("bw_raster_bad_crop.png", 4, 4);
+        let mut object = ImageObject::new(path.to_string_lossy(), 4, 4, 96.0);
+        object.crop = Some(ImageCrop {
+            x: 3,
+            y: 3,
+            width: 4,
+            height: 4,
+        });
+        assert!(process_object(&path, &object).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn crop_keeps_the_burned_pixels_of_the_region() {
+        let path = write_image("bw_raster_crop_pixels.png", 8, 4);
+        let mut object = ImageObject::new(path.to_string_lossy(), 8, 4, 96.0);
+        object.crop = Some(ImageCrop {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        });
+        let bitmap = process_object(&path, &object).unwrap();
+        // The left half is black, so every cropped pixel burns.
+        assert!(bitmap.burn.iter().all(|value| *value));
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 #[cfg(test)]

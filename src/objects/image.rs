@@ -46,6 +46,15 @@ pub struct ImageSettings {
     pub invert: bool,
     /// Distance between raster lines in the job, in millimetres.
     pub line_interval_mm: f64,
+    /// Clockwise rotation applied to the processed image: 0, 90, 180 or 270.
+    #[serde(default)]
+    pub rotation_degrees: f64,
+    /// Working width in pixels; 0 keeps the source resolution.
+    #[serde(default)]
+    pub target_width_px: u32,
+    /// Working height in pixels; 0 keeps the source resolution.
+    #[serde(default)]
+    pub target_height_px: u32,
 }
 
 impl Default for ImageSettings {
@@ -58,6 +67,9 @@ impl Default for ImageSettings {
             gamma: 1.0,
             invert: false,
             line_interval_mm: 0.1,
+            rotation_degrees: 0.0,
+            target_width_px: 0,
+            target_height_px: 0,
         }
     }
 }
@@ -76,8 +88,25 @@ impl ImageSettings {
         if !self.line_interval_mm.is_finite() || !(0.01..=2.0).contains(&self.line_interval_mm) {
             return Err("line interval must be between 0.01 and 2 mm".to_string());
         }
+        if ![0.0, 90.0, 180.0, 270.0].contains(&self.rotation_degrees) {
+            return Err("image rotation must be 0, 90, 180 or 270 degrees".to_string());
+        }
+        let has_width = self.target_width_px > 0;
+        let has_height = self.target_height_px > 0;
+        if has_width != has_height {
+            return Err("working size needs both width and height".to_string());
+        }
         Ok(())
     }
+}
+
+/// A rectangular region of the source image, in source pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageCrop {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,6 +117,9 @@ pub struct ImageObject {
     pub dpi: f64,
     #[serde(default)]
     pub settings: ImageSettings,
+    /// Optional crop of the source image, applied before rotation.
+    #[serde(default)]
+    pub crop: Option<ImageCrop>,
 }
 
 impl ImageObject {
@@ -98,6 +130,7 @@ impl ImageObject {
             height_px,
             dpi,
             settings: ImageSettings::default(),
+            crop: None,
         }
     }
 
@@ -112,15 +145,65 @@ impl ImageObject {
             return Err("dpi must be positive".to_string());
         }
         self.settings.validate()?;
+        if let Some(crop) = self.crop {
+            if crop.width == 0 || crop.height == 0 {
+                return Err("image crop must have a positive size".to_string());
+            }
+            if crop.x >= self.width_px || crop.y >= self.height_px {
+                return Err("image crop starts outside the source".to_string());
+            }
+            if crop.width > self.width_px - crop.x || crop.height > self.height_px - crop.y {
+                return Err("image crop extends past the source".to_string());
+            }
+        }
         Ok(())
     }
 
-    pub fn width_mm(&self) -> f64 {
-        f64::from(self.width_px) * 25.4 / self.dpi
+    /// Size in pixels after cropping.
+    pub fn cropped_size_px(&self) -> (u32, u32) {
+        match self.crop {
+            Some(crop) => (crop.width, crop.height),
+            None => (self.width_px, self.height_px),
+        }
     }
 
+    /// Size in pixels after cropping and rotation.
+    pub fn rotated_size_px(&self) -> (u32, u32) {
+        let (width, height) = self.cropped_size_px();
+        let rotation = self.settings.rotation_degrees;
+        let quarter_turn = (rotation - 90.0).abs() < 0.5 || (rotation - 270.0).abs() < 0.5;
+        if quarter_turn {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    }
+
+    /// Working size in pixels, after crop, rotation and optional resampling.
+    pub fn effective_size_px(&self) -> (u32, u32) {
+        if self.settings.target_width_px > 0 {
+            (
+                self.settings.target_width_px,
+                self.settings.target_height_px,
+            )
+        } else {
+            self.rotated_size_px()
+        }
+    }
+
+    /// Physical width after crop, rotation and resampling.
+    pub fn width_mm(&self) -> f64 {
+        f64::from(self.effective_size_px().0) * 25.4 / self.dpi
+    }
+
+    /// Physical height after crop, rotation and resampling.
     pub fn height_mm(&self) -> f64 {
-        f64::from(self.height_px) * 25.4 / self.dpi
+        f64::from(self.effective_size_px().1) * 25.4 / self.dpi
+    }
+
+    /// Effective resolution of the working image, in dots per inch.
+    pub fn effective_dpi(&self) -> f64 {
+        self.dpi
     }
 
     pub fn bounds(&self) -> (crate::geometry::Point2, crate::geometry::Point2) {
@@ -140,6 +223,68 @@ mod tests {
         let image = ImageObject::new("img.png", 100, 50, 96.0);
         assert!(image.validate().is_ok());
         assert_eq!(image.settings, ImageSettings::default());
+    }
+
+    #[test]
+    fn crop_rotation_and_working_size_change_the_physical_size() {
+        let mut image = ImageObject::new("img.png", 400, 200, 100.0);
+        assert!((image.width_mm() - 101.6).abs() < 1e-9);
+        image.crop = Some(ImageCrop {
+            x: 100,
+            y: 50,
+            width: 200,
+            height: 100,
+        });
+        assert_eq!(image.cropped_size_px(), (200, 100));
+        assert!((image.width_mm() - 50.8).abs() < 1e-9);
+        image.settings.rotation_degrees = 90.0;
+        assert_eq!(image.effective_size_px(), (100, 200));
+        image.settings.target_width_px = 50;
+        image.settings.target_height_px = 25;
+        assert_eq!(image.effective_size_px(), (50, 25));
+        assert!((image.width_mm() - 12.7).abs() < 1e-9);
+        assert!(image.validate().is_ok());
+    }
+
+    #[test]
+    fn crop_and_rotation_are_validated() {
+        let mut image = ImageObject::new("img.png", 100, 50, 96.0);
+        image.crop = Some(ImageCrop {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 10,
+        });
+        assert!(image.validate().is_err());
+        image.crop = Some(ImageCrop {
+            x: 90,
+            y: 0,
+            width: 20,
+            height: 10,
+        });
+        assert!(image.validate().is_err());
+        image.crop = Some(ImageCrop {
+            x: 10,
+            y: 10,
+            width: 20,
+            height: 20,
+        });
+        assert!(image.validate().is_ok());
+        image.settings.rotation_degrees = 45.0;
+        assert!(image.validate().is_err());
+        image.settings.rotation_degrees = 180.0;
+        image.settings.target_width_px = 10;
+        image.settings.target_height_px = 0;
+        assert!(image.validate().is_err());
+    }
+
+    #[test]
+    fn old_images_without_crop_still_load() {
+        let old = r#"{"path":"a.png","width_px":10,"height_px":5,"dpi":96.0}"#;
+        let image: ImageObject = serde_json::from_str(old).unwrap();
+        assert!(image.crop.is_none());
+        assert_eq!(image.settings.rotation_degrees, 0.0);
+        assert_eq!(image.effective_size_px(), (10, 5));
     }
 
     #[test]

@@ -267,6 +267,7 @@ struct ImagePreview {
     texture: egui::TextureHandle,
     path: String,
     settings: crate::objects::ImageSettings,
+    crop: Option<crate::objects::ImageCrop>,
 }
 
 impl Default for BeamWrightApp {
@@ -2039,11 +2040,88 @@ impl BeamWrightApp {
                 ui.label("Image");
                 ui.label(&image.path);
                 ui.weak(format!(
-                    "{:.1} x {:.1} mm at {:.0} dpi",
+                    "{:.1} x {:.1} mm, source {} x {} px at {:.0} dpi",
                     image.width_mm(),
                     image.height_mm(),
+                    image.width_px,
+                    image.height_px,
                     image.dpi
                 ));
+                let (work_width, work_height) = image.effective_size_px();
+                ui.weak(format!(
+                    "Working: {work_width} x {work_height} px, {:.0} dpi effective",
+                    image.effective_dpi()
+                ));
+                if image.effective_dpi() < 100.0 {
+                    ui.colored_label(
+                        Color32::from_rgb(180, 120, 0),
+                        "Low working resolution: details may be lost.",
+                    );
+                }
+                ui.separator();
+                ui.label("Transform (non-destructive)");
+                ui.horizontal(|ui| {
+                    ui.label("Rotation");
+                    let mut rotation = image.settings.rotation_degrees;
+                    egui::ComboBox::from_id_salt("image_rotation")
+                        .selected_text(format!("{rotation:.0} deg"))
+                        .show_ui(ui, |ui| {
+                            for candidate in [0.0, 90.0, 180.0, 270.0] {
+                                ui.selectable_value(
+                                    &mut rotation,
+                                    candidate,
+                                    format!("{candidate:.0} deg"),
+                                );
+                            }
+                        });
+                    image.settings.rotation_degrees = rotation;
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Working size");
+                    ui.add(
+                        egui::DragValue::new(&mut image.settings.target_width_px)
+                            .speed(1.0)
+                            .range(0..=20000)
+                            .suffix(" px X"),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut image.settings.target_height_px)
+                            .speed(1.0)
+                            .range(0..=20000)
+                            .suffix(" px Y"),
+                    );
+                });
+                ui.weak("0 x 0 keeps the source resolution.");
+                let mut crop_x = image.crop.map_or(0, |crop| crop.x);
+                let mut crop_y = image.crop.map_or(0, |crop| crop.y);
+                let mut crop_w = image.crop.map_or(image.width_px, |crop| crop.width);
+                let mut crop_h = image.crop.map_or(image.height_px, |crop| crop.height);
+                ui.horizontal(|ui| {
+                    ui.label("Crop");
+                    ui.add(egui::DragValue::new(&mut crop_x).speed(1.0).prefix("X "));
+                    ui.add(egui::DragValue::new(&mut crop_y).speed(1.0).prefix("Y "));
+                    ui.add(egui::DragValue::new(&mut crop_w).speed(1.0).prefix("W "));
+                    ui.add(egui::DragValue::new(&mut crop_h).speed(1.0).prefix("H "));
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Apply crop").clicked() {
+                        image.crop = Some(crate::objects::ImageCrop {
+                            x: crop_x,
+                            y: crop_y,
+                            width: crop_w,
+                            height: crop_h,
+                        });
+                    }
+                    if ui.button("Clear crop").clicked() {
+                        image.crop = None;
+                    }
+                });
+                if let Some(crop) = image.crop {
+                    ui.weak(format!(
+                        "Cropped to {} x {} px at ({}, {})",
+                        crop.width, crop.height, crop.x, crop.y
+                    ));
+                }
                 ui.separator();
                 ui.label("Preparation (used by G-code export)");
                 let mut mode = image.settings.mode;
@@ -2453,27 +2531,33 @@ impl BeamWrightApp {
 
     fn refresh_image_previews(&mut self, ctx: &egui::Context) {
         use crate::document::Shape;
-        use crate::objects::ImageSettings;
 
-        let mut needed: Vec<(String, String, ImageSettings)> = Vec::new();
+        let mut needed: Vec<(String, crate::objects::ImageObject)> = Vec::new();
         for object in &self.editor.document.objects {
             if let Shape::Image(image) = &object.shape {
-                needed.push((object.id.clone(), image.path.clone(), image.settings));
+                needed.push((object.id.clone(), image.clone()));
             }
         }
         self.image_previews.retain(|id, preview| {
-            needed.iter().any(|(needed_id, path, settings)| {
-                needed_id == id && preview.path == *path && preview.settings == *settings
+            needed.iter().any(|(needed_id, image)| {
+                needed_id == id
+                    && preview.path == image.path
+                    && preview.settings == image.settings
+                    && preview.crop == image.crop
             })
         });
-        for (id, path, settings) in needed {
+        for (id, image) in needed {
             if self.image_previews.contains_key(&id) {
                 continue;
             }
-            let Ok(bitmap) = crate::raster::process_file(std::path::Path::new(&path), &settings)
+            let Ok(bitmap) =
+                crate::raster::process_object(std::path::Path::new(&image.path), &image)
             else {
                 continue;
             };
+            let path = image.path.clone();
+            let settings = image.settings;
+            let crop = image.crop;
             let color = preview_color_image(&bitmap);
             let texture = ctx.load_texture(
                 format!("image-preview-{id}"),
@@ -2486,6 +2570,7 @@ impl BeamWrightApp {
                     texture,
                     path,
                     settings,
+                    crop,
                 },
             );
         }

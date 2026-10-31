@@ -504,6 +504,7 @@ impl ProfileLibrary {
                 gamma: 1.0,
                 invert: false,
                 line_interval_mm: 0.1,
+                ..crate::objects::ImageSettings::default()
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
