@@ -3132,7 +3132,11 @@ impl BeamWrightApp {
                         ui.text_edit_singleline(&mut text.content);
                         ui.end_row();
                         ui.label("Font");
-                        ui.text_edit_singleline(&mut text.font);
+                        let mut font = text.font.clone();
+                        if font_picker(ui, "object_text_font", &mut font) {
+                            text.font.clone_from(&font);
+                            self.preferences.general.text_font = font;
+                        }
                         ui.end_row();
                         ui.label("Size");
                         ui.add(
@@ -4202,7 +4206,20 @@ impl BeamWrightApp {
                         );
                     }
                     Tool::Text => {
-                        self.editor.add_text(start);
+                        if let Some(id) = self.editor.add_text(start) {
+                            let font = self.preferences.general.text_font.clone();
+                            if let Some(object) = self
+                                .editor
+                                .document
+                                .objects
+                                .iter_mut()
+                                .find(|object| object.id == id)
+                            {
+                                if let Shape::Text(text) = &mut object.shape {
+                                    text.font = font;
+                                }
+                            }
+                        }
                     }
                     Tool::Measure => {
                         let distance = start.distance(end);
@@ -4672,12 +4689,30 @@ impl BeamWrightApp {
         let Some(id) = self.editor.selection.ids().first().cloned() else {
             return;
         };
-        match self.editor.convert_text_to_outlines(&id) {
+        let font = self.text_font_of(&id);
+        let data = crate::textfont::read(&font);
+        match self
+            .editor
+            .convert_text_to_outlines_with_font(&id, Some(&data))
+        {
             Ok(outlines) => {
                 self.status = format!("Converted text to {} outline(s)", outlines.len());
             }
             Err(error) => self.status = format!("Text conversion failed: {error}"),
         }
+    }
+
+    fn text_font_of(&self, id: &str) -> String {
+        self.editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .and_then(|object| match &object.shape {
+                Shape::Text(text) => Some(text.font.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| crate::textfont::BUNDLED_NAME.to_string())
     }
 
     fn apply_trim(&mut self) {
@@ -5251,6 +5286,14 @@ impl BeamWrightApp {
                         "Keep a .bak of the previous project version",
                     )
                     .changed();
+                ui.horizontal(|ui| {
+                    ui.label("Text font");
+                    changed |= font_picker(
+                        ui,
+                        "preferences_text_font",
+                        &mut self.preferences.general.text_font,
+                    );
+                });
                 ui.horizontal(|ui| {
                     ui.label("Default directory");
                     changed |= ui
@@ -6200,6 +6243,17 @@ impl eframe::App for BeamWrightApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm = Some(PendingAction::Quit);
         }
+        let document_fonts: Vec<String> = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .filter_map(|object| match &object.shape {
+                Shape::Text(text) => Some(text.font.clone()),
+                _ => None,
+            })
+            .collect();
+        crate::textfont::ensure_loaded(&ctx, &document_fonts);
         ui.ctx().set_visuals(if self.dark_mode {
             egui::Visuals::dark()
         } else {
@@ -6233,6 +6287,30 @@ impl eframe::App for BeamWrightApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         }
     }
+}
+
+/// Font picker shared by the text properties and the preferences window.
+fn font_picker(ui: &mut Ui, id: &str, value: &mut String) -> bool {
+    let mut changed = false;
+    let choices = crate::textfont::names();
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(value.clone())
+        .width(240.0)
+        .show_ui(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for name in &choices {
+                        if ui
+                            .selectable_value(value, name.clone(), name.as_str())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+        });
+    changed
 }
 
 fn edit_color(ui: &mut Ui, color: &mut Option<String>) {

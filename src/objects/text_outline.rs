@@ -23,12 +23,20 @@ const CURVE_STEPS: usize = 12;
 /// transform. Layout follows the same model as the canvas: line spacing,
 /// letter spacing and left/centre/right alignment around the anchor.
 pub fn text_to_paths(text: &TextObject) -> Result<Vec<Path>, String> {
+    text_to_paths_with_font(text, FONT_DATA)
+}
+
+/// Convert text to contours with an explicit font file.
+///
+/// The canvas uses the font chosen in the document; `data` is the whole font
+/// file, as returned by [`crate::textfont::read`].
+pub fn text_to_paths_with_font(text: &TextObject, data: &[u8]) -> Result<Vec<Path>, String> {
     text.validate()?;
-    let font = FontRef::try_from_slice(FONT_DATA)
-        .map_err(|error| format!("the bundled font is unreadable: {error}"))?;
+    let font = FontRef::try_from_slice(data)
+        .map_err(|error| format!("the font is unreadable: {error}"))?;
     let units = font.units_per_em().unwrap_or(1000.0);
     if units <= 0.0 {
-        return Err("the bundled font has no units per em".to_string());
+        return Err("the font has no units per em".to_string());
     }
     // Millimetres per font unit.
     let factor = text.size / f64::from(units);
@@ -156,12 +164,21 @@ fn contours(curves: &[OutlineCurve], factor: f64, offset_x: f64, offset_y: f64) 
 /// along the path. Additional lines are not placed (the path would need parallel
 /// offsets) and the caller is expected to document that.
 pub fn text_along_path(text: &TextObject, path: &Path) -> Result<Vec<Path>, String> {
+    text_along_path_with_font(text, path, FONT_DATA)
+}
+
+/// Fit text on a path using an explicit font file.
+pub fn text_along_path_with_font(
+    text: &TextObject,
+    path: &Path,
+    data: &[u8],
+) -> Result<Vec<Path>, String> {
     text.validate()?;
-    let font = FontRef::try_from_slice(FONT_DATA)
-        .map_err(|error| format!("the bundled font is unreadable: {error}"))?;
+    let font = FontRef::try_from_slice(data)
+        .map_err(|error| format!("the font is unreadable: {error}"))?;
     let units = font.units_per_em().unwrap_or(1000.0);
     if units <= 0.0 {
-        return Err("the bundled font has no units per em".to_string());
+        return Err("the font has no units per em".to_string());
     }
     let factor = text.size / f64::from(units);
     let line = text.lines().first().copied().unwrap_or("");

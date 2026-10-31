@@ -27,6 +27,19 @@ impl Default for McpServer {
 }
 
 impl McpServer {
+    fn font_of(&self, id: &str) -> String {
+        self.editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .and_then(|object| match &object.shape {
+                crate::document::Shape::Text(text) => Some(text.font.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| crate::textfont::BUNDLED_NAME.to_string())
+    }
+
     pub fn new() -> Self {
         Self {
             editor: EditorState::new(Document::default()),
@@ -656,9 +669,11 @@ impl McpServer {
             "fit_text_to_path" => {
                 let text = string(arguments, "text").ok_or_else(|| missing("text"))?;
                 let path = string(arguments, "path").ok_or_else(|| missing("path"))?;
+                let font = self.font_of(&text);
+                let data = crate::textfont::read(&font);
                 let outlines = self
                     .editor
-                    .fit_text_to_path(&text, &path)
+                    .fit_text_to_path_with_font(&text, &path, Some(&data))
                     .map_err(BeamError::InvalidInput)?;
                 Ok(json!({
                     "outlines": outlines.len(),
@@ -667,9 +682,11 @@ impl McpServer {
             }
             "text_to_outlines" => {
                 let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
+                let font = self.font_of(&id);
+                let data = crate::textfont::read(&font);
                 let outlines = self
                     .editor
-                    .convert_text_to_outlines(&id)
+                    .convert_text_to_outlines_with_font(&id, Some(&data))
                     .map_err(BeamError::InvalidInput)?;
                 Ok(json!({
                     "outlines": outlines.len(),

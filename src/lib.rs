@@ -26,4 +26,5 @@ pub mod profiles;
 pub mod raster;
 pub mod report;
 pub mod task;
+pub mod textfont;
 pub mod ui;

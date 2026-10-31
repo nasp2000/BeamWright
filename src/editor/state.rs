@@ -581,6 +581,18 @@ impl EditorState {
         &mut self,
         object_id: &str,
     ) -> std::result::Result<Vec<String>, String> {
+        self.convert_text_to_outlines_with_font(object_id, None)
+    }
+
+    /// Convert text to outlines with the font file chosen for the object.
+    ///
+    /// `None` uses the bundled font, which is also the fallback when the chosen
+    /// font cannot be read.
+    pub fn convert_text_to_outlines_with_font(
+        &mut self,
+        object_id: &str,
+        font_data: Option<&[u8]>,
+    ) -> std::result::Result<Vec<String>, String> {
         let index = self
             .document
             .objects
@@ -592,7 +604,10 @@ impl EditorState {
         let Shape::Text(text) = &object.shape else {
             return Err(format!("'{}' is not text", object.name));
         };
-        let paths = crate::objects::text_to_paths(text)?;
+        let paths = match font_data {
+            Some(data) => crate::objects::text_to_paths_with_font(text, data)?,
+            None => crate::objects::text_to_paths(text)?,
+        };
         if paths.is_empty() {
             return Err("the text has no printable characters".to_string());
         }
@@ -628,6 +643,16 @@ impl EditorState {
         text_id: &str,
         path_id: &str,
     ) -> std::result::Result<Vec<String>, String> {
+        self.fit_text_to_path_with_font(text_id, path_id, None)
+    }
+
+    /// Fit text to a path with the font file chosen for the object.
+    pub fn fit_text_to_path_with_font(
+        &mut self,
+        text_id: &str,
+        path_id: &str,
+        font_data: Option<&[u8]>,
+    ) -> std::result::Result<Vec<String>, String> {
         let text_index = self
             .document
             .objects
@@ -652,7 +677,10 @@ impl EditorState {
         if path.is_empty() {
             return Err("the target object has no path".to_string());
         }
-        let paths = crate::objects::text_along_path(text, &path)?;
+        let paths = match font_data {
+            Some(data) => crate::objects::text_along_path_with_font(text, &path, data)?,
+            None => crate::objects::text_along_path(text, &path)?,
+        };
         if paths.is_empty() {
             return Err("the text could not be placed on the path".to_string());
         }

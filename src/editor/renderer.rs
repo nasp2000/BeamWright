@@ -546,7 +546,7 @@ fn paint_object(
                     &text.content,
                     0.0,
                     egui::TextFormat {
-                        font_id: FontId::proportional(size),
+                        font_id: FontId::new(size, crate::textfont::family(&text.font)),
                         color,
                         extra_letter_spacing: (text.letter_spacing * scale * editor.canvas.zoom)
                             as f32,

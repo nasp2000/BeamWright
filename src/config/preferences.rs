@@ -8,6 +8,9 @@ pub struct GeneralPrefs {
     pub confirm_destructive: bool,
     pub backup_enabled: bool,
     pub default_directory: String,
+    /// Font used for new text objects; existing text keeps its own font.
+    #[serde(default = "default_text_font")]
+    pub text_font: String,
 }
 
 impl Default for GeneralPrefs {
@@ -18,6 +21,7 @@ impl Default for GeneralPrefs {
             confirm_destructive: true,
             backup_enabled: true,
             default_directory: String::new(),
+            text_font: default_text_font(),
         }
     }
 }
@@ -30,8 +34,15 @@ impl GeneralPrefs {
         if self.theme.is_empty() {
             return Err("theme must not be empty".to_string());
         }
+        if self.text_font.trim().is_empty() {
+            return Err("text font must not be empty".to_string());
+        }
         Ok(())
     }
+}
+
+fn default_text_font() -> String {
+    crate::textfont::BUNDLED_NAME.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
