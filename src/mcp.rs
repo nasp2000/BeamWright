@@ -412,6 +412,12 @@ impl McpServer {
                 let centered = self.editor.center_selection_on_page();
                 Ok(json!({"centered": centered}))
             }
+            "distribute_on_page" => {
+                self.select_scope(arguments)?;
+                let horizontal = string(arguments, "axis").as_deref() != Some("vertical");
+                let distributed = self.editor.distribute_selection_on_page(horizontal);
+                Ok(json!({"distributed": distributed}))
+            }
             "copy_objects" => {
                 self.select_scope(arguments)?;
                 self.clipboard = self.editor.copy_selection();
@@ -1061,6 +1067,14 @@ fn tool_definitions() -> Vec<Value> {
             "Centre the selected objects on the work area.",
             json!({"type": "object", "properties": {
                 "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "distribute_on_page",
+            "Spread the selected objects evenly across the work area.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "axis": {"type": "string"}
             }}),
         ),
         tool_with(

@@ -1239,6 +1239,21 @@ impl BeamWrightApp {
                         self.profiles_open = true;
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(
+                            self.active_operation.is_some(),
+                            egui::Button::new("Duplicate operation"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(operation) = self.active_operation.clone() {
+                            if let Some(copy) = self.editor.duplicate_operation(&operation) {
+                                self.active_operation = Some(copy);
+                                self.status = "Operation duplicated".to_string();
+                            }
+                        }
+                        ui.close();
+                    }
                     if ui.button("Assign operation to layer").clicked() {
                         if let Some(operation) = self.active_operation.clone() {
                             let layer = self.editor.active_layer_id.clone();
@@ -1288,6 +1303,26 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.center_selection_on_page();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Distribute on page horizontally"),
+                        )
+                        .clicked()
+                    {
+                        self.editor.distribute_selection_on_page(true);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Distribute on page vertically"),
+                        )
+                        .clicked()
+                    {
+                        self.editor.distribute_selection_on_page(false);
                         ui.close();
                     }
                     ui.separator();

@@ -2259,6 +2259,61 @@ impl EditorState {
         selected.len()
     }
 
+    /// Spread the selected objects evenly across the work area.
+    ///
+    /// Object centres are placed at equal fractions of the page (with equal
+    /// margins at both ends), keeping their order along the chosen axis.
+    pub fn distribute_selection_on_page(&mut self, horizontal: bool) -> bool {
+        let mut items: Vec<(String, f64)> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| self.selection.contains(&object.id))
+            .filter_map(|object| {
+                object
+                    .bounds()
+                    .map(|(min, max)| (object.id.clone(), (min, max)))
+            })
+            .map(|(id, (min, max))| {
+                let centre = if horizontal {
+                    f64::midpoint(min.x, max.x)
+                } else {
+                    f64::midpoint(min.y, max.y)
+                };
+                (id, centre)
+            })
+            .collect();
+        if items.len() < 2 {
+            return false;
+        }
+        items.sort_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let span = if horizontal {
+            self.document.width_mm
+        } else {
+            self.document.height_mm
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let count = items.len() as f64;
+        self.record();
+        for (position, (id, centre)) in items.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let target = span * (position as f64 + 1.0) / (count + 1.0);
+            let delta = target - centre;
+            if let Some(object) = self.document.object_mut(id) {
+                if horizontal {
+                    object.translate(delta, 0.0);
+                } else {
+                    object.translate(0.0, delta);
+                }
+            }
+        }
+        true
+    }
+
     /// Centre the selection on the work area.
     pub fn center_selection_on_page(&mut self) -> bool {
         let Some((min, max)) = self.selected_bounds() else {
@@ -3252,6 +3307,35 @@ mod tests {
         assert_eq!(order(&editor), vec![third, first, second]);
         editor.selection.clear();
         assert_eq!(editor.bring_selection_to_front(), 0);
+    }
+
+    #[test]
+    fn selection_can_be_distributed_across_the_page() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        let third = editor
+            .add_rectangle(Point2::new(80.0, 0.0), Point2::new(90.0, 10.0))
+            .unwrap();
+        editor.select_all();
+        assert!(editor.distribute_selection_on_page(true));
+        let centres: Vec<f64> = [first, second, third]
+            .iter()
+            .map(|id| {
+                let (min, max) = editor.document.object(id).unwrap().bounds().unwrap();
+                f64::midpoint(min.x, max.x)
+            })
+            .collect();
+        assert!((centres[0] - 50.0).abs() < 1e-6);
+        assert!((centres[1] - 100.0).abs() < 1e-6);
+        assert!((centres[2] - 150.0).abs() < 1e-6);
+        assert!(editor.undo());
+        editor.selection.clear();
+        assert!(!editor.distribute_selection_on_page(true));
     }
 
     #[test]
