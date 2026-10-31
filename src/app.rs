@@ -7946,10 +7946,10 @@ impl eframe::App for BeamWrightApp {
             })
             .collect();
         crate::textfont::ensure_loaded(&ctx, &document_fonts);
-        ui.ctx().set_visuals(if self.dark_mode {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
+        ui.ctx().set_visuals(crate::theme::visuals(self.dark_mode));
+        ui.ctx().style_mut(|style| {
+            style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+            style.spacing.button_padding = egui::vec2(8.0, 5.0);
         });
         self.shortcuts(ui);
         self.menu_bar(ui);

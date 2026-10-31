@@ -156,7 +156,7 @@ fn default_true() -> bool {
 }
 
 fn default_selection_color() -> String {
-    "#008CFF".to_string()
+    crate::theme::CANVAS_SELECTION.to_string()
 }
 
 fn default_handle_style() -> String {

@@ -226,7 +226,7 @@ impl EditorState {
             snap_tolerance_px: 8.0,
             show_rulers: true,
             show_selection: true,
-            selection_color: "#008CFF".to_string(),
+            selection_color: crate::theme::CANVAS_SELECTION.to_string(),
             handle_style: HandleStyle::Square,
             zoom_step: 1.25,
             select_whole_group: true,
