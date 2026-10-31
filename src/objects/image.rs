@@ -16,6 +16,10 @@ pub enum ImageMode {
     Stucki,
     /// Jarvis–Judice–Ninke error diffusion with a wide kernel.
     Jarvis,
+    /// Sierra three-row error diffusion.
+    Sierra,
+    /// Burkes error diffusion.
+    Burkes,
     /// Clustered-dot halftone with a 4×4 screen.
     Halftone,
     /// Clustered-dot halftone rotated 45°, for a newsprint look.
@@ -33,13 +37,15 @@ impl ImageMode {
             ImageMode::Atkinson => "Atkinson",
             ImageMode::Stucki => "Stucki",
             ImageMode::Jarvis => "Jarvis–Judice–Ninke",
+            ImageMode::Sierra => "Sierra",
+            ImageMode::Burkes => "Burkes",
             ImageMode::Halftone => "Halftone dots",
             ImageMode::Newsprint => "Newsprint",
             ImageMode::Sketch => "Sketch (edges)",
         }
     }
 
-    pub fn all() -> [ImageMode; 9] {
+    pub fn all() -> [ImageMode; 11] {
         [
             ImageMode::Threshold,
             ImageMode::FloydSteinberg,
@@ -47,6 +53,8 @@ impl ImageMode {
             ImageMode::Atkinson,
             ImageMode::Stucki,
             ImageMode::Jarvis,
+            ImageMode::Sierra,
+            ImageMode::Burkes,
             ImageMode::Halftone,
             ImageMode::Newsprint,
             ImageMode::Sketch,

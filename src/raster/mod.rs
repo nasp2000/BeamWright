@@ -81,6 +81,12 @@ pub fn process_luma(
         ImageMode::Jarvis => {
             burn = diffuse(&adjusted, width, height, &JARVIS, 48);
         }
+        ImageMode::Sierra => {
+            burn = diffuse(&adjusted, width, height, &SIERRA, 32);
+        }
+        ImageMode::Burkes => {
+            burn = diffuse(&adjusted, width, height, &BURKES, 32);
+        }
         ImageMode::OrderedDither => {
             for y in 0..height {
                 for x in 0..width {
@@ -162,6 +168,29 @@ const STUCKI: [(i32, i32, i32); 12] = [
     (0, 2, 4),
     (1, 2, 2),
     (2, 2, 1),
+];
+
+const SIERRA: [(i32, i32, i32); 10] = [
+    (1, 0, 5),
+    (2, 0, 3),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 5),
+    (1, 1, 4),
+    (2, 1, 2),
+    (-1, 2, 2),
+    (0, 2, 3),
+    (1, 2, 2),
+];
+
+const BURKES: [(i32, i32, i32); 7] = [
+    (1, 0, 8),
+    (2, 0, 4),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 8),
+    (1, 1, 4),
+    (2, 1, 2),
 ];
 
 const JARVIS: [(i32, i32, i32); 12] = [
