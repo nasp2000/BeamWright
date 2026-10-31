@@ -348,6 +348,8 @@ impl BeamWrightApp {
             select_all,
             duplicate,
             delete,
+            group,
+            ungroup,
             escape,
             fit,
             grid,
@@ -368,6 +370,8 @@ impl BeamWrightApp {
                 input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z),
                 input.consume_key(Modifiers::CTRL, Key::A),
                 input.consume_key(Modifiers::CTRL, Key::D),
+                input.consume_key(Modifiers::CTRL, Key::G),
+                input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::G),
                 input.consume_key(Modifiers::NONE, Key::Delete)
                     || input.consume_key(Modifiers::NONE, Key::Backspace),
                 input.consume_key(Modifiers::NONE, Key::Escape),
@@ -407,6 +411,12 @@ impl BeamWrightApp {
         }
         if delete {
             self.editor.delete_selection();
+        }
+        if group && self.editor.group_selection() {
+            self.status = "Objects grouped".to_string();
+        }
+        if ungroup && self.editor.ungroup_selection() {
+            self.status = "Objects ungrouped".to_string();
         }
         if escape {
             self.drag = None;
@@ -528,6 +538,24 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.delete_selection();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.editor.selection.len() >= 2, egui::Button::new("Group"))
+                        .clicked()
+                    {
+                        self.editor.group_selection();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Ungroup"),
+                        )
+                        .clicked()
+                    {
+                        self.editor.ungroup_selection();
                         ui.close();
                     }
                 });

@@ -99,6 +99,36 @@ mod tests {
     }
 
     #[test]
+    fn group_membership_survives_round_trip() {
+        let mut doc = sample();
+        let layer_id = doc.layers[0].id.clone();
+        let mut first = crate::document::model::Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 10.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        first.group_id = Some("group-1".to_string());
+        let mut second =
+            crate::document::model::Object::new(layer_id, Shape::Ellipse { rx: 2.0, ry: 2.0 });
+        second.group_id = Some("group-1".to_string());
+        let ids = (first.id.clone(), second.id.clone());
+        doc.add_object(first);
+        doc.add_object(second);
+        let back = from_json(&to_json(&doc).unwrap()).unwrap();
+        assert_eq!(
+            back.object(&ids.0).unwrap().group_id.as_deref(),
+            Some("group-1")
+        );
+        assert_eq!(
+            back.object(&ids.1).unwrap().group_id.as_deref(),
+            Some("group-1")
+        );
+    }
+
+    #[test]
     fn reject_empty_name() {
         let mut doc = sample();
         doc.name = "   ".to_string();

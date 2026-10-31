@@ -196,12 +196,16 @@ impl EditorState {
         let hit = self.object_at(point, tolerance_mm);
         match hit.clone() {
             Some(id) if additive => {
-                self.selection.toggle(id.clone());
+                for member in self.group_members(&id).unwrap_or_else(|| vec![id.clone()]) {
+                    self.selection.toggle(member);
+                }
                 Some(id)
             }
             Some(id) => {
                 self.selection.clear();
-                self.selection.add(id.clone());
+                for member in self.group_members(&id).unwrap_or_else(|| vec![id.clone()]) {
+                    self.selection.add(member);
+                }
                 Some(id)
             }
             None => {
@@ -211,6 +215,58 @@ impl EditorState {
                 None
             }
         }
+    }
+
+    /// All objects sharing the object's group, or `None` when it is not grouped.
+    pub fn group_members(&self, object_id: &str) -> Option<Vec<String>> {
+        let group = self.document.object(object_id)?.group_id.clone()?;
+        let members: Vec<String> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| object.group_id.as_deref() == Some(group.as_str()))
+            .map(|object| object.id.clone())
+            .collect();
+        (members.len() > 1).then_some(members)
+    }
+
+    /// Group the selection under a new identifier.
+    pub fn group_selection(&mut self) -> bool {
+        if self.selection.len() < 2 {
+            return false;
+        }
+        self.record();
+        let group = uuid::Uuid::new_v4().to_string();
+        let ids = self.selection.ids().to_vec();
+        for id in ids {
+            if let Some(object) = self.document.object_mut(&id) {
+                object.group_id = Some(group.clone());
+            }
+        }
+        true
+    }
+
+    /// Remove the group identifier from every selected object.
+    pub fn ungroup_selection(&mut self) -> bool {
+        if self.selection.is_empty() {
+            return false;
+        }
+        let grouped = self.selection.ids().iter().any(|id| {
+            self.document
+                .object(id)
+                .is_some_and(|object| object.group_id.is_some())
+        });
+        if !grouped {
+            return false;
+        }
+        self.record();
+        let ids = self.selection.ids().to_vec();
+        for id in ids {
+            if let Some(object) = self.document.object_mut(&id) {
+                object.group_id = None;
+            }
+        }
+        true
     }
 
     pub fn select_all(&mut self) {
@@ -1115,6 +1171,58 @@ mod tests {
         profile.width_mm = 100.0;
         profile.snap_mm = 0.0;
         assert!(!editor.apply_project_profile(&profile));
+    }
+
+    #[test]
+    fn grouping_selects_and_ungroups_together() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        let second = editor
+            .add_rectangle(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first.clone());
+        editor.selection.add(second.clone());
+        assert!(editor.group_selection());
+        assert_eq!(editor.group_members(&first).unwrap().len(), 2);
+        editor.selection.clear();
+        editor.select_at(Point2::new(0.0, 5.0), false, 0.5);
+        assert_eq!(editor.selection.len(), 2);
+        assert!(editor.ungroup_selection());
+        assert!(editor.group_members(&first).is_none());
+    }
+
+    #[test]
+    fn grouping_requires_two_objects() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        assert!(!editor.group_selection());
+        assert!(!editor.ungroup_selection());
+    }
+
+    #[test]
+    fn ungroup_keeps_objects_and_can_be_undone() {
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        let second = editor
+            .add_line(Point2::new(20.0, 0.0), Point2::new(30.0, 10.0))
+            .unwrap();
+        editor.selection.add(first.clone());
+        editor.selection.add(second);
+        editor.group_selection();
+        assert!(editor.ungroup_selection());
+        assert_eq!(editor.document.objects.len(), 2);
+        assert!(editor.undo());
+        assert!(
+            editor.document.object(&first).unwrap().group_id.is_some(),
+            "undo restores the grouped state"
+        );
     }
 
     #[test]

@@ -30,6 +30,9 @@ pub struct Object {
     pub shape: Shape,
     pub style: Style,
     pub operation_id: Option<String>,
+    /// Objects grouped together share this identifier.
+    #[serde(default)]
+    pub group_id: Option<String>,
     pub visible: bool,
     pub locked: bool,
 }
@@ -45,6 +48,7 @@ impl Object {
             shape,
             style: Style::default(),
             operation_id: None,
+            group_id: None,
             visible: true,
             locked: false,
         }
