@@ -58,10 +58,36 @@ pub struct OperationParams {
     /// Perpendicular shift of the fill pattern, in millimetres.
     #[serde(default)]
     pub fill_offset_mm: f64,
+    /// Colour used for this cut in the table and the toolpath preview.
+    #[serde(default = "default_cut_color")]
+    pub color: String,
+    /// Turn air assist on for this operation (M8/M9 in the job).
+    #[serde(default)]
+    pub air_assist: bool,
+    /// Show this operation's toolpaths in the canvas preview.
+    #[serde(default = "default_true")]
+    pub show_in_preview: bool,
+    /// Use M3 (constant power) instead of M4 for this operation.
+    #[serde(default)]
+    pub constant_power: bool,
+    /// Add a second fill pass rotated by 90°.
+    #[serde(default)]
+    pub cross_hatch: bool,
+    /// Extend every fill line by this distance at both ends.
+    #[serde(default)]
+    pub overscan_mm: f64,
+}
+
+fn default_cut_color() -> String {
+    "#000000".to_string()
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn yes_no(value: bool) -> String {
+    if value { "Yes" } else { "No" }.to_string()
 }
 
 impl OperationParams {
@@ -115,6 +141,32 @@ impl OperationParams {
             format!("{:.2} mm", self.fill_offset_mm),
             format!("{:.2} mm", target.fill_offset_mm),
         );
+        push(
+            "Overscan",
+            format!("{:.2} mm", self.overscan_mm),
+            format!("{:.2} mm", target.overscan_mm),
+        );
+        push(
+            "Cross-hatch",
+            yes_no(self.cross_hatch),
+            yes_no(target.cross_hatch),
+        );
+        push(
+            "Air assist",
+            yes_no(self.air_assist),
+            yes_no(target.air_assist),
+        );
+        push(
+            "Constant power",
+            yes_no(self.constant_power),
+            yes_no(target.constant_power),
+        );
+        push(
+            "Show in preview",
+            yes_no(self.show_in_preview),
+            yes_no(target.show_in_preview),
+        );
+        push("Colour", self.color.clone(), target.color.clone());
         changes
     }
 }
@@ -130,6 +182,12 @@ impl Default for OperationParams {
             fill_alternate: true,
             fill_margin_mm: 0.0,
             fill_offset_mm: 0.0,
+            color: default_cut_color(),
+            air_assist: false,
+            show_in_preview: true,
+            constant_power: false,
+            cross_hatch: false,
+            overscan_mm: 0.0,
         }
     }
 }
@@ -193,6 +251,13 @@ impl Operation {
         }
         if !self.params.fill_offset_mm.is_finite() {
             return Err("fill offset must be finite".to_string());
+        }
+        if crate::color::normalize_hex_color(&self.params.color).is_none() {
+            return Err(format!("invalid cut colour: {}", self.params.color));
+        }
+        if !self.params.overscan_mm.is_finite() || !(0.0..=50.0).contains(&self.params.overscan_mm)
+        {
+            return Err("overscan must be between 0 and 50 mm".to_string());
         }
         for (index, dependency) in self.depends_on.iter().enumerate() {
             if dependency.trim().is_empty() {
@@ -289,6 +354,7 @@ mod tests {
             fill_alternate: false,
             fill_margin_mm: 0.5,
             fill_offset_mm: 0.2,
+            ..OperationParams::default()
         };
         let changes = current.changes_to(&target);
         let labels: Vec<&str> = changes.iter().map(|change| change.label).collect();

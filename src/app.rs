@@ -186,6 +186,15 @@ fn canvas_context_actions() -> Vec<ContextAction> {
     actions
 }
 
+/// Which part of the selection frame is being dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandleKind {
+    Move,
+    /// Index into the eight frame handles, clockwise from the top-left.
+    Scale(usize),
+    Rotate,
+}
+
 #[derive(Debug, Clone)]
 enum DragState {
     Move {
@@ -266,6 +275,8 @@ pub struct BeamWrightApp {
     machine_edit_id: Option<String>,
     machine_error: Option<String>,
     doc_properties_snapshot: Option<Document>,
+    cuts_open: bool,
+    cuts_snapshot: Option<Document>,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -665,6 +676,8 @@ impl BeamWrightApp {
             machine_edit_id: None,
             machine_error: None,
             doc_properties_snapshot: None,
+            cuts_open: false,
+            cuts_snapshot: None,
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -1884,6 +1897,10 @@ impl BeamWrightApp {
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Operations, "Operations"), |ui| {
+                    if icons::button(ui, Icon::Layers, "Cuts / Layers...").clicked() {
+                        self.open_cuts();
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Plus, "New operation").clicked() {
                         let id = self.editor.add_operation(
                             format!(
@@ -3801,7 +3818,8 @@ impl BeamWrightApp {
                     || self.about_open
                     || self.task.is_some()
                     || self.machines_open
-                    || self.machine_wizard_open;
+                    || self.machine_wizard_open
+                    || self.cuts_open;
                 let pointer = if modal {
                     None
                 } else {
@@ -3903,6 +3921,17 @@ impl BeamWrightApp {
                             if primary_released {
                                 self.drag = None;
                             }
+                        } else if self.editor.tool == Tool::Select
+                            && let Some(kind) = self.selection_handle_at(rect, pos)
+                        {
+                            let centre = self.selection_doc_centre().unwrap_or(point);
+                            self.drag = Some(DragState::Transform {
+                                kind,
+                                last: point,
+                                centre,
+                                recorded: false,
+                                constrain: shift,
+                            });
                         } else {
                             match self.editor.tool {
                                 Tool::Select => self.begin_select(point, shift),
@@ -4005,12 +4034,28 @@ impl BeamWrightApp {
                     dark: self.dark_mode,
                 };
                 let painter = ui.painter_at(rect);
-                let toolpaths =
-                    if self.preview_toolpaths || (self.preview_open && self.preview_order) {
-                        Some(crate::gcode::build_toolpaths(&self.editor.document).0)
-                    } else {
-                        None
-                    };
+                let toolpaths = if self.preview_toolpaths
+                    || (self.preview_open && self.preview_order)
+                {
+                    let (paths, _) = crate::gcode::build_toolpaths(&self.editor.document);
+                    Some(
+                        paths
+                            .into_iter()
+                            .filter(|path| {
+                                path.operation_id.as_deref().map_or(true, |id| {
+                                    self.editor
+                                        .document
+                                        .operations
+                                        .iter()
+                                        .find(|operation| operation.id == id)
+                                        .map_or(true, |operation| operation.params.show_in_preview)
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                };
                 self.refresh_image_previews(&ctx);
                 let textures: crate::editor::renderer::ImageTextures = self
                     .image_previews
@@ -4043,7 +4088,19 @@ impl BeamWrightApp {
                 if pointer_in_canvas {
                     let cursor = match self.editor.tool {
                         Tool::Pan => egui::CursorIcon::Grab,
-                        Tool::Select => egui::CursorIcon::Default,
+                        Tool::Select => {
+                            match pointer.and_then(|pos| self.selection_handle_at(rect, pos)) {
+                                Some(HandleKind::Move) => egui::CursorIcon::Grab,
+                                Some(HandleKind::Rotate) => egui::CursorIcon::Crosshair,
+                                Some(HandleKind::Scale(index)) => match index {
+                                    0 | 4 => egui::CursorIcon::ResizeNwSe,
+                                    2 | 6 => egui::CursorIcon::ResizeNeSw,
+                                    1 | 5 => egui::CursorIcon::ResizeVertical,
+                                    _ => egui::CursorIcon::ResizeHorizontal,
+                                },
+                                None => egui::CursorIcon::Default,
+                            }
+                        }
                         _ => egui::CursorIcon::Crosshair,
                     };
                     ctx.set_cursor_icon(cursor);
@@ -4261,6 +4318,260 @@ impl BeamWrightApp {
             ContextAction::DocumentProperties => self.open_document_properties(),
             ContextAction::Preview => self.open_preview(),
             ContextAction::Preferences => self.preferences_open = true,
+        }
+    }
+
+    fn open_cuts(&mut self) {
+        self.cuts_snapshot = Some(self.editor.document.clone());
+        if self.active_operation.is_none() {
+            self.active_operation = self
+                .editor
+                .document
+                .operations
+                .first()
+                .map(|operation| operation.id.clone());
+        }
+        self.cuts_open = true;
+    }
+
+    fn cuts_window(&mut self, ctx: &egui::Context) {
+        use crate::operations::OperationType;
+
+        let mut open = self.cuts_open;
+        let mut operations = self.editor.document.operations.clone();
+        egui::Window::new("Cuts / Layers")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([760.0, 560.0])
+            .show(ctx, |ui| {
+                ui.label("One row per cut. Output controls the job, Show controls the preview, Air emits M8/M9.");
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("cuts_table")
+                            .num_columns(7)
+                            .striped(true)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                for header in ["#", "Layer", "Mode", "Spd/Pwr", "Output", "Show", "Air"] {
+                                    ui.strong(header);
+                                }
+                                ui.end_row();
+                                for (index, operation) in operations.iter_mut().enumerate() {
+                                    ui.label(format!("{:02}", index + 1));
+                                    ui.horizontal(|ui| {
+                                        let rgb = parse_hex_color(&operation.params.color)
+                                            .unwrap_or((0, 0, 0));
+                                        let mut srgb = [rgb.0, rgb.1, rgb.2];
+                                        if ui.color_edit_button_srgb(&mut srgb).changed() {
+                                            operation.params.color =
+                                                to_hex(srgb[0], srgb[1], srgb[2]);
+                                        }
+                                        let selected = self.active_operation.as_deref()
+                                            == Some(operation.id.as_str());
+                                        if ui
+                                            .selectable_label(selected, &operation.name)
+                                            .clicked()
+                                        {
+                                            self.active_operation =
+                                                Some(operation.id.clone());
+                                        }
+                                    });
+                                    let mut op_type = operation.op_type;
+                                    egui::ComboBox::from_id_salt(("cut_mode", index))
+                                        .selected_text(op_type.label())
+                                        .show_ui(ui, |ui| {
+                                            for candidate in OperationType::all() {
+                                                ui.selectable_value(
+                                                    &mut op_type,
+                                                    candidate,
+                                                    candidate.label(),
+                                                );
+                                            }
+                                        });
+                                    operation.op_type = op_type;
+                                    ui.label(format!(
+                                        "{:.0} / {:.0}",
+                                        operation.params.speed, operation.params.power
+                                    ));
+                                    ui.checkbox(&mut operation.enabled, "");
+                                    ui.checkbox(&mut operation.params.show_in_preview, "");
+                                    ui.checkbox(&mut operation.params.air_assist, "");
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                ui.separator();
+                if let Some(id) = self.active_operation.clone() {
+                    if let Some(index) = operations
+                        .iter()
+                        .position(|operation| operation.id == id)
+                    {
+                        let operation = &mut operations[index];
+                        ui.heading("Cut settings");
+                        egui::Grid::new("cut_settings")
+                            .num_columns(2)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("Name");
+                                ui.text_edit_singleline(&mut operation.name);
+                                ui.end_row();
+                                ui.label("Colour");
+                                let rgb = parse_hex_color(&operation.params.color)
+                                    .unwrap_or((0, 0, 0));
+                                let mut srgb = [rgb.0, rgb.1, rgb.2];
+                                if ui.color_edit_button_srgb(&mut srgb).changed() {
+                                    operation.params.color =
+                                        to_hex(srgb[0], srgb[1], srgb[2]);
+                                }
+                                ui.end_row();
+                                ui.label("Mode");
+                                let mut op_type = operation.op_type;
+                                egui::ComboBox::from_id_salt("cut_settings_mode")
+                                    .selected_text(op_type.label())
+                                    .show_ui(ui, |ui| {
+                                        for candidate in OperationType::all() {
+                                            ui.selectable_value(
+                                                &mut op_type,
+                                                candidate,
+                                                candidate.label(),
+                                            );
+                                        }
+                                    });
+                                operation.op_type = op_type;
+                                ui.end_row();
+                                ui.label("Output");
+                                ui.checkbox(&mut operation.enabled, "");
+                                ui.end_row();
+                                ui.label("Air assist");
+                                ui.checkbox(&mut operation.params.air_assist, "");
+                                ui.end_row();
+                                ui.label("Show in preview");
+                                ui.checkbox(&mut operation.params.show_in_preview, "");
+                                ui.end_row();
+                                ui.label("Speed (mm/min)");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.speed)
+                                        .speed(10.0)
+                                        .range(1.0..=100_000.0),
+                                );
+                                ui.end_row();
+                                ui.label("Max power (%)");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.power)
+                                        .speed(1.0)
+                                        .range(0.0..=100.0),
+                                );
+                                ui.end_row();
+                                ui.label("Number of passes");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.passes)
+                                        .range(1..=1000),
+                                );
+                                ui.end_row();
+                                ui.label("Line interval (mm)");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut operation.params.line_interval_mm,
+                                    )
+                                    .speed(0.01)
+                                    .range(0.01..=2.0),
+                                );
+                                ui.end_row();
+                                ui.label("Lines per inch");
+                                ui.weak(format!(
+                                    "{:.2}",
+                                    25.4 / operation.params.line_interval_mm.max(0.001)
+                                ));
+                                ui.end_row();
+                                ui.label("Scan angle (deg)");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut operation.params.fill_angle_degrees,
+                                    )
+                                    .speed(1.0)
+                                    .range(-180.0..=180.0),
+                                );
+                                ui.end_row();
+                                ui.label("Bi-directional fill");
+                                ui.checkbox(&mut operation.params.fill_alternate, "");
+                                ui.end_row();
+                                ui.label("Cross-hatch");
+                                ui.checkbox(&mut operation.params.cross_hatch, "");
+                                ui.end_row();
+                                ui.label("Overscan (mm)");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.overscan_mm)
+                                        .speed(0.1)
+                                        .range(0.0..=50.0),
+                                );
+                                ui.end_row();
+                                ui.label("Constant power mode");
+                                ui.checkbox(&mut operation.params.constant_power, "");
+                                ui.end_row();
+                            });
+                    }
+                } else {
+                    ui.weak("No cut selected. Add one below.");
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("+ Cut").clicked() {
+                        let operation = crate::operations::Operation::new(
+                            format!("Cut {}", operations.len() + 1),
+                            OperationType::OutlineCutting,
+                        );
+                        self.active_operation = Some(operation.id.clone());
+                        operations.push(operation);
+                    }
+                    if ui.button("Delete").clicked() {
+                        if let Some(id) = self.active_operation.clone() {
+                            operations.retain(|operation| operation.id != id);
+                            self.active_operation = operations
+                                .first()
+                                .map(|operation| operation.id.clone());
+                        }
+                    }
+                    if ui.button("Up").clicked() {
+                        if let Some(id) = self.active_operation.clone() {
+                            if let Some(index) = operations
+                                .iter()
+                                .position(|operation| operation.id == id)
+                            {
+                                if index > 0 {
+                                    operations.swap(index, index - 1);
+                                }
+                            }
+                        }
+                    }
+                    if ui.button("Down").clicked() {
+                        if let Some(id) = self.active_operation.clone() {
+                            if let Some(index) = operations
+                                .iter()
+                                .position(|operation| operation.id == id)
+                            {
+                                if index + 1 < operations.len() {
+                                    operations.swap(index, index + 1);
+                                }
+                            }
+                        }
+                    }
+                    if ui.button("Close").clicked() {
+                        open = false;
+                    }
+                });
+            });
+        self.editor.document.operations = operations;
+        self.cuts_open = open;
+        if !open {
+            if let Some(snapshot) = self.cuts_snapshot.take() {
+                if snapshot != self.editor.document {
+                    self.editor.history.record(&snapshot, "Cuts and layers");
+                }
+            }
+            self.cuts_open = false;
         }
     }
 
@@ -4820,6 +5131,56 @@ impl BeamWrightApp {
         }
     }
 
+    fn selection_doc_centre(&self) -> Option<Point2> {
+        self.editor
+            .selected_bounds()
+            .map(|(min, max)| Point2::new(f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y)))
+    }
+
+    fn selection_handle_at(&self, rect: Rect, pos: Pos2) -> Option<HandleKind> {
+        if !self.editor.show_selection || self.editor.selection.is_empty() {
+            return None;
+        }
+        let (min, max) = self.editor.selected_bounds()?;
+        let p0 = crate::editor::renderer::screen_pos(rect, &self.editor, Point2::new(min.x, max.y));
+        let p1 = crate::editor::renderer::screen_pos(rect, &self.editor, Point2::new(max.x, min.y));
+        let bounds = Rect::from_two_pos(p0, p1).expand(2.0);
+        let centre = bounds.center();
+        if bounds.width() > 48.0 && bounds.height() > 48.0 {
+            for corner in [
+                bounds.left_top(),
+                bounds.right_top(),
+                bounds.right_bottom(),
+                bounds.left_bottom(),
+            ] {
+                let direction = corner - centre;
+                let length = direction.length();
+                if length > 1.0 && (corner + direction / length * 18.0 - pos).length() <= 9.0 {
+                    return Some(HandleKind::Rotate);
+                }
+            }
+        }
+        let handles = [
+            bounds.left_top(),
+            bounds.center_top(),
+            bounds.right_top(),
+            bounds.right_center(),
+            bounds.right_bottom(),
+            bounds.center_bottom(),
+            bounds.left_bottom(),
+            bounds.left_center(),
+        ];
+        for (index, handle) in handles.iter().enumerate() {
+            if (*handle - pos).length() <= 8.0 {
+                return Some(HandleKind::Scale(index));
+            }
+        }
+        if (centre - pos).length() <= 9.0 {
+            return Some(HandleKind::Move);
+        }
+        None
+    }
+
     fn doc_point(&self, rect: Rect, pos: Pos2) -> Point2 {
         let (x, y) = self
             .editor
@@ -4959,6 +5320,74 @@ impl BeamWrightApp {
                     points.push(point);
                 }
             }
+            DragState::Transform {
+                kind,
+                last,
+                centre,
+                recorded,
+                constrain,
+            } => {
+                let (dx, dy) = (point.x - last.x, point.y - last.y);
+                let action = match kind {
+                    HandleKind::Move => "Move",
+                    HandleKind::Scale(_) => "Scale",
+                    HandleKind::Rotate => "Rotate",
+                };
+                if !*recorded && (dx.abs() > 1e-9 || dy.abs() > 1e-9) {
+                    self.editor.record_action(action);
+                    *recorded = true;
+                }
+                match *kind {
+                    HandleKind::Move => self.editor.move_selection(dx, dy),
+                    HandleKind::Rotate => {
+                        let before = (last.y - centre.y).atan2(last.x - centre.x);
+                        let now = (point.y - centre.y).atan2(point.x - centre.x);
+                        let mut delta = now - before;
+                        while delta > std::f64::consts::PI {
+                            delta -= std::f64::consts::TAU;
+                        }
+                        while delta < -std::f64::consts::PI {
+                            delta += std::f64::consts::TAU;
+                        }
+                        if delta.abs() > 1e-9 {
+                            self.editor.rotate_selection(delta);
+                        }
+                    }
+                    HandleKind::Scale(index) => {
+                        let uses_x = !matches!(index, 1 | 5);
+                        let uses_y = !matches!(index, 3 | 7);
+                        let last_x = last.x - centre.x;
+                        let last_y = last.y - centre.y;
+                        let mut factor_x = if uses_x && last_x.abs() > 1e-9 {
+                            (point.x - centre.x) / last_x
+                        } else {
+                            1.0
+                        };
+                        let mut factor_y = if uses_y && last_y.abs() > 1e-9 {
+                            (point.y - centre.y) / last_y
+                        } else {
+                            1.0
+                        };
+                        if *constrain {
+                            let factor = if (factor_x - 1.0).abs() > (factor_y - 1.0).abs() {
+                                factor_x
+                            } else {
+                                factor_y
+                            };
+                            factor_x = factor;
+                            factor_y = factor;
+                        }
+                        if factor_x.is_finite()
+                            && factor_y.is_finite()
+                            && factor_x > 0.01
+                            && factor_y > 0.01
+                        {
+                            self.editor.scale_selection(factor_x, factor_y);
+                        }
+                    }
+                }
+                *last = point;
+            }
             DragState::Pan { last } => {
                 let dx = f64::from(pos.x - last.0);
                 let dy = f64::from(pos.y - last.1);
@@ -5058,7 +5487,8 @@ impl BeamWrightApp {
             DragState::Move { .. }
             | DragState::Pan { .. }
             | DragState::NodeMove { .. }
-            | DragState::Handle { .. } => {}
+            | DragState::Handle { .. }
+            | DragState::Transform { .. } => {}
         }
     }
 
@@ -6879,6 +7309,9 @@ impl BeamWrightApp {
         }
         if self.machines_open {
             self.machines_window(ctx);
+        }
+        if self.cuts_open {
+            self.cuts_window(ctx);
         }
         if self.image_adjust.is_some() {
             self.image_adjust_window(ctx);

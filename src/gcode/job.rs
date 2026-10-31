@@ -52,6 +52,10 @@ struct Resolved {
     fill_alternate: bool,
     fill_margin_mm: f64,
     fill_offset_mm: f64,
+    overscan_mm: f64,
+    cross_hatch: bool,
+    air_assist: bool,
+    constant_power: bool,
     operation_name: Option<String>,
 }
 
@@ -73,6 +77,10 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             fill_angle_degrees: operation.params.fill_angle_degrees,
             fill_alternate: operation.params.fill_alternate,
             fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
+            overscan_mm: operation.params.overscan_mm.max(0.0),
+            cross_hatch: operation.params.cross_hatch,
+            air_assist: operation.params.air_assist,
+            constant_power: operation.params.constant_power,
             fill_offset_mm: operation.params.fill_offset_mm,
             operation_name: Some(operation.name.clone()),
         }),
@@ -168,7 +176,10 @@ pub fn build_toolpaths_cancellable(
                             resolved.passes,
                         );
                         append_contour(&mut toolpath, &points);
-                        let mut toolpath = toolpath.with_operation(object.operation_id.as_deref());
+                        let mut toolpath = toolpath
+                            .with_operation(object.operation_id.as_deref())
+                            .with_air_assist(resolved.air_assist)
+                            .with_constant_power(resolved.constant_power);
                         toolpath.operation_name.clone_from(&resolved.operation_name);
                         toolpaths.push(toolpath);
                     }
@@ -304,7 +315,12 @@ fn push_fill_toolpath(
                 object.name, resolved.line_interval_mm
             ));
         } else {
-            toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
+            toolpaths.push(
+                toolpath
+                    .with_operation(object.operation_id.as_deref())
+                    .with_air_assist(resolved.air_assist)
+                    .with_constant_power(resolved.constant_power),
+            );
         }
         return Ok(());
     }
@@ -330,15 +346,43 @@ fn push_fill_toolpath(
         }
         fill_polygon = inset;
     }
-    let lines = crate::geometry::fill::fill_lines_with(
-        &fill_polygon,
-        crate::geometry::fill::FillOptions {
-            spacing: resolved.line_interval_mm,
-            angle: resolved.fill_angle_degrees.to_radians(),
-            offset: resolved.fill_offset_mm,
-            alternate: resolved.fill_alternate,
-        },
-    );
+    let options = crate::geometry::fill::FillOptions {
+        spacing: resolved.line_interval_mm,
+        angle: resolved.fill_angle_degrees.to_radians(),
+        offset: resolved.fill_offset_mm,
+        alternate: resolved.fill_alternate,
+    };
+    let mut lines = crate::geometry::fill::fill_lines_with(&fill_polygon, options);
+    if resolved.cross_hatch {
+        lines.extend(crate::geometry::fill::fill_lines_with(
+            &fill_polygon,
+            crate::geometry::fill::FillOptions {
+                angle: options.angle + std::f64::consts::FRAC_PI_2,
+                ..options
+            },
+        ));
+    }
+    let overscan = resolved.overscan_mm;
+    let lines: Vec<((f64, f64), (f64, f64))> = lines
+        .into_iter()
+        .map(|((x0, y0), (x1, y1))| {
+            if overscan <= 0.0 {
+                return ((x0, y0), (x1, y1));
+            }
+            let dx = x1 - x0;
+            let dy = y1 - y0;
+            let length = dx.hypot(dy);
+            if length <= 1e-9 {
+                return ((x0, y0), (x1, y1));
+            }
+            let ux = dx / length;
+            let uy = dy / length;
+            (
+                (x0 - ux * overscan, y0 - uy * overscan),
+                (x1 + ux * overscan, y1 + uy * overscan),
+            )
+        })
+        .collect();
     if lines.is_empty() {
         warnings.push(format!(
             "'{}' is too small to fill at {} mm spacing",
@@ -362,7 +406,10 @@ fn push_fill_toolpath(
         append_contour(&mut toolpath, points);
     }
     if !toolpath.is_empty() {
-        let mut toolpath = toolpath.with_operation(object.operation_id.as_deref());
+        let mut toolpath = toolpath
+            .with_operation(object.operation_id.as_deref())
+            .with_air_assist(resolved.air_assist)
+            .with_constant_power(resolved.constant_power);
         toolpath.operation_name.clone_from(&resolved.operation_name);
         toolpaths.push(toolpath);
     }

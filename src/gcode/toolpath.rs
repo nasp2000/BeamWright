@@ -29,6 +29,10 @@ pub struct Toolpath {
     pub operation_id: Option<String>,
     /// Name of that operation, for readable comments.
     pub operation_name: Option<String>,
+    /// Turn air assist on around this toolpath (M8/M9).
+    pub air_assist: bool,
+    /// Use M3 (constant power) instead of M4 for this toolpath.
+    pub constant_power: bool,
 }
 
 impl Toolpath {
@@ -41,12 +45,26 @@ impl Toolpath {
             passes: passes.max(1),
             operation_id: None,
             operation_name: None,
+            air_assist: false,
+            constant_power: false,
         }
     }
 
     /// Attach the operation that produced this toolpath.
     pub fn with_operation(mut self, operation_id: Option<&str>) -> Self {
         self.operation_id = operation_id.map(str::to_string);
+        self
+    }
+
+    /// Turn air assist on or off for this toolpath.
+    pub fn with_air_assist(mut self, air_assist: bool) -> Self {
+        self.air_assist = air_assist;
+        self
+    }
+
+    /// Select constant or dynamic laser power for this toolpath.
+    pub fn with_constant_power(mut self, constant_power: bool) -> Self {
+        self.constant_power = constant_power;
         self
     }
 

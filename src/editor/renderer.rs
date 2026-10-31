@@ -657,13 +657,43 @@ fn paint_selection(painter: &Painter, rect: Rect, editor: &EditorState, theme: T
         let p1 = screen_pos(rect, editor, Point2::new(max.x, min.y));
         let bounds = Rect::from_two_pos(p0, p1).expand(2.0);
         painter.rect_stroke(bounds, 0.0, stroke, egui::StrokeKind::Outside);
-        for corner in [
+        let centre = bounds.center();
+        for handle in [
             bounds.left_top(),
+            bounds.center_top(),
             bounds.right_top(),
+            bounds.right_center(),
             bounds.right_bottom(),
+            bounds.center_bottom(),
             bounds.left_bottom(),
+            bounds.left_center(),
         ] {
-            painter.rect_filled(Rect::from_center_size(corner, Vec2::splat(6.0)), 1.0, color);
+            painter.rect_filled(Rect::from_center_size(handle, Vec2::splat(7.0)), 1.0, color);
+        }
+        painter.rect_filled(
+            Rect::from_center_size(centre, Vec2::splat(9.0)),
+            1.0,
+            Color32::from_rgb(46, 160, 67),
+        );
+        if bounds.width() > 48.0 && bounds.height() > 48.0 {
+            for corner in [
+                bounds.left_top(),
+                bounds.right_top(),
+                bounds.right_bottom(),
+                bounds.left_bottom(),
+            ] {
+                let direction = corner - centre;
+                let length = direction.length();
+                if length <= 1.0 {
+                    continue;
+                }
+                let handle = corner + direction / length * 18.0;
+                painter.circle_stroke(handle, 5.0, stroke);
+                painter.line_segment(
+                    [handle + Vec2::new(-3.0, 3.0), handle + Vec2::new(3.0, -3.0)],
+                    stroke,
+                );
+            }
         }
     }
     // Show every selected object's outline, not just the group bounds.

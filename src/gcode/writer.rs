@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::gcode::dialect::GCodeOptions;
+use crate::gcode::dialect::{GCodeOptions, LaserMode};
 use crate::gcode::toolpath::{MoveKind, Toolpath};
 
 /// Render toolpaths as a GRBL 1.1 job.
@@ -31,7 +31,23 @@ impl GCodeWriter {
         let _ = write!(out, "G17{newline}");
         let _ = write!(out, "{}{newline}", self.options.laser_mode.command());
         let precision = self.options.decimals as usize;
+        let mut air_on = false;
+        let mut constant_power = self.options.laser_mode == LaserMode::ConstantPower;
         for (index, toolpath) in toolpaths.iter().enumerate() {
+            if toolpath.air_assist && !air_on {
+                let _ = write!(out, "M8{newline}");
+                air_on = true;
+            } else if !toolpath.air_assist && air_on {
+                let _ = write!(out, "M9{newline}");
+                air_on = false;
+            }
+            if toolpath.constant_power && !constant_power {
+                let _ = write!(out, "M3{newline}");
+                constant_power = true;
+            } else if !toolpath.constant_power && constant_power {
+                let _ = write!(out, "M4{newline}");
+                constant_power = false;
+            }
             if self.options.include_comments {
                 let operation = toolpath
                     .operation_name
@@ -120,6 +136,26 @@ fn fmt_num(value: f64, decimals: usize) -> String {
 mod tests {
     use super::*;
     use crate::gcode::dialect::LaserMode;
+
+    #[test]
+    fn air_assist_and_constant_power_follow_the_toolpaths() {
+        let mut assisted = Toolpath::new("Cut", 1000.0, 500.0, 1)
+            .with_air_assist(true)
+            .with_constant_power(true);
+        assisted.push(MoveKind::Travel, 0.0, 0.0);
+        assisted.push(MoveKind::Cut, 10.0, 0.0);
+        let mut plain = Toolpath::new("Engrave", 800.0, 300.0, 1);
+        plain.push(MoveKind::Travel, 0.0, 5.0);
+        plain.push(MoveKind::Cut, 10.0, 5.0);
+        let text = GCodeWriter::new(GCodeOptions::default()).render(&[assisted, plain]);
+        assert!(text.contains("M8"), "air assist was not enabled\n{text}");
+        assert!(text.contains("M3"), "constant power was not selected\n{text}");
+        assert!(text.contains("M9"), "air assist was not disabled\n{text}");
+        assert!(
+            text.matches("M4").count() >= 2,
+            "dynamic power was not restored\n{text}"
+        );
+    }
 
     fn sample() -> Toolpath {
         let mut toolpath = Toolpath::new("Outline", 1000.0, 500.0, 1);
