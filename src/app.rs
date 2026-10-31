@@ -38,6 +38,144 @@ enum PendingAction {
     Quit,
 }
 
+/// Entry offered by the canvas context menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextAction {
+    Cut,
+    Copy,
+    Paste,
+    Duplicate,
+    Delete,
+    ToFront,
+    ToBack,
+    Group,
+    Ungroup,
+    Lock,
+    Unlock,
+    EditNodes,
+    TextToOutlines,
+    ExportSvg,
+    ExportDxf,
+    ExportGcode,
+    SelectAll,
+    ZoomIn,
+    ZoomOut,
+    FitPage,
+    ZoomSelection,
+    Guides,
+    DocumentProperties,
+    Preview,
+    Preferences,
+}
+
+impl ContextAction {
+    fn label(self) -> &'static str {
+        match self {
+            ContextAction::Cut => "Cut",
+            ContextAction::Copy => "Copy",
+            ContextAction::Paste => "Paste",
+            ContextAction::Duplicate => "Duplicate",
+            ContextAction::Delete => "Delete",
+            ContextAction::ToFront => "Bring to front",
+            ContextAction::ToBack => "Send to back",
+            ContextAction::Group => "Group",
+            ContextAction::Ungroup => "Ungroup",
+            ContextAction::Lock => "Lock",
+            ContextAction::Unlock => "Unlock",
+            ContextAction::EditNodes => "Edit nodes",
+            ContextAction::TextToOutlines => "Text to outlines",
+            ContextAction::ExportSvg => "Export selection as SVG...",
+            ContextAction::ExportDxf => "Export selection as DXF...",
+            ContextAction::ExportGcode => "Export selection as G-code...",
+            ContextAction::SelectAll => "Select all",
+            ContextAction::ZoomIn => "Zoom in",
+            ContextAction::ZoomOut => "Zoom out",
+            ContextAction::FitPage => "Fit page",
+            ContextAction::ZoomSelection => "Zoom to selection",
+            ContextAction::Guides => "Guides...",
+            ContextAction::DocumentProperties => "Document properties...",
+            ContextAction::Preview => "Preview and G-code...",
+            ContextAction::Preferences => "Preferences...",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            ContextAction::Cut => Icon::Cut,
+            ContextAction::Copy => Icon::Copy,
+            ContextAction::Paste => Icon::Paste,
+            ContextAction::Duplicate => Icon::Duplicate,
+            ContextAction::Delete => Icon::Delete,
+            ContextAction::ToFront => Icon::ToFront,
+            ContextAction::ToBack => Icon::ToBack,
+            ContextAction::Group => Icon::Group,
+            ContextAction::Ungroup => Icon::Ungroup,
+            ContextAction::Lock => Icon::Lock,
+            ContextAction::Unlock => Icon::Unlock,
+            ContextAction::EditNodes => Icon::Nodes,
+            ContextAction::TextToOutlines => Icon::TextOutline,
+            ContextAction::ExportSvg | ContextAction::ExportDxf | ContextAction::ExportGcode => {
+                Icon::Export
+            }
+            ContextAction::SelectAll => Icon::SelectAll,
+            ContextAction::ZoomIn => Icon::ZoomIn,
+            ContextAction::ZoomOut => Icon::ZoomOut,
+            ContextAction::FitPage => Icon::ZoomFit,
+            ContextAction::ZoomSelection => Icon::ZoomSelection,
+            ContextAction::Guides => Icon::Guides,
+            ContextAction::DocumentProperties => Icon::Page,
+            ContextAction::Preview => Icon::Play,
+            ContextAction::Preferences => Icon::Preferences,
+        }
+    }
+}
+
+/// Entries of the context menu over the selected objects.
+fn object_context_actions(count: usize, text_selected: bool) -> Vec<ContextAction> {
+    let mut actions = vec![
+        ContextAction::Cut,
+        ContextAction::Copy,
+        ContextAction::Duplicate,
+        ContextAction::Delete,
+        ContextAction::ToFront,
+        ContextAction::ToBack,
+    ];
+    if count >= 2 {
+        actions.push(ContextAction::Group);
+    }
+    actions.push(ContextAction::Ungroup);
+    actions.push(ContextAction::Lock);
+    actions.push(ContextAction::Unlock);
+    if count == 1 {
+        actions.push(ContextAction::EditNodes);
+    }
+    if text_selected {
+        actions.push(ContextAction::TextToOutlines);
+    }
+    actions.extend([
+        ContextAction::ExportSvg,
+        ContextAction::ExportDxf,
+        ContextAction::ExportGcode,
+    ]);
+    actions
+}
+
+/// Entries of the context menu over empty work area.
+fn canvas_context_actions() -> Vec<ContextAction> {
+    let mut actions = vec![ContextAction::Paste, ContextAction::SelectAll];
+    actions.extend([
+        ContextAction::ZoomIn,
+        ContextAction::ZoomOut,
+        ContextAction::FitPage,
+        ContextAction::ZoomSelection,
+        ContextAction::Guides,
+        ContextAction::DocumentProperties,
+        ContextAction::Preview,
+        ContextAction::Preferences,
+    ]);
+    actions
+}
+
 #[derive(Debug, Clone)]
 enum DragState {
     Move {
@@ -119,6 +257,8 @@ pub struct BeamWrightApp {
     repeat_open: bool,
     repeat_options: crate::editor::RepeatOptions,
     clipboard: Vec<crate::document::Object>,
+    context_object: Option<String>,
+    context_point: Option<Point2>,
     operation_params: Option<crate::operations::OperationParams>,
     link_proportions: bool,
     skew_open: bool,
@@ -483,6 +623,8 @@ impl BeamWrightApp {
             repeat_open: false,
             repeat_options: crate::editor::RepeatOptions::default(),
             clipboard: Vec::new(),
+            context_object: None,
+            context_point: None,
             operation_params: None,
             link_proportions: false,
             skew_open: false,
@@ -3619,12 +3761,202 @@ impl BeamWrightApp {
                     };
                     ctx.set_cursor_icon(cursor);
                 }
+                if !modal && response.secondary_clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let point = self.doc_point(rect, pos);
+                        let tolerance = 8.0 / self.editor.canvas.zoom.max(0.01);
+                        let hit = self.editor.object_at(point, tolerance);
+                        if let Some(id) = &hit {
+                            if !self.editor.selection.contains(id) {
+                                self.editor.select_at(point, false, tolerance);
+                            }
+                        }
+                        self.context_object = hit;
+                        self.context_point = Some(point);
+                    }
+                }
+                if !modal {
+                    response.context_menu(|ui| {
+                        if self.context_object.is_some() {
+                            self.object_context_menu(ui);
+                        } else {
+                            self.canvas_context_menu(ui);
+                        }
+                    });
+                }
                 // Canvas edits are applied after the side panels have already
                 // been painted; request one more frame so they show the result.
                 if primary_pressed || primary_released || self.drag.is_some() {
                     ctx.request_repaint();
                 }
             });
+    }
+
+    fn object_context_menu(&mut self, ui: &mut Ui) {
+        let count = self.editor.selection.len();
+        let text_selected = if count == 1 {
+            self.editor.selection.ids().first().is_some_and(|id| {
+                self.editor
+                    .document
+                    .objects
+                    .iter()
+                    .any(|object| &object.id == id && matches!(object.shape, Shape::Text(_)))
+            })
+        } else {
+            false
+        };
+        let has_selection = count > 0;
+        for action in object_context_actions(count, text_selected) {
+            if matches!(
+                action,
+                ContextAction::ToFront
+                    | ContextAction::Lock
+                    | ContextAction::EditNodes
+                    | ContextAction::ExportSvg
+            ) {
+                ui.separator();
+            }
+            let enabled = match action {
+                ContextAction::Cut
+                | ContextAction::Copy
+                | ContextAction::Duplicate
+                | ContextAction::Delete
+                | ContextAction::ToFront
+                | ContextAction::ToBack
+                | ContextAction::Lock
+                | ContextAction::Unlock
+                | ContextAction::Ungroup
+                | ContextAction::ExportSvg
+                | ContextAction::ExportDxf
+                | ContextAction::ExportGcode => has_selection,
+                ContextAction::Group => count >= 2,
+                ContextAction::EditNodes => count == 1,
+                ContextAction::TextToOutlines => text_selected,
+                _ => true,
+            };
+            if icons::button_enabled(ui, enabled, action.icon(), action.label()).clicked() {
+                self.run_context_action(action);
+                ui.close();
+            }
+        }
+    }
+
+    fn canvas_context_menu(&mut self, ui: &mut Ui) {
+        for action in canvas_context_actions() {
+            match action {
+                ContextAction::Paste => {
+                    if icons::button_enabled(ui, !self.clipboard.is_empty(), Icon::Paste, "Paste")
+                        .clicked()
+                    {
+                        self.run_context_action(action);
+                        ui.close();
+                    }
+                }
+                _ => {
+                    if icons::button(ui, action.icon(), action.label()).clicked() {
+                        self.run_context_action(action);
+                        ui.close();
+                    }
+                }
+            }
+        }
+        ui.separator();
+        icons::checkbox(
+            ui,
+            &mut self.editor.canvas.grid_visible,
+            Icon::Grid,
+            "Show grid",
+        );
+        icons::checkbox(
+            ui,
+            &mut self.editor.show_rulers,
+            Icon::Rulers,
+            "Show rulers",
+        );
+        icons::checkbox(
+            ui,
+            &mut self.editor.guides_visible,
+            Icon::Guides,
+            "Show guides",
+        );
+        icons::checkbox(
+            ui,
+            &mut self.editor.snap_enabled,
+            Icon::Snap,
+            "Snap to grid",
+        );
+    }
+
+    fn run_context_action(&mut self, action: ContextAction) {
+        match action {
+            ContextAction::Cut => self.cut(),
+            ContextAction::Copy => self.copy(),
+            ContextAction::Paste => self.paste(),
+            ContextAction::Duplicate => {
+                self.editor.duplicate_selection();
+            }
+            ContextAction::Delete => {
+                self.editor.delete_selection();
+            }
+            ContextAction::ToFront => {
+                let count = self.editor.bring_selection_to_front();
+                self.status = format!("Brought {count} object(s) to the front");
+            }
+            ContextAction::ToBack => {
+                let count = self.editor.send_selection_to_back();
+                self.status = format!("Sent {count} object(s) to the back");
+            }
+            ContextAction::Group => {
+                self.editor.group_selection();
+            }
+            ContextAction::Ungroup => {
+                self.editor.ungroup_selection();
+            }
+            ContextAction::Lock => {
+                let count = self.editor.lock_selection();
+                self.status = format!("Locked {count} object(s)");
+            }
+            ContextAction::Unlock => {
+                let count = self.editor.unlock_selection();
+                self.status = format!("Unlocked {count} object(s)");
+            }
+            ContextAction::EditNodes => {
+                if let Some(id) = self.editor.selection.ids().first().cloned() {
+                    match self.editor.begin_node_edit(&id) {
+                        Ok(()) => {
+                            self.status =
+                                "Editing nodes: drag to move, double-click a segment to insert"
+                                    .to_string();
+                        }
+                        Err(error) => self.status = format!("Cannot edit nodes: {error}"),
+                    }
+                }
+            }
+            ContextAction::TextToOutlines => self.apply_text_outlines(),
+            ContextAction::ExportSvg => {
+                self.export_subset = true;
+                self.open_dialog(FileMode::ExportSvg);
+            }
+            ContextAction::ExportDxf => {
+                self.export_subset = true;
+                self.open_dialog(FileMode::ExportDxf);
+            }
+            ContextAction::ExportGcode => {
+                self.export_subset = true;
+                self.open_dialog(FileMode::ExportGcode);
+            }
+            ContextAction::SelectAll => {
+                self.editor.select_all();
+            }
+            ContextAction::ZoomIn => self.editor.zoom_in(),
+            ContextAction::ZoomOut => self.editor.zoom_out(),
+            ContextAction::FitPage => self.needs_fit = true,
+            ContextAction::ZoomSelection => self.zoom_to_selection_request = true,
+            ContextAction::Guides => self.guides_open = true,
+            ContextAction::DocumentProperties => self.doc_properties_open = true,
+            ContextAction::Preview => self.open_preview(),
+            ContextAction::Preferences => self.preferences_open = true,
+        }
     }
 
     fn refresh_image_previews(&mut self, ctx: &egui::Context) {
@@ -6020,6 +6352,37 @@ mod tests {
         let image = preview_color_image(&bitmap);
         assert_eq!(image.size, [1, 1]);
         assert_eq!(image.pixels[0], egui::Color32::BLACK);
+    }
+
+    #[test]
+    fn object_context_menu_matches_the_selection() {
+        let none = object_context_actions(0, false);
+        assert!(none.contains(&ContextAction::Cut));
+        assert!(!none.contains(&ContextAction::Group));
+        assert!(!none.contains(&ContextAction::EditNodes));
+        assert!(!none.contains(&ContextAction::TextToOutlines));
+
+        let pair = object_context_actions(2, false);
+        assert!(pair.contains(&ContextAction::Group));
+        assert!(!pair.contains(&ContextAction::EditNodes));
+
+        let text = object_context_actions(1, true);
+        assert!(text.contains(&ContextAction::EditNodes));
+        assert!(text.contains(&ContextAction::TextToOutlines));
+        assert!(!text.contains(&ContextAction::Group));
+    }
+
+    #[test]
+    fn canvas_context_menu_offers_work_area_commands() {
+        let actions = canvas_context_actions();
+        assert!(actions.contains(&ContextAction::Paste));
+        assert!(actions.contains(&ContextAction::SelectAll));
+        assert!(actions.contains(&ContextAction::ZoomIn));
+        assert!(actions.contains(&ContextAction::FitPage));
+        assert!(actions.contains(&ContextAction::DocumentProperties));
+        assert!(actions.contains(&ContextAction::Preferences));
+        assert!(!actions.contains(&ContextAction::Cut));
+        assert!(!actions.contains(&ContextAction::Delete));
     }
 
     #[test]
