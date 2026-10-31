@@ -37,10 +37,10 @@ impl FileMode {
             FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportPng
-            | FileMode::ExportGcode => "Export",
+            | FileMode::ExportGcode
+            | FileMode::ExportProfiles => "Export",
             FileMode::RelinkImage => "Relink",
             FileMode::ImportProfiles => "Import",
-            FileMode::ExportProfiles => "Export",
         }
     }
 
