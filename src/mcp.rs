@@ -305,6 +305,17 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "outline_stroke" => {
+                self.select_scope(arguments)?;
+                let count = self
+                    .editor
+                    .outline_selection()
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "contours": count,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "join_paths" => {
                 self.select_scope(arguments)?;
                 let id = self.editor.join_paths().map_err(BeamError::InvalidInput)?;
@@ -581,6 +592,13 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "outline_stroke",
+            "Replace strokes by their outline contours (all objects when ids are omitted).",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
             "join_paths",
             "Join open paths into one path (all objects when ids are omitted).",
             json!({"type": "object", "properties": {
@@ -784,6 +802,22 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn outline_tool_creates_contours() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let outline = call(&mut server, "outline_stroke", json!({"ids": [id]}));
+        assert_eq!(outline["result"]["contours"], 2);
+        assert_eq!(outline["result"]["objects"], 2);
     }
 
     #[test]

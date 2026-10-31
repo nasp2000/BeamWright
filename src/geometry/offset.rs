@@ -239,9 +239,11 @@ pub fn offset_polyline(poly: &[(f64, f64)], distance: f64) -> Vec<(f64, f64)> {
         };
         let nx = f64::midpoint(n1.0, n2.0);
         let ny = f64::midpoint(n1.1, n2.1);
+        // The normals already carry `distance`; only normalise here, otherwise
+        // a negative distance would be applied twice and flip back.
         let len = (nx * nx + ny * ny).sqrt();
         let (nx, ny) = if len > 0.0 {
-            (nx / len * distance, ny / len * distance)
+            (nx / len, ny / len)
         } else {
             (0.0, 0.0)
         };
@@ -410,6 +412,15 @@ mod round_tests {
 #[cfg(test)]
 mod polyline_tests {
     use super::offset_polyline;
+
+    #[test]
+    fn negative_distance_offsets_to_the_other_side() {
+        let line = [(0.0, 0.0), (10.0, 0.0)];
+        let left = offset_polyline(&line, 1.0);
+        let right = offset_polyline(&line, -1.0);
+        assert!(left.iter().all(|point| (point.1 - 1.0).abs() < 1e-9));
+        assert!(right.iter().all(|point| (point.1 + 1.0).abs() < 1e-9));
+    }
 
     #[test]
     fn empty() {

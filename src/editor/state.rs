@@ -10,6 +10,15 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
+/// One contour produced by an outline: points plus whether it is closed.
+type OutlineContour = (Vec<(f64, f64)>, bool);
+
+/// An object replaced by its stroke outline.
+struct Outlined {
+    index: usize,
+    contours: Vec<OutlineContour>,
+}
+
 /// One crossing between the outlines of two objects.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathIntersection {
@@ -566,6 +575,119 @@ impl EditorState {
             }
         }
         found
+    }
+
+    /// The contours that reproduce an object's stroke, or an error naming why
+    /// it cannot be outlined.
+    fn stroke_contours(object: &Object) -> std::result::Result<Vec<OutlineContour>, String> {
+        use crate::geometry::boolean::polygon_area;
+        use crate::geometry::offset::{offset_collapsed, offset_polygon_miter, offset_polyline};
+
+        let width = object.style.stroke_width_mm;
+        if !width.is_finite() || width <= 0.0 {
+            return Err(format!("'{}' has no stroke width", object.name));
+        }
+        let path = object.world_path();
+        if path.is_empty() {
+            return Err(format!("'{}' has no vector outline", object.name));
+        }
+        let half = width / 2.0;
+        let mut contours = Vec::new();
+        if path.closed {
+            let mut contour: Vec<(f64, f64)> = path
+                .flatten(0.2)
+                .into_iter()
+                .map(|point| (point.x, point.y))
+                .collect();
+            if contour.len() > 1 {
+                let first = contour[0];
+                let last = contour[contour.len() - 1];
+                if (first.0 - last.0).abs() <= 1e-9 && (first.1 - last.1).abs() <= 1e-9 {
+                    contour.pop();
+                }
+            }
+            if polygon_area(&contour) < 0.0 {
+                contour.reverse();
+            }
+            let outer = offset_polygon_miter(&contour, half);
+            if outer.len() >= 3 {
+                contours.push((outer, true));
+            }
+            let inner = offset_polygon_miter(&contour, -half);
+            if inner.len() >= 3
+                && !offset_collapsed(&contour, &inner, -half)
+                && polygon_area(&inner) > 1e-9
+            {
+                contours.push((inner, true));
+            }
+        } else {
+            let points: Vec<(f64, f64)> = path
+                .flatten(0.2)
+                .into_iter()
+                .map(|point| (point.x, point.y))
+                .collect();
+            if points.len() >= 2 {
+                contours.push((offset_polyline(&points, half), false));
+                contours.push((offset_polyline(&points, -half), false));
+            }
+        }
+        if contours.is_empty() {
+            return Err(format!("'{}' is too thin to outline", object.name));
+        }
+        Ok(contours)
+    }
+
+    /// Replace each selected stroke by the outlines of its width.
+    ///
+    /// A closed shape becomes an outer and an inner contour, so cutting both
+    /// reproduces the painted stroke; an open path becomes two offset polylines.
+    /// The new paths keep the original style and remove the source object.
+    /// Returns the number of contours created.
+    pub fn outline_selection(&mut self) -> std::result::Result<usize, String> {
+        let targets = self.selected_indices();
+        if targets.is_empty() {
+            return Err("Select at least one object".to_string());
+        }
+        let mut outlined: Vec<Outlined> = Vec::new();
+        for index in targets {
+            self.ensure_editable(index)?;
+            let contours = Self::stroke_contours(&self.document.objects[index])?;
+            outlined.push(Outlined { index, contours });
+        }
+        let created: usize = outlined.iter().map(|entry| entry.contours.len()).sum();
+        self.record();
+        self.selection.clear();
+        let mut templates: Vec<(usize, Object, Vec<OutlineContour>)> = outlined
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.index,
+                    self.document.objects[entry.index].clone(),
+                    entry.contours,
+                )
+            })
+            .collect();
+        let mut removed: Vec<usize> = templates.iter().map(|(index, _, _)| *index).collect();
+        removed.sort_unstable();
+        removed.reverse();
+        for index in removed {
+            self.document.objects.remove(index);
+        }
+        for (index, template, contours) in templates.drain(..) {
+            let insert_at = index.min(self.document.objects.len());
+            for (position, (points, closed)) in contours.into_iter().enumerate() {
+                let mut object = Object::new(
+                    template.layer_id.clone(),
+                    Shape::Path(Path::from_points(&points, closed)),
+                )
+                .with_style(template.style.clone());
+                object.name = format!("{} outline {}", template.name, position + 1);
+                object.operation_id.clone_from(&template.operation_id);
+                self.selection.add(object.id.clone());
+                self.document.objects.insert(insert_at + position, object);
+            }
+        }
+        Ok(created)
     }
 
     /// Join the selected open paths into one path, welding the nearest ends.
@@ -2307,6 +2429,104 @@ mod tests {
             .unwrap();
         editor.selection.clear();
         assert_eq!(editor.intersections().len(), 2);
+    }
+
+    #[test]
+    fn outline_turns_a_closed_stroke_into_two_contours() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(10.0, 10.0), Point2::new(20.0, 20.0))
+            .unwrap();
+        {
+            let object = editor.document.object_mut(&rect).unwrap();
+            object.style.stroke_width_mm = 2.0;
+        }
+        editor.selection.clear();
+        editor.selection.add(rect);
+        assert_eq!(editor.outline_selection().unwrap(), 2);
+        assert_eq!(editor.document.objects.len(), 2);
+        let mut bounds: Vec<_> = editor
+            .document
+            .objects
+            .iter()
+            .filter_map(Object::bounds)
+            .map(|(min, max)| (min.x, min.y, max.x, max.y))
+            .collect();
+        bounds.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap());
+        assert!((bounds[0].0 - 9.0).abs() < 1e-6);
+        assert!((bounds[0].3 - 21.0).abs() < 1e-6);
+        assert!((bounds[1].0 - 11.0).abs() < 1e-6);
+        assert!((bounds[1].3 - 19.0).abs() < 1e-6);
+        assert!(
+            editor
+                .document
+                .objects
+                .iter()
+                .all(|object| { matches!(&object.shape, Shape::Path(path) if path.closed) })
+        );
+    }
+
+    #[test]
+    fn outline_turns_an_open_stroke_into_offsets() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        {
+            let object = editor.document.object_mut(&line).unwrap();
+            object.style.stroke_width_mm = 2.0;
+        }
+        editor.selection.clear();
+        editor.selection.add(line);
+        assert_eq!(editor.outline_selection().unwrap(), 2);
+        assert_eq!(editor.document.objects.len(), 2);
+        for object in &editor.document.objects {
+            let path = object.world_path();
+            assert!(!path.closed);
+            let (min, max) = object.bounds().unwrap();
+            assert!((max.y - min.y).abs() < 1e-6);
+        }
+        let mut heights: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .map(|object| object.bounds().unwrap().0.y)
+            .collect();
+        heights.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        assert!((heights[0] + 1.0).abs() < 1e-6);
+        assert!((heights[1] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn outline_rejects_shapes_without_geometry() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        {
+            let object = editor.document.object_mut(&line).unwrap();
+            object.style.stroke_width_mm = 0.0;
+        }
+        editor.selection.clear();
+        editor.selection.add(line);
+        let error = editor.outline_selection().unwrap_err();
+        assert!(error.contains("stroke width"), "{error}");
+        editor.select_all();
+        assert!(editor.outline_selection().is_err());
+    }
+
+    #[test]
+    fn outline_is_undoable() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(rect);
+        editor.outline_selection().unwrap();
+        assert_eq!(editor.document.objects.len(), 2);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 1);
     }
 
     #[test]

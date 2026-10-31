@@ -862,6 +862,13 @@ impl BeamWrightApp {
                         }
                     });
                     if ui
+                        .add_enabled(enabled, egui::Button::new("Outline stroke"))
+                        .clicked()
+                    {
+                        self.apply_outline_stroke();
+                        ui.close();
+                    }
+                    if ui
                         .add_enabled(enabled, egui::Button::new("Offset..."))
                         .clicked()
                     {
@@ -2333,6 +2340,13 @@ impl BeamWrightApp {
             self.status = format!("{} outline intersection(s)", hits.len());
         }
         self.show_report(report);
+    }
+
+    fn apply_outline_stroke(&mut self) {
+        match self.editor.outline_selection() {
+            Ok(count) => self.status = format!("Created {count} outline contour(s)"),
+            Err(error) => self.status = format!("Outline failed: {error}"),
+        }
     }
 
     fn apply_join_paths(&mut self) {
