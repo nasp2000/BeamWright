@@ -2122,6 +2122,11 @@ impl EditorState {
         serialization::save_to_file(&self.document, path)
     }
 
+    /// Save the document, deciding whether to keep a `.bak` of the previous file.
+    pub fn save_with_backup(&self, path: &std::path::Path, backup: bool) -> Result<()> {
+        serialization::save_to_file_with_backup(&self.document, path, backup)
+    }
+
     pub fn load(&mut self, path: &std::path::Path) -> Result<()> {
         let document = serialization::load_from_file(path)?;
         self.set_document(document);

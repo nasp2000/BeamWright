@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 pub struct GeneralPrefs {
     pub default_unit: String,
     pub theme: String,
-    pub default_file_format: String,
     pub confirm_destructive: bool,
     pub backup_enabled: bool,
     pub default_directory: String,
@@ -16,7 +15,6 @@ impl Default for GeneralPrefs {
         Self {
             default_unit: "mm".to_string(),
             theme: "light".to_string(),
-            default_file_format: "nc".to_string(),
             confirm_destructive: true,
             backup_enabled: true,
             default_directory: String::new(),
@@ -31,9 +29,6 @@ impl GeneralPrefs {
         }
         if self.theme.is_empty() {
             return Err("theme must not be empty".to_string());
-        }
-        if self.default_file_format.is_empty() {
-            return Err("default file format must not be empty".to_string());
         }
         Ok(())
     }

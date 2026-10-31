@@ -418,7 +418,10 @@ impl BeamWrightApp {
     }
 
     fn new_document(&mut self) {
-        let document = Document::default();
+        let mut document = Document::default();
+        if let Some(unit) = Unit::from_label(self.preferences.general.default_unit.trim()) {
+            document.unit = unit;
+        }
         self.editor.set_document(document.clone());
         self.saved_snapshot = Some(document);
         self.current_path = None;
@@ -437,11 +440,15 @@ impl BeamWrightApp {
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
         };
-        self.dialog = Some(FileDialog::new(
-            mode,
-            self.current_path.as_deref(),
-            &suggested,
-        ));
+        let default_directory = self.preferences.general.default_directory.trim();
+        let start = self.current_path.clone().or_else(|| {
+            if default_directory.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(default_directory))
+            }
+        });
+        self.dialog = Some(FileDialog::new(mode, start.as_deref(), &suggested));
     }
 
     fn handle_file(&mut self, mode: FileMode, path: &Path) {
@@ -575,7 +582,10 @@ impl BeamWrightApp {
                 self.editor.document.name = stem.to_string();
             }
         }
-        match self.editor.save(path) {
+        match self
+            .editor
+            .save_with_backup(path, self.preferences.general.backup_enabled)
+        {
             Ok(()) => {
                 self.current_path = Some(path.to_path_buf());
                 self.saved_snapshot = Some(self.editor.document.clone());
@@ -3617,6 +3627,41 @@ impl BeamWrightApp {
                     )
                     .changed();
                 ui.separator();
+                ui.heading("General");
+                ui.horizontal(|ui| {
+                    ui.label("Default unit");
+                    let mut unit = self.preferences.general.default_unit.clone();
+                    egui::ComboBox::from_id_salt("pref_default_unit")
+                        .selected_text(unit.clone())
+                        .show_ui(ui, |ui| {
+                            for candidate in ["mm", "cm", "in", "px"] {
+                                ui.selectable_value(&mut unit, candidate.to_string(), candidate);
+                            }
+                        });
+                    if unit != self.preferences.general.default_unit {
+                        self.preferences.general.default_unit = unit;
+                        changed = true;
+                    }
+                });
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.general.confirm_destructive,
+                        "Confirm before discarding unsaved changes",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.general.backup_enabled,
+                        "Keep a .bak of the previous project version",
+                    )
+                    .changed();
+                ui.horizontal(|ui| {
+                    ui.label("Default directory");
+                    changed |= ui
+                        .text_edit_singleline(&mut self.preferences.general.default_directory)
+                        .changed();
+                });
+                ui.separator();
                 ui.heading("Appearance");
                 let mut dark = self.preferences.general.theme == "dark";
                 if ui.checkbox(&mut dark, "Dark theme").changed() {
@@ -4405,6 +4450,7 @@ impl eframe::App for BeamWrightApp {
         if ctx.input(|input| input.viewport().close_requested())
             && self.is_dirty()
             && !self.quit_requested
+            && self.preferences.general.confirm_destructive
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm = Some(PendingAction::Quit);

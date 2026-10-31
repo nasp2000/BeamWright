@@ -44,9 +44,14 @@ pub fn backup_path(path: &Path) -> std::path::PathBuf {
 /// The previous file is copied to `<name>.bak` before it is replaced, so an
 /// overwritten project can always be recovered.
 pub fn save_to_file(doc: &Document, path: &Path) -> Result<()> {
+    save_to_file_with_backup(doc, path, true)
+}
+
+/// Save a document, optionally keeping the previous version as a `.bak`.
+pub fn save_to_file_with_backup(doc: &Document, path: &Path, backup: bool) -> Result<()> {
     validate(doc)?;
     let json = to_json(doc)?;
-    if path.is_file() {
+    if backup && path.is_file() {
         fs::copy(path, backup_path(path))?;
     }
     let tmp = path.with_extension("bwp.tmp");
@@ -164,6 +169,23 @@ mod tests {
             back.object(&ids.1).unwrap().group_id.as_deref(),
             Some("group-1")
         );
+    }
+
+    #[test]
+    fn backups_can_be_disabled() {
+        let path = std::env::temp_dir().join("bw_no_backup.bwp");
+        let backup = backup_path(&path);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        let document = Document::default();
+        save_to_file_with_backup(&document, &path, true).unwrap();
+        assert!(path.exists());
+        save_to_file_with_backup(&document, &path, true).unwrap();
+        assert!(backup.exists());
+        let _ = fs::remove_file(&backup);
+        save_to_file_with_backup(&document, &path, false).unwrap();
+        assert!(!backup.exists());
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

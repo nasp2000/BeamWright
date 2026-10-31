@@ -47,6 +47,17 @@ impl Unit {
         }
     }
 
+    /// Parse the short label used by preferences.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "mm" => Some(Unit::Millimeters),
+            "cm" => Some(Unit::Centimeters),
+            "in" => Some(Unit::Inches),
+            "px" => Some(Unit::Pixels),
+            _ => None,
+        }
+    }
+
     /// Short label for display.
     pub fn label(self) -> &'static str {
         match self {
@@ -55,6 +66,24 @@ impl Unit {
             Unit::Inches => "in",
             Unit::Pixels => "px",
         }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::Unit;
+
+    #[test]
+    fn labels_round_trip() {
+        for unit in [
+            Unit::Millimeters,
+            Unit::Centimeters,
+            Unit::Inches,
+            Unit::Pixels,
+        ] {
+            assert_eq!(Unit::from_label(unit.label()), Some(unit));
+        }
+        assert_eq!(Unit::from_label("feet"), None);
     }
 }
 
