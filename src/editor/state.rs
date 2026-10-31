@@ -295,6 +295,114 @@ impl EditorState {
         Ok(contours.len())
     }
 
+    /// Join the selected open paths into one path, welding the nearest ends.
+    ///
+    /// Paths are appended in nearest-neighbour order and reversed when that
+    /// makes the connection shorter. A straight segment closes the gap between
+    /// two ends; the result keeps the first path's style, layer and operation.
+    pub fn join_paths(&mut self) -> std::result::Result<String, String> {
+        let indices = self.selected_indices();
+        let mut paths: Vec<Path> = Vec::new();
+        for index in &indices {
+            self.ensure_editable(*index)?;
+            let object = &self.document.objects[*index];
+            match &object.shape {
+                Shape::Path(path) if !path.closed => paths.push(object.world_path()),
+                Shape::Path(_) => return Err(format!("'{}' is already closed", object.name)),
+                _ => return Err(format!("'{}' is not a path", object.name)),
+            }
+        }
+        if paths.len() < 2 {
+            return Err("Select at least two open paths".to_string());
+        }
+        let first_index = indices[0];
+        let mut joined = paths.remove(0);
+        while !paths.is_empty() {
+            let Some(end) = joined.last_point() else {
+                break;
+            };
+            let mut best = 0;
+            let mut best_reversed = false;
+            let mut best_distance = f64::INFINITY;
+            for (candidate, path) in paths.iter().enumerate() {
+                if let Some(start) = path.start_point() {
+                    let distance = end.distance(start);
+                    if distance < best_distance {
+                        best_distance = distance;
+                        best = candidate;
+                        best_reversed = false;
+                    }
+                }
+                if let Some(finish) = path.last_point() {
+                    let distance = end.distance(finish);
+                    if distance < best_distance {
+                        best_distance = distance;
+                        best = candidate;
+                        best_reversed = true;
+                    }
+                }
+            }
+            let mut path = paths.remove(best);
+            if best_reversed {
+                path.reverse();
+            }
+            if let Some(start) = path.start_point() {
+                if end.distance(start) > 1e-9 {
+                    joined.push(Segment::Line {
+                        from: end,
+                        to: start,
+                    });
+                }
+            }
+            joined.append(&path);
+        }
+
+        self.record();
+        let template = self.document.objects[first_index].clone();
+        let mut insert_at = indices[0];
+        for index in indices.iter().rev() {
+            self.document.objects.remove(*index);
+            insert_at = *index;
+        }
+        let mut object = Object::new(template.layer_id.clone(), Shape::Path(joined))
+            .with_style(template.style.clone());
+        object.name = "Joined Path".to_string();
+        object.operation_id.clone_from(&template.operation_id);
+        let id = object.id.clone();
+        self.document.objects.insert(insert_at, object);
+        self.selection.clear();
+        self.selection.add(id.clone());
+        Ok(id)
+    }
+
+    /// Mark every selected open path as closed.
+    pub fn close_paths(&mut self) -> std::result::Result<usize, String> {
+        let targets = self.selected_indices();
+        if targets.is_empty() {
+            return Err("Select at least one open path".to_string());
+        }
+        let mut closable = Vec::new();
+        for index in targets {
+            self.ensure_editable(index)?;
+            if let Shape::Path(path) = &self.document.objects[index].shape {
+                if !path.closed && path.segments.len() >= 2 {
+                    closable.push(index);
+                }
+            }
+        }
+        if closable.is_empty() {
+            return Err("No open paths selected".to_string());
+        }
+        self.record();
+        let count = closable.len();
+        for index in closable {
+            if let Shape::Path(path) = &mut self.document.objects[index].shape {
+                path.close();
+            }
+        }
+        Ok(count)
+    }
+
     /// Offset every selected closed shape by `distance` millimetres.
     ///
     /// Positive values expand the outline and negative values contract it. A
@@ -1829,6 +1937,157 @@ mod tests {
         assert_eq!(editor.document.objects.len(), 1);
         assert!(editor.undo());
         assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn join_paths_welds_the_nearest_ends() {
+        let mut editor = editor();
+        let first = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let second = editor
+            .add_line(Point2::new(10.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        let joined = editor.join_paths().unwrap();
+        assert_eq!(editor.document.objects.len(), 1);
+        let object = &editor.document.objects[0];
+        assert_eq!(object.id, joined);
+        assert_eq!(object.name, "Joined Path");
+        assert!(editor.selection.contains(&joined));
+        let path = object.world_path();
+        assert!(!path.closed);
+        // Two original lines already touch, so no extra segment is added.
+        assert_eq!(path.segments.len(), 2);
+        assert_eq!(path.start_point().unwrap(), Point2::new(0.0, 0.0));
+        assert_eq!(path.last_point().unwrap(), Point2::new(10.0, 10.0));
+    }
+
+    #[test]
+    fn join_paths_reverses_the_shorter_end() {
+        let mut editor = editor();
+        let first = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        // Drawn from the far end back to the shared end.
+        let second = editor
+            .add_line(Point2::new(10.0, 10.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        editor.join_paths().unwrap();
+        let path = editor.document.objects[0].world_path();
+        assert_eq!(path.last_point().unwrap(), Point2::new(10.0, 10.0));
+        assert_eq!(path.segments.len(), 2);
+    }
+
+    #[test]
+    fn join_paths_bridges_a_gap() {
+        let mut editor = editor();
+        let first = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let second = editor
+            .add_line(Point2::new(20.0, 0.0), Point2::new(30.0, 0.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        editor.join_paths().unwrap();
+        let path = editor.document.objects[0].world_path();
+        assert_eq!(path.segments.len(), 3);
+        assert_eq!(path.start_point().unwrap(), Point2::new(0.0, 0.0));
+        assert_eq!(path.last_point().unwrap(), Point2::new(30.0, 0.0));
+    }
+
+    #[test]
+    fn join_paths_rejects_invalid_selection() {
+        let mut editor = editor();
+        let line = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        assert!(editor.join_paths().is_err());
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(line);
+        editor.selection.add(rect);
+        let error = editor.join_paths().unwrap_err();
+        assert!(error.contains("not a path"), "{error}");
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn join_paths_is_undoable() {
+        let mut editor = editor();
+        let first = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        let second = editor
+            .add_line(Point2::new(10.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(first);
+        editor.selection.add(second);
+        editor.join_paths().unwrap();
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn close_paths_closes_only_open_paths() {
+        let mut editor = editor();
+        let open = editor
+            .add_polyline(
+                &[
+                    Point2::new(0.0, 0.0),
+                    Point2::new(10.0, 0.0),
+                    Point2::new(10.0, 10.0),
+                ],
+                false,
+            )
+            .unwrap();
+        let closed = editor
+            .add_polyline(
+                &[
+                    Point2::new(20.0, 0.0),
+                    Point2::new(30.0, 0.0),
+                    Point2::new(30.0, 10.0),
+                ],
+                true,
+            )
+            .unwrap();
+        editor.select_all();
+        assert_eq!(editor.close_paths().unwrap(), 1);
+        let is_closed = |id: &str| {
+            let object = editor
+                .document
+                .objects
+                .iter()
+                .find(|object| object.id == id)
+                .unwrap();
+            matches!(&object.shape, Shape::Path(path) if path.closed)
+        };
+        assert!(is_closed(&open));
+        assert!(is_closed(&closed));
+        assert!(editor.undo());
+    }
+
+    #[test]
+    fn close_paths_reports_nothing_to_close() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        editor.selection.clear();
+        editor.selection.add(rect);
+        let error = editor.close_paths().unwrap_err();
+        assert!(error.contains("No open paths"), "{error}");
     }
 
     #[test]

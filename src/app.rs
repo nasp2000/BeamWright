@@ -685,6 +685,24 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.editor.selection.len() >= 2,
+                            egui::Button::new("Join paths"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_join_paths();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Close paths"))
+                        .clicked()
+                    {
+                        self.apply_close_paths();
+                        ui.close();
+                    }
+                    ui.separator();
                     let can_combine = self.editor.selection.len() == 2;
                     ui.menu_button("Boolean", |ui| {
                         use crate::geometry::BooleanOp;
@@ -2094,6 +2112,20 @@ impl BeamWrightApp {
         self.report_open = open && self.report_open;
         if !self.report_open {
             self.file_report = None;
+        }
+    }
+
+    fn apply_join_paths(&mut self) {
+        match self.editor.join_paths() {
+            Ok(_) => self.status = "Paths joined".to_string(),
+            Err(error) => self.status = format!("Join failed: {error}"),
+        }
+    }
+
+    fn apply_close_paths(&mut self) {
+        match self.editor.close_paths() {
+            Ok(count) => self.status = format!("Closed {count} path(s)"),
+            Err(error) => self.status = format!("Close failed: {error}"),
         }
     }
 

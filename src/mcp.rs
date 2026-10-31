@@ -295,14 +295,7 @@ impl McpServer {
             }
             "offset" => {
                 let distance = number(arguments, "distance").ok_or_else(|| missing("distance"))?;
-                if let Some(ids) = arguments.get("ids").and_then(Value::as_array) {
-                    self.select_ids(ids)?;
-                } else {
-                    self.editor.selection.clear();
-                    for object in &self.editor.document.objects {
-                        self.editor.selection.add(object.id.clone());
-                    }
-                }
+                self.select_scope(arguments)?;
                 let count = self
                     .editor
                     .offset_selection(distance)
@@ -311,6 +304,16 @@ impl McpServer {
                     "offset": count,
                     "objects": self.editor.document.objects.len()
                 }))
+            }
+            "join_paths" => {
+                self.select_scope(arguments)?;
+                let id = self.editor.join_paths().map_err(BeamError::InvalidInput)?;
+                Ok(json!({"id": id, "objects": self.editor.document.objects.len()}))
+            }
+            "close_paths" => {
+                self.select_scope(arguments)?;
+                let count = self.editor.close_paths().map_err(BeamError::InvalidInput)?;
+                Ok(json!({"closed": count}))
             }
             "export_svg" => {
                 let path = required_path(arguments, "path")?;
@@ -355,6 +358,18 @@ impl McpServer {
             }
             other => Err(BeamError::InvalidInput(format!("unknown tool: {other}"))),
         }
+    }
+
+    /// Select the objects named by `ids`, or every object when it is absent.
+    fn select_scope(&mut self, arguments: &Value) -> Result<()> {
+        if let Some(ids) = arguments.get("ids").and_then(Value::as_array) {
+            return self.select_ids(ids);
+        }
+        self.editor.selection.clear();
+        for object in &self.editor.document.objects {
+            self.editor.selection.add(object.id.clone());
+        }
+        Ok(())
     }
 
     fn select_ids(&mut self, ids: &[Value]) -> Result<()> {
@@ -540,6 +555,20 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "join_paths",
+            "Join open paths into one path (all objects when ids are omitted).",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "close_paths",
+            "Close open paths (all objects when ids are omitted).",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
             "export_svg",
             "Export the current document as SVG.",
             json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
@@ -717,6 +746,35 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn join_and_close_tools() {
+        let mut server = McpServer::new();
+        let first = call(
+            &mut server,
+            "add_line",
+            json!({"x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 0.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = call(
+            &mut server,
+            "add_line",
+            json!({"x1": 10.0, "y1": 0.0, "x2": 10.0, "y2": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let joined = call(&mut server, "join_paths", json!({"ids": [first, second]}));
+        assert_eq!(joined["result"]["objects"], 1);
+        let close = call(&mut server, "close_paths", json!({}));
+        assert_eq!(close["result"]["closed"], 1);
+        assert!(matches!(
+            server.editor.document.objects[0].shape,
+            Shape::Path(ref path) if path.closed
+        ));
     }
 
     #[test]

@@ -75,8 +75,23 @@ impl Path {
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
+    /// Reverse the direction of travel.
+    ///
+    /// Reversing only the order of the segments would leave every segment
+    /// pointing the wrong way, so each one is flipped as well.
     pub fn reverse(&mut self) {
         self.segments.reverse();
+        for segment in &mut self.segments {
+            *segment = match *segment {
+                Segment::Line { from, to } => Segment::Line { from: to, to: from },
+                Segment::Cubic(c) => Segment::Cubic(CubicBezier {
+                    p0: c.p3,
+                    p1: c.p2,
+                    p2: c.p1,
+                    p3: c.p0,
+                }),
+            };
+        }
     }
     pub fn close(&mut self) {
         self.closed = true;
@@ -231,6 +246,36 @@ mod tests {
         let mut p = Path::new();
         p.reverse();
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn reverse_flips_segment_direction() {
+        let mut p = Path::from_points(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false);
+        p.reverse();
+        assert_eq!(p.start_point().unwrap(), Point2::new(10.0, 10.0));
+        assert_eq!(p.last_point().unwrap(), Point2::new(0.0, 0.0));
+        let points = p.to_points();
+        assert_eq!(points, vec![(10.0, 10.0), (10.0, 0.0), (0.0, 0.0)]);
+    }
+
+    #[test]
+    fn reverse_keeps_cubic_shape() {
+        let curve = CubicBezier {
+            p0: Point2::new(0.0, 0.0),
+            p1: Point2::new(1.0, 2.0),
+            p2: Point2::new(3.0, 2.0),
+            p3: Point2::new(4.0, 0.0),
+        };
+        let mut p = Path::new();
+        p.push(Segment::Cubic(curve));
+        p.reverse();
+        let Segment::Cubic(reversed) = p.segments[0] else {
+            panic!("expected a cubic segment");
+        };
+        assert_eq!(reversed.p0, curve.p3);
+        assert_eq!(reversed.p1, curve.p2);
+        assert_eq!(reversed.p2, curve.p1);
+        assert_eq!(reversed.p3, curve.p0);
     }
 
     #[test]
