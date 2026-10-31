@@ -22,6 +22,11 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from(".beamwright")
 }
 
+/// Draft file written while there is unsaved work, used after a crash.
+pub fn recovery_path() -> PathBuf {
+    data_dir().join("recovery.bwp")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,6 +45,16 @@ mod tests {
     fn is_absolute_or_dot_relative() {
         let dir = data_dir();
         assert_ne!(dir.as_os_str().len(), 0);
+    }
+
+    #[test]
+    fn recovery_file_lives_in_the_data_directory() {
+        let recovery = recovery_path();
+        assert_eq!(recovery.parent(), Some(data_dir().as_path()));
+        assert_eq!(
+            recovery.file_name().and_then(|value| value.to_str()),
+            Some("recovery.bwp")
+        );
     }
 
     #[test]

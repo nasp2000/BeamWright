@@ -140,6 +140,10 @@ pub struct BeamWrightApp {
     profile_pending: Option<(String, crate::profiles::OperationProfile)>,
     relink_target: Option<String>,
     pending_file: Option<(FileMode, PathBuf)>,
+    recovery_path: PathBuf,
+    last_autosave: std::time::Instant,
+    recovery_prompt_open: bool,
+    recovery_timestamp: String,
     guides_open: bool,
     guide_position: f64,
     exact_size: bool,
@@ -344,6 +348,15 @@ impl BeamWrightApp {
         editor.guides_visible = preferences.drawing.guides_visible;
         editor.snap_guides = preferences.drawing.snap_guides;
         let dark_mode = preferences.general.theme == "dark";
+        let recovery_path = crate::config::paths::recovery_path();
+        let recovery_timestamp = std::fs::metadata(&recovery_path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or_else(String::new, |duration| {
+                crate::profiles::model::format_utc(duration.as_secs())
+            });
+        let recovery_prompt_open = recovery_path.is_file();
         let mut app = Self {
             editor,
             dark_mode,
@@ -431,6 +444,10 @@ impl BeamWrightApp {
             profile_pending: None,
             relink_target: None,
             pending_file: None,
+            recovery_path,
+            last_autosave: std::time::Instant::now(),
+            recovery_prompt_open,
+            recovery_timestamp,
             guides_open: false,
             guide_position: 50.0,
             exact_size: false,
@@ -493,6 +510,7 @@ impl BeamWrightApp {
         self.current_path = None;
         self.needs_fit = true;
         self.drag = None;
+        let _ = std::fs::remove_file(&self.recovery_path);
         self.status = "New document".to_string();
     }
 
@@ -926,6 +944,7 @@ impl BeamWrightApp {
                 self.saved_snapshot = if is_project { Some(document) } else { None };
                 self.needs_fit = true;
                 self.drag = None;
+                let _ = std::fs::remove_file(&self.recovery_path);
                 let report = FileReport::new(
                     if is_project { "Open project" } else { "Import" },
                     path.display().to_string(),
@@ -967,6 +986,8 @@ impl BeamWrightApp {
             Ok(()) => {
                 self.current_path = Some(path.to_path_buf());
                 self.saved_snapshot = Some(self.editor.document.clone());
+                let _ = std::fs::remove_file(&self.recovery_path);
+                self.last_autosave = std::time::Instant::now();
                 self.status = format!("Saved {}", path.display());
             }
             Err(error) => self.status = format!("Save failed: {error}"),
@@ -3831,6 +3852,23 @@ impl BeamWrightApp {
         }
     }
 
+    fn autosave(&mut self, ctx: &egui::Context) {
+        if !self.is_dirty() {
+            return;
+        }
+        let interval = std::time::Duration::from_secs(30);
+        if self.last_autosave.elapsed() < interval {
+            ctx.request_repaint_after(interval);
+            return;
+        }
+        if crate::document::serialization::save_recovery(&self.editor.document, &self.recovery_path)
+            .is_ok()
+        {
+            self.last_autosave = std::time::Instant::now();
+        }
+        ctx.request_repaint_after(interval);
+    }
+
     fn advance_playback(&mut self, ctx: &egui::Context) {
         if self.preview_open
             && self.preview_snapshot.as_ref() != Some(&self.editor.document)
@@ -5507,6 +5545,51 @@ impl BeamWrightApp {
                 }
             }
         }
+        if self.recovery_prompt_open {
+            let mut open_draft = false;
+            let mut discard = false;
+            egui::Window::new("Recover unsaved work")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(if self.recovery_timestamp.is_empty() {
+                        "An autosaved draft was found.".to_string()
+                    } else {
+                        format!(
+                            "An autosaved draft from {} was found.",
+                            self.recovery_timestamp
+                        )
+                    });
+                    ui.label("It was written because the application closed with unsaved changes.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Open draft").clicked() {
+                            open_draft = true;
+                        }
+                        if ui.button("Discard").clicked() {
+                            discard = true;
+                        }
+                    });
+                });
+            if open_draft {
+                match crate::document::serialization::load_from_file(&self.recovery_path) {
+                    Ok(document) => {
+                        self.editor.set_document(document);
+                        self.current_path = None;
+                        self.saved_snapshot = None;
+                        self.needs_fit = true;
+                        self.status = "Recovered the autosaved draft".to_string();
+                        self.recovery_prompt_open = false;
+                    }
+                    Err(error) => {
+                        self.status = format!("Cannot read the draft: {error}");
+                    }
+                }
+            } else if discard {
+                let _ = std::fs::remove_file(&self.recovery_path);
+                self.recovery_prompt_open = false;
+                self.status = "Discarded the autosaved draft".to_string();
+            }
+        }
         if let Some((mode, path)) = self.pending_file.clone() {
             let mut replace = false;
             let mut cancel = false;
@@ -5653,6 +5736,7 @@ impl eframe::App for BeamWrightApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.advance_playback(ctx);
+        self.autosave(ctx);
         let title = format!("BeamWright - {}", self.title());
         let current = ctx.input(|input| input.viewport().title.clone());
         if current.as_deref() != Some(title.as_str()) {

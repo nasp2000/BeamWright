@@ -74,6 +74,11 @@ pub fn save_to_file_with_backup(doc: &Document, path: &Path, backup: bool) -> Re
     }
 }
 
+/// Write the autosave draft without touching any backup file.
+pub fn save_recovery(doc: &Document, path: &Path) -> Result<()> {
+    save_to_file_with_backup(doc, path, false)
+}
+
 /// Load a document from `path`.
 pub fn load_from_file(path: &Path) -> Result<Document> {
     let s = fs::read_to_string(path)?;
@@ -169,6 +174,20 @@ mod tests {
             back.object(&ids.1).unwrap().group_id.as_deref(),
             Some("group-1")
         );
+    }
+
+    #[test]
+    fn recovery_drafts_round_trip_without_a_backup() {
+        let path = std::env::temp_dir().join("bw_recovery_draft.bwp");
+        let backup = backup_path(&path);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        let document = Document::default();
+        save_recovery(&document, &path).unwrap();
+        assert!(path.is_file());
+        assert!(!backup.exists());
+        assert_eq!(load_from_file(&path).unwrap(), document);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
