@@ -101,6 +101,8 @@ pub struct BeamWrightApp {
     grid_array_open: bool,
     offset_open: bool,
     offset_distance: f64,
+    star_points: usize,
+    star_inner: f64,
     simplify_open: bool,
     simplify_tolerance: f64,
     nest_open: bool,
@@ -318,6 +320,8 @@ impl BeamWrightApp {
             grid_array_open: false,
             offset_open: false,
             offset_distance: 1.0,
+            star_points: 5,
+            star_inner: 0.5,
             simplify_open: false,
             simplify_tolerance: 0.2,
             nest_open: false,
@@ -1099,6 +1103,7 @@ impl BeamWrightApp {
                     Tool::Rect,
                     Tool::Ellipse,
                     Tool::Polygon,
+                    Tool::Star,
                     Tool::Pencil,
                     Tool::Pan,
                 ] {
@@ -1147,6 +1152,19 @@ impl BeamWrightApp {
                             .range(3..=64),
                     );
                     ui.label("sides");
+                }
+                if self.editor.tool == Tool::Star {
+                    ui.add(
+                        egui::DragValue::new(&mut self.star_points)
+                            .speed(1.0)
+                            .range(3..=64),
+                    );
+                    ui.label("tips");
+                    ui.add(
+                        egui::Slider::new(&mut self.star_inner, 0.05..=1.0)
+                            .text("inner")
+                            .fixed_decimals(2),
+                    );
                 }
                 ui.separator();
                 if ui.button("-").clicked() {
@@ -2014,6 +2032,7 @@ impl BeamWrightApp {
                                 | Tool::Ellipse
                                 | Tool::Line
                                 | Tool::Polygon
+                                | Tool::Star
                                 | Tool::Pencil => {
                                     if self.editor.layer_locked(&self.editor.active_layer_id)
                                         || !self.editor.layer_visible(&self.editor.active_layer_id)
@@ -2333,6 +2352,14 @@ impl BeamWrightApp {
                         Point2::new(f64::midpoint(start.x, end.x), f64::midpoint(start.y, end.y)),
                         end,
                         self.polygon_sides,
+                    );
+                }
+                Tool::Star => {
+                    self.editor.add_star(
+                        Point2::new(f64::midpoint(start.x, end.x), f64::midpoint(start.y, end.y)),
+                        end,
+                        self.star_points,
+                        self.star_inner,
                     );
                 }
                 _ => {}

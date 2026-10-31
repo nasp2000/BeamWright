@@ -378,6 +378,45 @@ impl EditorState {
         self.add_shape(Shape::Path(path), Transform2::identity())
     }
 
+    /// Create a star centred on `center` with one point towards `edge`.
+    ///
+    /// `points` counts the outer tips (3..=64) and `inner_ratio` is the inner
+    /// radius as a fraction of the outer radius (0.05..=1).
+    pub fn add_star(
+        &mut self,
+        center: Point2,
+        edge: Point2,
+        points: usize,
+        inner_ratio: f64,
+    ) -> Option<String> {
+        if !(3..=64).contains(&points) || !(0.05..=1.0).contains(&inner_ratio) {
+            return None;
+        }
+        let radius = center.distance(edge);
+        if radius < 0.01 {
+            return None;
+        }
+        let inner = radius * inner_ratio;
+        let start_angle = (edge.y - center.y).atan2(edge.x - center.x);
+        #[allow(clippy::cast_precision_loss)]
+        let steps = points * 2;
+        let vertices: Vec<(f64, f64)> = (0..steps)
+            .map(|index| {
+                #[allow(clippy::cast_precision_loss)]
+                let angle = start_angle + std::f64::consts::TAU * index as f64 / steps as f64;
+                let distance = if index % 2 == 0 { radius } else { inner };
+                (
+                    center.x + distance * angle.cos(),
+                    center.y + distance * angle.sin(),
+                )
+            })
+            .collect();
+        self.add_shape(
+            Shape::Path(Path::from_points(&vertices, true)),
+            Transform2::identity(),
+        )
+    }
+
     pub fn add_line(&mut self, start: Point2, end: Point2) -> Option<String> {
         let start = self.snap(start);
         let end = self.snap(end);
@@ -3135,6 +3174,46 @@ mod tests {
         editor.selection.add(rect);
         let error = editor.close_paths().unwrap_err();
         assert!(error.contains("No open paths"), "{error}");
+    }
+
+    #[test]
+    fn star_has_twice_as_many_nodes_as_tips() {
+        let mut editor = editor();
+        let id = editor
+            .add_star(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), 5, 0.5)
+            .unwrap();
+        let object = editor.document.object(&id).unwrap();
+        let path = object.world_path();
+        assert!(path.closed);
+        assert_eq!(path.nodes().len(), 10);
+        let first = path.nodes()[0].point;
+        assert!((first.x - 10.0).abs() < 1e-9);
+        assert!(first.y.abs() < 1e-9);
+        let inner = path.nodes()[1].point;
+        assert!((inner.x * inner.x + inner.y * inner.y).sqrt() - 5.0 < 1e-9);
+        let (min, max) = object.bounds().unwrap();
+        assert!(min.x >= -10.0 && max.x <= 10.0);
+    }
+
+    #[test]
+    fn star_rejects_invalid_parameters() {
+        let mut editor = editor();
+        assert!(
+            editor
+                .add_star(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), 2, 0.5)
+                .is_none()
+        );
+        assert!(
+            editor
+                .add_star(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), 5, 0.0)
+                .is_none()
+        );
+        assert!(
+            editor
+                .add_star(Point2::new(0.0, 0.0), Point2::new(0.0, 0.0), 5, 0.5)
+                .is_none()
+        );
+        assert_eq!(editor.document.objects.len(), 0);
     }
 
     #[test]
