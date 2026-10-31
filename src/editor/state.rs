@@ -19,6 +19,9 @@ pub struct PathIntersection {
 }
 
 /// Testable editor state: document, view and interaction state without egui.
+// Snapping targets are independent toggles; one enum would not model a user
+// enabling several of them at once.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct EditorState {
     pub document: Document,
@@ -29,6 +32,14 @@ pub struct EditorState {
     pub active_layer_id: String,
     pub snap_enabled: bool,
     pub snap_step_mm: f64,
+    /// Snap drawing to path nodes (segment endpoints).
+    pub snap_nodes: bool,
+    /// Snap drawing to the ends of open paths.
+    pub snap_endpoints: bool,
+    /// Snap drawing to object bounding-box centres.
+    pub snap_centers: bool,
+    /// Pull radius in screen pixels; converted to millimetres by the zoom.
+    pub snap_tolerance_px: f64,
 }
 
 impl EditorState {
@@ -48,6 +59,10 @@ impl EditorState {
             active_layer_id,
             snap_enabled: false,
             snap_step_mm: 1.0,
+            snap_nodes: false,
+            snap_endpoints: false,
+            snap_centers: false,
+            snap_tolerance_px: 8.0,
         }
     }
 
@@ -68,7 +83,15 @@ impl EditorState {
             .unwrap_or_default();
     }
 
+    /// Apply the enabled snapping modes to a drawing position.
+    ///
+    /// Object snapping (nodes, open-path ends, object centres) wins over the
+    /// grid, because it is the more specific target. The pull radius is
+    /// `snap_tolerance_px` screen pixels converted with the current zoom.
     pub fn snap(&self, point: Point2) -> Point2 {
+        if let Some(candidate) = self.object_snap(point) {
+            return candidate;
+        }
         if !self.snap_enabled || self.snap_step_mm <= 0.0 {
             return point;
         }
@@ -76,6 +99,66 @@ impl EditorState {
             (point.x / self.snap_step_mm).round() * self.snap_step_mm,
             (point.y / self.snap_step_mm).round() * self.snap_step_mm,
         )
+    }
+
+    /// Nearest enabled snap target within the pull radius, if any.
+    pub fn object_snap(&self, point: Point2) -> Option<Point2> {
+        if !(self.snap_nodes || self.snap_endpoints || self.snap_centers) {
+            return None;
+        }
+        let zoom = if self.canvas.zoom > 0.0 {
+            self.canvas.zoom
+        } else {
+            1.0
+        };
+        let tolerance = (self.snap_tolerance_px / zoom).max(0.001);
+        let mut best: Option<(f64, Point2)> = None;
+        let mut consider = |candidate: Point2| {
+            let distance = point.distance(candidate);
+            if distance <= tolerance && best.is_none_or(|(current, _)| distance < current) {
+                best = Some((distance, candidate));
+            }
+        };
+        for object in &self.document.objects {
+            if !object.visible {
+                continue;
+            }
+            let path = object.world_path();
+            if path.segments.is_empty() {
+                continue;
+            }
+            if self.snap_nodes {
+                for segment in &path.segments {
+                    match *segment {
+                        Segment::Line { from, to } => {
+                            consider(from);
+                            consider(to);
+                        }
+                        Segment::Cubic(c) => {
+                            consider(c.p0);
+                            consider(c.p3);
+                        }
+                    }
+                }
+            }
+            if self.snap_endpoints && !path.closed {
+                if let Some(start) = path.start_point() {
+                    consider(start);
+                }
+                if let Some(end) = path.last_point() {
+                    consider(end);
+                }
+            }
+            if self.snap_centers {
+                if let Some((min, max)) = object.bounds() {
+                    consider(Point2::new(
+                        f64::midpoint(min.x, max.x),
+                        f64::midpoint(min.y, max.y),
+                    ));
+                }
+            }
+        }
+        best.map(|(_, candidate)| candidate)
     }
 
     pub fn add_rectangle(&mut self, start: Point2, end: Point2) -> Option<String> {
@@ -2426,6 +2509,86 @@ mod tests {
         editor.selection.add(line);
         let error = editor.offset_selection(1.0).unwrap_err();
         assert!(error.contains("closed"));
+    }
+
+    #[test]
+    fn node_snapping_pulls_to_a_corner() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.canvas.zoom = 1.0;
+        editor.snap_nodes = true;
+        editor.snap_tolerance_px = 8.0;
+        let snapped = editor.snap(Point2::new(10.4, 9.6));
+        assert_eq!(snapped, Point2::new(10.0, 10.0));
+    }
+
+    #[test]
+    fn endpoint_snapping_uses_open_path_ends() {
+        let mut editor = editor();
+        editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(20.0, 0.0))
+            .unwrap();
+        editor.snap_nodes = false;
+        editor.snap_endpoints = true;
+        editor.snap_tolerance_px = 8.0;
+        assert_eq!(editor.snap(Point2::new(20.5, 0.4)), Point2::new(20.0, 0.0));
+        // A point near the middle of the line is not an endpoint target.
+        assert_eq!(editor.snap(Point2::new(10.0, 0.2)), Point2::new(10.0, 0.2));
+    }
+
+    #[test]
+    fn centre_snapping_uses_object_bounds() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(10.0, 20.0), Point2::new(30.0, 40.0))
+            .unwrap();
+        editor.snap_centers = true;
+        editor.snap_tolerance_px = 8.0;
+        assert_eq!(
+            editor.snap(Point2::new(20.4, 30.3)),
+            Point2::new(20.0, 30.0)
+        );
+    }
+
+    #[test]
+    fn object_snapping_respects_the_pull_radius() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor.snap_nodes = true;
+        editor.snap_tolerance_px = 4.0;
+        // 4 px at 1 px/mm is 4 mm, so 5 mm away is outside the radius.
+        assert_eq!(editor.object_snap(Point2::new(15.0, 15.0)), None);
+        assert_eq!(
+            editor.object_snap(Point2::new(12.0, 12.0)),
+            Some(Point2::new(10.0, 10.0))
+        );
+    }
+
+    #[test]
+    fn object_snapping_wins_over_the_grid() {
+        let mut editor = editor();
+        editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.3, 0.0))
+            .unwrap();
+        editor.snap_endpoints = true;
+        editor.snap_enabled = true;
+        editor.snap_step_mm = 1.0;
+        editor.snap_tolerance_px = 8.0;
+        // The grid would give (10, 0); the endpoint pulls to (10.3, 0).
+        assert_eq!(editor.snap(Point2::new(10.4, 0.2)), Point2::new(10.3, 0.0));
+    }
+
+    #[test]
+    fn snapping_is_off_by_default() {
+        let editor = editor();
+        assert!(!editor.snap_nodes);
+        assert!(!editor.snap_endpoints);
+        assert!(!editor.snap_centers);
+        assert_eq!(editor.object_snap(Point2::new(1.0, 1.0)), None);
     }
 
     #[test]

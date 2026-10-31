@@ -122,6 +122,9 @@ impl BeamWrightApp {
         editor.canvas.grid_spacing_mm = preferences.drawing.grid_spacing_mm;
         editor.snap_step_mm = preferences.drawing.snap_step_mm;
         editor.snap_enabled = preferences.drawing.snap_enabled;
+        editor.snap_nodes = preferences.drawing.snap_nodes;
+        editor.snap_endpoints = preferences.drawing.snap_endpoints;
+        editor.snap_centers = preferences.drawing.snap_centers;
         let dark_mode = preferences.general.theme == "dark";
         let mut app = Self {
             editor,
@@ -792,7 +795,18 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
-                    ui.checkbox(&mut self.editor.snap_enabled, "Snap to 1 mm");
+                    ui.menu_button("Snapping", |ui| {
+                        ui.checkbox(&mut self.editor.snap_enabled, "Grid");
+                        ui.checkbox(&mut self.editor.snap_nodes, "Nodes");
+                        ui.checkbox(&mut self.editor.snap_endpoints, "Endpoints");
+                        ui.checkbox(&mut self.editor.snap_centers, "Centres");
+                        ui.add(
+                            egui::DragValue::new(&mut self.editor.snap_step_mm)
+                                .speed(0.1)
+                                .range(0.1..=100.0)
+                                .suffix(" mm grid"),
+                        );
+                    });
                     ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
                     if ui.button("Preview and G-code...").clicked() {
                         self.open_preview();
@@ -2330,6 +2344,21 @@ impl BeamWrightApp {
                             .suffix(" mm snap"),
                     )
                     .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_nodes, "Snap to nodes")
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_endpoints,
+                        "Snap to open-path endpoints",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_centers,
+                        "Snap to object centres",
+                    )
+                    .changed();
                 ui.separator();
                 ui.heading("Appearance");
                 let mut dark = self.preferences.general.theme == "dark";
@@ -2342,6 +2371,9 @@ impl BeamWrightApp {
                     self.editor.canvas.grid_spacing_mm = self.preferences.drawing.grid_spacing_mm;
                     self.editor.snap_step_mm = self.preferences.drawing.snap_step_mm;
                     self.editor.snap_enabled = self.preferences.drawing.snap_enabled;
+                    self.editor.snap_nodes = self.preferences.drawing.snap_nodes;
+                    self.editor.snap_endpoints = self.preferences.drawing.snap_endpoints;
+                    self.editor.snap_centers = self.preferences.drawing.snap_centers;
                     self.dark_mode = self.preferences.general.theme == "dark";
                     match self.preferences.save(&self.preferences_path) {
                         Ok(()) => self.status = "Preferences saved".to_string(),

@@ -132,11 +132,16 @@ mod tests {
         let mut preferences = AppPreferences::default();
         preferences.drawing.grid_spacing_mm = 5.0;
         preferences.drawing.snap_enabled = true;
+        preferences.drawing.snap_nodes = true;
+        preferences.drawing.snap_centers = true;
         preferences.general.theme = "dark".to_string();
         preferences.save(&path).unwrap();
         let loaded = AppPreferences::load_or_default(&path).unwrap();
         assert_eq!(loaded.drawing.grid_spacing_mm, 5.0);
         assert!(loaded.drawing.snap_enabled);
+        assert!(loaded.drawing.snap_nodes);
+        assert!(!loaded.drawing.snap_endpoints);
+        assert!(loaded.drawing.snap_centers);
         assert_eq!(loaded.general.theme, "dark");
         assert!(!path.with_extension("json.tmp").exists());
         let _ = std::fs::remove_file(&path);

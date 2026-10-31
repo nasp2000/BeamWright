@@ -31,6 +31,9 @@ impl AppConfig {
     }
 }
 
+// Snapping targets are independent toggles, so the booleans are not a sign of
+// a missing state machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DrawingPrefs {
     pub grid_spacing_mm: f64,
@@ -40,6 +43,15 @@ pub struct DrawingPrefs {
     pub snap_step_mm: f64,
     #[serde(default = "default_true")]
     pub snap_enabled: bool,
+    /// Snap drawing to path nodes.
+    #[serde(default)]
+    pub snap_nodes: bool,
+    /// Snap drawing to the ends of open paths.
+    #[serde(default)]
+    pub snap_endpoints: bool,
+    /// Snap drawing to object centres.
+    #[serde(default)]
+    pub snap_centers: bool,
 }
 
 impl Default for DrawingPrefs {
@@ -50,6 +62,9 @@ impl Default for DrawingPrefs {
             show_rulers: true,
             snap_step_mm: 1.0,
             snap_enabled: false,
+            snap_nodes: false,
+            snap_endpoints: false,
+            snap_centers: false,
         }
     }
 }
