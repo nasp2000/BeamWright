@@ -1116,7 +1116,8 @@ impl BeamWrightApp {
         let mut open = self.doc_properties_open;
         let mut changed = false;
         egui::Window::new("Document properties")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1213,7 +1214,8 @@ impl BeamWrightApp {
     fn operations_compare_window(&mut self, ctx: &egui::Context) {
         let mut open = self.operations_compare_open;
         egui::Window::new("Compare operations")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -1252,7 +1254,8 @@ impl BeamWrightApp {
     fn guides_window(&mut self, ctx: &egui::Context) {
         let mut open = self.guides_open;
         egui::Window::new("Guides")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -1308,7 +1311,8 @@ impl BeamWrightApp {
         let mut open = self.profile_confirm_open;
         let mut apply = false;
         egui::Window::new(format!("Apply '{}'", profile.name))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4581,7 +4585,8 @@ impl BeamWrightApp {
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
         let mut open = self.help_shortcuts_open;
         egui::Window::new("Keyboard shortcuts")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4644,7 +4649,8 @@ impl BeamWrightApp {
         let mut close_requested = false;
         let mut operations = self.editor.document.operations.clone();
         egui::Window::new("Cuts / Layers")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -4953,7 +4959,8 @@ impl BeamWrightApp {
         let mut create = false;
         let mut skip = false;
         egui::Window::new("Welcome - machine profile")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
@@ -5034,7 +5041,8 @@ impl BeamWrightApp {
     fn machines_window(&mut self, ctx: &egui::Context) {
         let mut open = self.machines_open;
         egui::Window::new("Machine profiles")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -5308,7 +5316,8 @@ impl BeamWrightApp {
         let mut reset = false;
         let mut preset: Option<crate::objects::ImageSettings> = None;
         egui::Window::new(format!("Adjust image - {object_name}"))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .collapsible(false)
             .resizable(true)
             .default_width(900.0)
@@ -6014,7 +6023,8 @@ impl BeamWrightApp {
         };
         let mut cancel = false;
         egui::Window::new("Working")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
@@ -6120,7 +6130,8 @@ impl BeamWrightApp {
             None => (0.0, 0.0, None),
         };
         egui::Window::new("Preview and G-code")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6226,7 +6237,8 @@ impl BeamWrightApp {
         };
         let mut open = self.report_open;
         egui::Window::new(format!("{} report", report.action))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6454,7 +6466,8 @@ impl BeamWrightApp {
         let mut open = self.skew_open;
         let mut apply = false;
         egui::Window::new("Skew")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6500,7 +6513,8 @@ impl BeamWrightApp {
         let mut open = self.repeat_open;
         let mut apply = false;
         egui::Window::new("Repeat selection")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6615,7 +6629,8 @@ impl BeamWrightApp {
         let mut preview = false;
         let mut apply = false;
         egui::Window::new("Nest selection")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -6735,7 +6750,8 @@ impl BeamWrightApp {
         let mut open = self.simplify_open;
         let mut apply = false;
         egui::Window::new("Simplify path")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6769,7 +6785,8 @@ impl BeamWrightApp {
         let mut open = self.offset_open;
         let mut apply = false;
         egui::Window::new("Offset")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6803,7 +6820,8 @@ impl BeamWrightApp {
     fn grid_array_window(&mut self, ctx: &egui::Context) {
         let mut open = self.grid_array_open;
         egui::Window::new("Grid array")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -6884,7 +6902,8 @@ impl BeamWrightApp {
         let mut open = self.preferences_open;
         let mut changed = false;
         egui::Window::new("Preferences")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -7047,7 +7066,8 @@ impl BeamWrightApp {
         let mut open = self.profiles_open;
         let mut changed = false;
         egui::Window::new("Materials and operations")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .default_size([560.0, 520.0])
             .show(ctx, |ui| {
@@ -7802,7 +7822,8 @@ impl BeamWrightApp {
             let mut open_draft = false;
             let mut discard = false;
             egui::Window::new("Recover unsaved work")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -7848,7 +7869,8 @@ impl BeamWrightApp {
             let mut replace = false;
             let mut cancel = false;
             egui::Window::new("Replace file?")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -7874,7 +7896,8 @@ impl BeamWrightApp {
             let mut action = None;
             let mut cancel = false;
             egui::Window::new("Unsaved changes")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -7941,7 +7964,8 @@ impl BeamWrightApp {
         if self.about_open {
             let mut open = true;
             egui::Window::new("About BeamWright")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut open)
