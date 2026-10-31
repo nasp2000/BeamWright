@@ -2586,12 +2586,15 @@ impl BeamWrightApp {
         });
     }
 
-    fn tool_strip(&mut self, ui: &mut Ui) {
-        egui::Panel::left("tool_strip")
-            .resizable(false)
-            .exact_size(56.0)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+    fn tool_strip(&mut self, ctx: &egui::Context, rect: Rect) {
+        egui::Area::new(egui::Id::new("tool_strip"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_top() + egui::vec2(8.0, 8.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height((rect.height() - 24.0).max(180.0))
+                        .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         for tool in [
                             Tool::Select,
@@ -2741,6 +2744,7 @@ impl BeamWrightApp {
                                 .range(0.1..=50.0)
                                 .suffix(" mm"),
                         );
+                        });
                     });
                 });
             });
@@ -3039,6 +3043,8 @@ impl BeamWrightApp {
                     operation.name.clone(),
                     operation.op_type,
                     operation.enabled,
+                    operation.params.speed,
+                    operation.params.power,
                 )
             })
             .collect();
@@ -3062,60 +3068,72 @@ impl BeamWrightApp {
                 self.active_operation = None;
             }
         });
-        for (id, name, op_type, enabled) in &operations {
-            ui.horizontal(|ui| {
-                let mut is_enabled = *enabled;
-                if ui.checkbox(&mut is_enabled, "").changed() {
-                    if let Some(operation) = self
-                        .editor
-                        .document
-                        .operations
-                        .iter_mut()
-                        .find(|operation| operation.id == *id)
-                    {
-                        operation.enabled = is_enabled;
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            egui::Grid::new("operations_table")
+                .num_columns(6)
+                .striped(true)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for header in ["On", "Operation", "Type", "Spd/Pwr", "Used", ""] {
+                        ui.strong(header);
                     }
-                }
-                let selected = self.active_operation.as_deref() == Some(id.as_str());
-                if ui
-                    .selectable_label(selected, format!("{name} ({})", op_type.label()))
-                    .clicked()
-                {
-                    self.active_operation = Some(id.clone());
-                }
-                let used = self
-                    .editor
-                    .document
-                    .objects
-                    .iter()
-                    .filter(|object| object.operation_id.as_deref() == Some(id.as_str()))
-                    .count();
-                ui.weak(format!("({used})"));
-                if ui
-                    .small_button("\u{2191}")
-                    .on_hover_text("Run this operation earlier")
-                    .clicked()
-                {
-                    self.editor.move_operation(id, -1);
-                }
-                if ui
-                    .small_button("\u{2193}")
-                    .on_hover_text("Run this operation later")
-                    .clicked()
-                {
-                    self.editor.move_operation(id, 1);
-                }
-                if ui
-                    .small_button("Duplicate")
-                    .on_hover_text("Duplicate this operation")
-                    .clicked()
-                {
-                    if let Some(copy) = self.editor.duplicate_operation(id) {
-                        self.active_operation = Some(copy);
+                    ui.end_row();
+                    for (id, name, op_type, enabled, speed, power) in &operations {
+                        let mut is_enabled = *enabled;
+                        if ui.checkbox(&mut is_enabled, "").changed() {
+                            if let Some(operation) = self
+                                .editor
+                                .document
+                                .operations
+                                .iter_mut()
+                                .find(|operation| operation.id == *id)
+                            {
+                                operation.enabled = is_enabled;
+                            }
+                        }
+                        let selected = self.active_operation.as_deref() == Some(id.as_str());
+                        if ui.selectable_label(selected, name).clicked() {
+                            self.active_operation = Some(id.clone());
+                        }
+                        ui.label(op_type.label());
+                        ui.label(format!("{speed:.0} / {power:.0}"));
+                        let used = self
+                            .editor
+                            .document
+                            .objects
+                            .iter()
+                            .filter(|object| object.operation_id.as_deref() == Some(id.as_str()))
+                            .count();
+                        ui.weak(used.to_string());
+                        ui.horizontal(|ui| {
+                            if ui
+                                .small_button("\u{2191}")
+                                .on_hover_text("Run this operation earlier")
+                                .clicked()
+                            {
+                                self.editor.move_operation(id, -1);
+                            }
+                            if ui
+                                .small_button("\u{2193}")
+                                .on_hover_text("Run this operation later")
+                                .clicked()
+                            {
+                                self.editor.move_operation(id, 1);
+                            }
+                            if ui
+                                .small_button("Duplicate")
+                                .on_hover_text("Duplicate this operation")
+                                .clicked()
+                            {
+                                if let Some(copy) = self.editor.duplicate_operation(id) {
+                                    self.active_operation = Some(copy);
+                                }
+                            }
+                        });
+                        ui.end_row();
                     }
-                }
-            });
-        }
+                });
+        });
         let mut copy_parameters = false;
         let mut paste_parameters = false;
         let mut save_as_profile = false;
@@ -4045,6 +4063,8 @@ impl BeamWrightApp {
                     self.zoom_to_selection_request = false;
                 }
                 let ctx = ui.ctx().clone();
+                self.tool_strip(&ctx, rect);
+                let over_toolbar = ctx.is_pointer_over_area();
                 let modal = self.dialog.is_some()
                     || self.confirm.is_some()
                     || self.about_open
@@ -4057,7 +4077,8 @@ impl BeamWrightApp {
                 } else {
                     ctx.input(|input| input.pointer.interact_pos())
                 };
-                let primary_pressed = !modal && ctx.input(|input| input.pointer.primary_pressed());
+                let primary_pressed =
+                    !modal && !over_toolbar && ctx.input(|input| input.pointer.primary_pressed());
                 let primary_released =
                     !modal && ctx.input(|input| input.pointer.primary_released());
                 let shift = ctx.input(|input| input.modifiers.shift);
@@ -4070,7 +4091,8 @@ impl BeamWrightApp {
                     self.cursor_doc = Some(Point2::new(x, y));
                 }
 
-                let pointer_in_canvas = pointer.is_some_and(|pos| rect.contains(pos));
+                let pointer_in_canvas =
+                    pointer.is_some_and(|pos| rect.contains(pos)) && !over_toolbar;
                 if pointer_in_canvas {
                     let scroll = ctx.input(|input| input.smooth_scroll_delta.y);
                     if scroll.abs() > 0.0 {
@@ -7933,7 +7955,6 @@ impl eframe::App for BeamWrightApp {
         self.menu_bar(ui);
         self.toolbar(ui);
         self.status_bar(ui);
-        self.tool_strip(ui);
         if self.show_layers_panel {
             self.layers_panel(ui);
         }

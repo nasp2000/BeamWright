@@ -64,10 +64,10 @@ pub fn serve(listen: &str, token: &str, bridge_host: &str, bridge_port: u16) -> 
 pub fn is_loopback(listen: &str) -> bool {
     listen
         .parse::<SocketAddr>()
-        .map(|address| address.ip().is_loopback())
-        .unwrap_or(false)
+        .is_ok_and(|address| address.ip().is_loopback())
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle(mut stream: TcpStream, server: &Server) -> Result<(), String> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let Some(peer) = stream.peer_addr().ok() else {
@@ -172,6 +172,7 @@ fn handle(mut stream: TcpStream, server: &Server) -> Result<(), String> {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn respond(stream: &mut TcpStream, status: u16, body: &str) -> Result<(), String> {
     let reason = match status {
         200 => "OK",

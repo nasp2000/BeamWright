@@ -167,7 +167,8 @@ impl FileDialog {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
-            .default_width(540.0)
+            .default_width(560.0)
+            .max_width(680.0)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -187,10 +188,8 @@ impl FileDialog {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Folder");
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.path_text)
-                            .desired_width(f32::INFINITY),
-                    );
+                    let response = ui
+                        .add(egui::TextEdit::singleline(&mut self.path_text).desired_width(400.0));
                     let go = ui.button("Go").clicked()
                         || (response.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter)));
@@ -208,17 +207,15 @@ impl FileDialog {
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
-                    .auto_shrink([false, false])
+                    .max_width(520.0)
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         self.listing(ui);
                     });
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("File name:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.file_name)
-                            .desired_width(f32::INFINITY),
-                    );
+                    ui.add(egui::TextEdit::singleline(&mut self.file_name).desired_width(420.0));
                 });
                 if let Some(error) = &self.error {
                     ui.colored_label(egui::Color32::from_rgb(200, 60, 60), error);
