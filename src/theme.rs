@@ -1,4 +1,4 @@
-//! BeamWright's visual identity.
+//! `BeamWright`'s visual identity.
 //!
 //! A warm graphite palette with a teal accent, rounded panels and pointer
 //! cursors: deliberately close to the conventions of a vector editor while
