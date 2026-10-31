@@ -284,6 +284,7 @@ pub struct BeamWrightApp {
     doc_properties_snapshot: Option<Document>,
     cuts_open: bool,
     cuts_snapshot: Option<Document>,
+    help_shortcuts_open: bool,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -694,6 +695,7 @@ impl BeamWrightApp {
             doc_properties_snapshot: None,
             cuts_open: false,
             cuts_snapshot: None,
+            help_shortcuts_open: false,
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -1362,6 +1364,7 @@ impl BeamWrightApp {
             Ok(()) => {
                 self.current_path = Some(path.to_path_buf());
                 self.saved_snapshot = Some(self.editor.document.clone());
+                self.remember_recent(path);
                 let _ = std::fs::remove_file(&self.recovery_path);
                 self.last_autosave = std::time::Instant::now();
                 self.status = format!("Saved {}", path.display());
@@ -1408,6 +1411,7 @@ impl BeamWrightApp {
             || self.machines_open
             || self.cuts_open
             || self.image_adjust.is_some()
+            || self.help_shortcuts_open
         {
             return;
         }
@@ -1645,6 +1649,22 @@ impl BeamWrightApp {
                         self.request(PendingAction::Open);
                         ui.close();
                     }
+                    let recent = self.preferences.general.recent_projects.clone();
+                    ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                        ui.menu_button(icons::menu_label(ui, Icon::Recover, "Recent projects"), |ui| {
+                            for entry in &recent {
+                                let path = std::path::PathBuf::from(entry);
+                                let label = path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or(entry);
+                                if ui.button(label).on_hover_text(entry).clicked() {
+                                    self.start_import(&path);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                     if icons::button(ui, Icon::Save, "Save").clicked() {
                         self.save();
                         ui.close();
@@ -2416,6 +2436,10 @@ impl BeamWrightApp {
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Help, "Help"), |ui| {
+                    if icons::button(ui, Icon::Text, "Keyboard shortcuts").clicked() {
+                        self.help_shortcuts_open = true;
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Info, "About BeamWright").clicked() {
                         self.about_open = true;
                         ui.close();
@@ -4345,6 +4369,61 @@ impl BeamWrightApp {
         }
     }
 
+    fn remember_recent(&mut self, path: &Path) {
+        let entry = path.display().to_string();
+        let mut recent = std::mem::take(&mut self.preferences.general.recent_projects);
+        recent.retain(|existing| existing != &entry);
+        recent.insert(0, entry);
+        recent.truncate(10);
+        self.preferences.general.recent_projects = recent;
+        let _ = self.preferences.save(&self.preferences_path);
+    }
+
+    fn shortcuts_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.help_shortcuts_open;
+        egui::Window::new("Keyboard shortcuts")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                egui::Grid::new("shortcut_table")
+                    .num_columns(2)
+                    .striped(true)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        for (keys, action) in [
+                            ("Ctrl+N / Ctrl+O / Ctrl+S", "New, open and save"),
+                            ("Ctrl+Shift+S", "Save as"),
+                            ("Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z", "Undo and redo"),
+                            ("Ctrl+X / Ctrl+C / Ctrl+V", "Cut, copy and paste"),
+                            ("Ctrl+D", "Duplicate"),
+                            ("Ctrl+A", "Select all"),
+                            ("Delete / Backspace", "Delete the selection or selected nodes"),
+                            ("Ctrl+G / Ctrl+Shift+G", "Group and ungroup"),
+                            ("Arrows / Shift+Arrows", "Nudge by 1 mm or 0.1 mm"),
+                            ("Escape", "Cancel the drag, leave node editing or clear the selection"),
+                            ("V / L / R / E / S / T / P / B", "Select, line, rectangle, ellipse, star, text, polygon, freehand"),
+                            ("F", "Fit the page"),
+                            ("G", "Toggle the grid"),
+                            ("+ / -", "Zoom in and out"),
+                            ("Ctrl+P", "Preview and G-code"),
+                            ("F9 / F10", "Layers and properties panels"),
+                            ("Enter", "Finish a Bezier path"),
+                        ] {
+                            ui.label(keys);
+                            ui.label(action);
+                            ui.end_row();
+                        }
+                    });
+                ui.separator();
+                ui.weak(
+                    "Ctrl and Shift combinations work with the keyboard layout in use; the tools never capture keys while a text field has focus.",
+                );
+            });
+        self.help_shortcuts_open = open;
+    }
+
     fn open_cuts(&mut self) {
         self.cuts_snapshot = Some(self.editor.document.clone());
         if self.active_operation.is_none() {
@@ -4550,6 +4629,20 @@ impl BeamWrightApp {
                         );
                         self.active_operation = Some(operation.id.clone());
                         operations.push(operation);
+                    }
+                    if ui.button("Duplicate").clicked() {
+                        if let Some(id) = self.active_operation.clone() {
+                            if let Some(index) = operations
+                                .iter()
+                                .position(|operation| operation.id == id)
+                            {
+                                let mut copy = operations[index].clone();
+                                copy.id = uuid::Uuid::new_v4().to_string();
+                                copy.name = format!("{} copy", copy.name);
+                                self.active_operation = Some(copy.id.clone());
+                                operations.insert(index + 1, copy);
+                            }
+                        }
                     }
                     if ui.button("Delete").clicked() {
                         if let Some(id) = self.active_operation.clone() {
@@ -7340,6 +7433,9 @@ impl BeamWrightApp {
         }
         if self.cuts_open {
             self.cuts_window(ctx);
+        }
+        if self.help_shortcuts_open {
+            self.shortcuts_window(ctx);
         }
         if self.image_adjust.is_some() {
             self.image_adjust_window(ctx);

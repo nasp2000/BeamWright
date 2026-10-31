@@ -11,6 +11,9 @@ pub struct GeneralPrefs {
     /// Font used for new text objects; existing text keeps its own font.
     #[serde(default = "default_text_font")]
     pub text_font: String,
+    /// Recently opened or saved project files, newest first.
+    #[serde(default)]
+    pub recent_projects: Vec<String>,
 }
 
 impl Default for GeneralPrefs {
@@ -22,6 +25,7 @@ impl Default for GeneralPrefs {
             backup_enabled: true,
             default_directory: String::new(),
             text_font: default_text_font(),
+            recent_projects: Vec::new(),
         }
     }
 }
