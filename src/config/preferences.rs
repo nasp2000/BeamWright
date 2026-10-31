@@ -45,7 +45,47 @@ pub struct AppPreferences {
     pub drawing: DrawingPrefs,
 }
 
+fn default_snap_step() -> f64 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// File used inside the application data directory.
+pub const PREFERENCES_FILE: &str = "preferences.json";
+
+pub fn default_path() -> std::path::PathBuf {
+    crate::config::paths::data_dir().join(PREFERENCES_FILE)
+}
+
 impl AppPreferences {
+    /// Load preferences, or defaults when the file does not exist.
+    pub fn load_or_default(path: &std::path::Path) -> Result<Self, String> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let preferences: Self =
+            serde_json::from_str(&text).map_err(|error| format!("invalid preferences: {error}"))?;
+        preferences.validate()?;
+        Ok(preferences)
+    }
+
+    /// Save preferences atomically.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        self.validate()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, text).map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.general.validate()?;
         self.drawing.validate()?;
@@ -74,6 +114,43 @@ mod tests {
         let mut p = AppPreferences::default();
         p.drawing.grid_spacing_mm = 0.0;
         assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn missing_file_loads_defaults() {
+        let path = std::env::temp_dir().join("bw_prefs_missing.json");
+        let _ = std::fs::remove_file(&path);
+        let preferences = AppPreferences::load_or_default(&path).unwrap();
+        assert_eq!(preferences.general.theme, "light");
+        assert_eq!(preferences.drawing.grid_spacing_mm, 10.0);
+    }
+
+    #[test]
+    fn save_and_load_round_trip() {
+        let path = std::env::temp_dir().join("bw_prefs_roundtrip.json");
+        let _ = std::fs::remove_file(&path);
+        let mut preferences = AppPreferences::default();
+        preferences.drawing.grid_spacing_mm = 5.0;
+        preferences.drawing.snap_enabled = true;
+        preferences.general.theme = "dark".to_string();
+        preferences.save(&path).unwrap();
+        let loaded = AppPreferences::load_or_default(&path).unwrap();
+        assert_eq!(loaded.drawing.grid_spacing_mm, 5.0);
+        assert!(loaded.drawing.snap_enabled);
+        assert_eq!(loaded.general.theme, "dark");
+        assert!(!path.with_extension("json.tmp").exists());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn invalid_preferences_file_is_rejected() {
+        let path = std::env::temp_dir().join("bw_prefs_invalid.json");
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(AppPreferences::load_or_default(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+        let mut preferences = AppPreferences::default();
+        preferences.drawing.snap_step_mm = 0.0;
+        assert!(preferences.save(&path).is_err());
     }
 
     #[test]

@@ -75,6 +75,9 @@ pub struct BeamWrightApp {
     import_warnings: Vec<String>,
     preview_toolpaths: bool,
     image_previews: std::collections::HashMap<String, ImagePreview>,
+    preferences: crate::config::preferences::AppPreferences,
+    preferences_path: PathBuf,
+    preferences_open: bool,
 }
 
 struct ImagePreview {
@@ -92,9 +95,18 @@ impl Default for BeamWrightApp {
 impl BeamWrightApp {
     pub fn new(file: Option<PathBuf>) -> Self {
         let document = Document::default();
+        let preferences_path = crate::config::preferences::default_path();
+        let preferences =
+            crate::config::preferences::AppPreferences::load_or_default(&preferences_path)
+                .unwrap_or_default();
+        let mut editor = EditorState::new(document.clone());
+        editor.canvas.grid_spacing_mm = preferences.drawing.grid_spacing_mm;
+        editor.snap_step_mm = preferences.drawing.snap_step_mm;
+        editor.snap_enabled = preferences.drawing.snap_enabled;
+        let dark_mode = preferences.general.theme == "dark";
         let mut app = Self {
-            editor: EditorState::new(document.clone()),
-            dark_mode: false,
+            editor,
+            dark_mode,
             current_path: None,
             saved_snapshot: Some(document),
             status: "Ready".to_string(),
@@ -123,6 +135,9 @@ impl BeamWrightApp {
             import_warnings: Vec::new(),
             preview_toolpaths: false,
             image_previews: std::collections::HashMap::new(),
+            preferences: preferences.clone(),
+            preferences_path,
+            preferences_open: false,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -668,6 +683,11 @@ impl BeamWrightApp {
                     ui.checkbox(&mut self.editor.snap_enabled, "Snap to 1 mm");
                     ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
                     ui.checkbox(&mut self.dark_mode, "Dark mode");
+                    ui.separator();
+                    if ui.button("Preferences...").clicked() {
+                        self.preferences_open = true;
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Help", |ui| {
                     if ui.button("About BeamWright").clicked() {
@@ -1710,6 +1730,59 @@ impl BeamWrightApp {
         }
     }
 
+    fn preferences_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.preferences_open;
+        let mut changed = false;
+        egui::Window::new("Preferences")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.heading("Drawing");
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.preferences.drawing.grid_spacing_mm)
+                            .speed(0.5)
+                            .range(0.1..=1000.0)
+                            .suffix(" mm grid"),
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_enabled,
+                        "Snap to grid step",
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.preferences.drawing.snap_step_mm)
+                            .speed(0.1)
+                            .range(0.1..=100.0)
+                            .suffix(" mm snap"),
+                    )
+                    .changed();
+                ui.separator();
+                ui.heading("Appearance");
+                let mut dark = self.preferences.general.theme == "dark";
+                if ui.checkbox(&mut dark, "Dark theme").changed() {
+                    self.preferences.general.theme =
+                        if dark { "dark" } else { "light" }.to_string();
+                    changed = true;
+                }
+                if changed {
+                    self.editor.canvas.grid_spacing_mm = self.preferences.drawing.grid_spacing_mm;
+                    self.editor.snap_step_mm = self.preferences.drawing.snap_step_mm;
+                    self.editor.snap_enabled = self.preferences.drawing.snap_enabled;
+                    self.dark_mode = self.preferences.general.theme == "dark";
+                    match self.preferences.save(&self.preferences_path) {
+                        Ok(()) => self.status = "Preferences saved".to_string(),
+                        Err(error) => self.status = format!("Cannot save preferences: {error}"),
+                    }
+                }
+            });
+        self.preferences_open = open;
+    }
+
     fn profiles_window(&mut self, ctx: &egui::Context) {
         use crate::operations::OperationType;
         use crate::profiles::{MaterialProfile, OperationProfile};
@@ -2354,6 +2427,9 @@ impl BeamWrightApp {
         }
         if self.profiles_open {
             self.profiles_window(ctx);
+        }
+        if self.preferences_open {
+            self.preferences_window(ctx);
         }
         if self.about_open {
             let mut open = true;

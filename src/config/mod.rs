@@ -36,6 +36,10 @@ pub struct DrawingPrefs {
     pub grid_spacing_mm: f64,
     pub snap_tolerance_px: f64,
     pub show_rulers: bool,
+    #[serde(default = "default_snap_step")]
+    pub snap_step_mm: f64,
+    #[serde(default = "default_true")]
+    pub snap_enabled: bool,
 }
 
 impl Default for DrawingPrefs {
@@ -44,6 +48,8 @@ impl Default for DrawingPrefs {
             grid_spacing_mm: 10.0,
             snap_tolerance_px: 8.0,
             show_rulers: true,
+            snap_step_mm: 1.0,
+            snap_enabled: false,
         }
     }
 }
@@ -56,8 +62,19 @@ impl DrawingPrefs {
         if self.snap_tolerance_px < 0.0 {
             return Err("snap tolerance must be non-negative".to_string());
         }
+        if !self.snap_step_mm.is_finite() || self.snap_step_mm <= 0.0 {
+            return Err("snap step must be positive".to_string());
+        }
         Ok(())
     }
+}
+
+fn default_snap_step() -> f64 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -115,6 +132,15 @@ mod drawing_tests {
     fn reject_negative_tolerance() {
         let p = DrawingPrefs {
             snap_tolerance_px: -1.0,
+            ..DrawingPrefs::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn reject_bad_snap_step() {
+        let p = DrawingPrefs {
+            snap_step_mm: 0.0,
             ..DrawingPrefs::default()
         };
         assert!(p.validate().is_err());
