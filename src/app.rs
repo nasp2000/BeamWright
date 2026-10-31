@@ -5762,6 +5762,40 @@ impl BeamWrightApp {
                     if ui.button("Export prepared PNG").clicked() {
                         export_prepared = true;
                     }
+                    if ui.button("Photo").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::Jarvis,
+                            contrast: 1.15,
+                            gamma: 0.9,
+                            enhance_radius_px: 1,
+                            enhance_amount: 0.6,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
+                    if ui.button("Wood").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::Stucki,
+                            contrast: 1.25,
+                            gamma: 1.1,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
+                    if ui.button("Metal").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::Atkinson,
+                            contrast: 1.4,
+                            gamma: 1.2,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
+                    if ui.button("Acrylic").clicked() {
+                        preset = Some(crate::objects::ImageSettings {
+                            mode: crate::objects::ImageMode::FloydSteinberg,
+                            contrast: 1.1,
+                            gamma: 0.95,
+                            ..crate::objects::ImageSettings::default()
+                        });
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("OK").clicked() {
                             close = true;
