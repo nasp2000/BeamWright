@@ -79,6 +79,12 @@ pub struct ImageSettings {
     /// Working height in pixels; 0 keeps the source resolution.
     #[serde(default)]
     pub target_height_px: u32,
+    /// Mirror the picture left to right before processing.
+    #[serde(default)]
+    pub flip_horizontal: bool,
+    /// Mirror the picture top to bottom before processing.
+    #[serde(default)]
+    pub flip_vertical: bool,
 }
 
 impl Default for ImageSettings {
@@ -94,6 +100,8 @@ impl Default for ImageSettings {
             rotation_degrees: 0.0,
             target_width_px: 0,
             target_height_px: 0,
+            flip_horizontal: false,
+            flip_vertical: false,
         }
     }
 }

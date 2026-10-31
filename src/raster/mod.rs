@@ -256,6 +256,12 @@ pub fn process_object(
     image.validate().map_err(BeamError::InvalidInput)?;
     let mut picture = image::open(path)
         .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))?;
+    if image.settings.flip_horizontal {
+        picture = picture.fliph();
+    }
+    if image.settings.flip_vertical {
+        picture = picture.flipv();
+    }
     if let Some(crop) = image.crop {
         picture = picture.crop_imm(crop.x, crop.y, crop.width, crop.height);
     }
@@ -359,6 +365,24 @@ mod object_tests {
             height: 4,
         });
         assert!(process_object(&path, &object).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn flips_mirror_the_picture() {
+        let path = write_image("bw_raster_flip.png", 8, 4);
+        let mut object = ImageObject::new(path.to_string_lossy(), 8, 4, 96.0);
+        let normal = process_object(&path, &object).unwrap();
+        assert!(normal.get(0, 0));
+        assert!(!normal.get(7, 0));
+        object.settings.flip_horizontal = true;
+        let flipped = process_object(&path, &object).unwrap();
+        assert!(!flipped.get(0, 0));
+        assert!(flipped.get(7, 0));
+        object.settings.flip_horizontal = false;
+        object.settings.flip_vertical = true;
+        let vertical = process_object(&path, &object).unwrap();
+        assert_eq!(vertical, normal);
         let _ = std::fs::remove_file(&path);
     }
 

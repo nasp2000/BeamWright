@@ -3223,6 +3223,10 @@ impl BeamWrightApp {
                     image.settings.rotation_degrees = rotation;
                 });
                 ui.horizontal(|ui| {
+                    ui.checkbox(&mut image.settings.flip_horizontal, "Flip horizontal");
+                    ui.checkbox(&mut image.settings.flip_vertical, "Flip vertical");
+                });
+                ui.horizontal(|ui| {
                     ui.label("Working size");
                     ui.add(
                         egui::DragValue::new(&mut image.settings.target_width_px)
@@ -3295,8 +3299,14 @@ impl BeamWrightApp {
                         .range(0.01..=2.0)
                         .suffix(" mm line interval"),
                 );
+                if matches!(image.settings.mode, ImageMode::Sketch) {
+                    ui.weak("In sketch mode the threshold sets the edge strength.");
+                }
                 if let Err(error) = image.settings.validate() {
                     ui.colored_label(Color32::from_rgb(200, 60, 60), error);
+                }
+                if ui.button("Reset preparation").clicked() {
+                    image.settings = crate::objects::ImageSettings::default();
                 }
             }
         }
