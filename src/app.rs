@@ -5613,6 +5613,7 @@ impl BeamWrightApp {
         let mut close = false;
         let mut cancel = false;
         let mut reset = false;
+        let mut export_prepared = false;
         let mut preset: Option<crate::objects::ImageSettings> = None;
         egui::Window::new(format!("Adjust image - {object_name}"))
             .pivot(egui::Align2::CENTER_CENTER)
@@ -5758,6 +5759,9 @@ impl BeamWrightApp {
                     if ui.button("Reset all").clicked() {
                         reset = true;
                     }
+                    if ui.button("Export prepared PNG").clicked() {
+                        export_prepared = true;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("OK").clicked() {
                             close = true;
@@ -5769,6 +5773,38 @@ impl BeamWrightApp {
                 });
             });
 
+        if export_prepared {
+            match crate::raster::process_object(std::path::Path::new(&image.path), &image) {
+                Ok(bitmap) => {
+                    let mut path = std::path::PathBuf::from(&image.path);
+                    let stem = path
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("image");
+                    path.set_file_name(format!("{stem}_prepared.png"));
+                    let picture = image::GrayImage::from_fn(
+                        bitmap.width as u32,
+                        bitmap.height as u32,
+                        |x, y| {
+                            if bitmap.get(x as usize, y as usize) {
+                                image::Luma([0])
+                            } else {
+                                image::Luma([255])
+                            }
+                        },
+                    );
+                    match picture.save(&path) {
+                        Ok(()) => {
+                            self.status = format!("Prepared image saved to {}", path.display());
+                        }
+                        Err(error) => {
+                            self.status = format!("Cannot save the prepared image: {error}");
+                        }
+                    }
+                }
+                Err(error) => self.status = format!("Cannot prepare the image: {error}"),
+            }
+        }
         if let Some(preset) = preset {
             image.settings = preset;
         }
