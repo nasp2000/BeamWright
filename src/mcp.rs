@@ -305,6 +305,41 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "repeat" => {
+                let mode = match string(arguments, "mode").as_deref().unwrap_or("linear") {
+                    "linear" => crate::editor::RepeatMode::Linear,
+                    "circular" => crate::editor::RepeatMode::Circular,
+                    other => {
+                        return Err(BeamError::InvalidInput(format!(
+                            "unknown repeat mode: {other}"
+                        )));
+                    }
+                };
+                self.select_scope(arguments)?;
+                let copies = number(arguments, "copies").unwrap_or(3.0).max(1.0);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let copies = copies.min(100.0) as usize;
+                let options = crate::editor::RepeatOptions {
+                    mode,
+                    copies,
+                    dx: number(arguments, "dx").unwrap_or(10.0),
+                    dy: number(arguments, "dy").unwrap_or(0.0),
+                    radius: number(arguments, "radius").unwrap_or(20.0),
+                    rotation_degrees: number(arguments, "rotation_degrees").unwrap_or(0.0),
+                    rotate_copies: arguments
+                        .get("rotate_copies")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                };
+                let created = self
+                    .editor
+                    .repeat_selection(&options)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "created": created,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "nest" => {
                 let spacing = number(arguments, "spacing").unwrap_or(1.0);
                 let margin = number(arguments, "margin").unwrap_or(0.0);
@@ -758,6 +793,20 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "repeat",
+            "Duplicate the selection linearly or around a circle.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "mode": {"type": "string"},
+                "copies": {"type": "integer"},
+                "dx": {"type": "number"},
+                "dy": {"type": "number"},
+                "radius": {"type": "number"},
+                "rotation_degrees": {"type": "number"},
+                "rotate_copies": {"type": "boolean"}
+            }}),
+        ),
+        tool_with(
             "nest",
             "Nest the selected parts (all objects when ids are omitted) into the work area.",
             json!({"type": "object", "properties": {
@@ -1048,6 +1097,34 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn repeat_tool_copies_objects() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 5.0, "height": 5.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let linear = call(
+            &mut server,
+            "repeat",
+            json!({"ids": [id], "mode": "linear", "copies": 2, "dx": 10.0}),
+        );
+        assert_eq!(linear["result"]["created"], 2);
+        assert_eq!(linear["result"]["objects"], 3);
+        let circular = call(
+            &mut server,
+            "repeat",
+            json!({"ids": [id], "mode": "circular", "copies": 3, "radius": 10.0}),
+        );
+        assert_eq!(circular["result"]["created"], 3);
+        let bad = call(&mut server, "repeat", json!({"mode": "spiral"}));
+        assert!(bad.get("error").is_some());
     }
 
     #[test]

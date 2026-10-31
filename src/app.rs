@@ -103,6 +103,8 @@ pub struct BeamWrightApp {
     offset_distance: f64,
     star_points: usize,
     star_inner: f64,
+    repeat_open: bool,
+    repeat_options: crate::editor::RepeatOptions,
     simplify_open: bool,
     simplify_tolerance: f64,
     nest_open: bool,
@@ -322,6 +324,8 @@ impl BeamWrightApp {
             offset_distance: 1.0,
             star_points: 5,
             star_inner: 0.5,
+            repeat_open: false,
+            repeat_options: crate::editor::RepeatOptions::default(),
             simplify_open: false,
             simplify_tolerance: 0.2,
             nest_open: false,
@@ -924,6 +928,16 @@ impl BeamWrightApp {
                                 }
                             }
                         }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Repeat..."),
+                        )
+                        .clicked()
+                    {
+                        self.repeat_open = true;
                         ui.close();
                     }
                     ui.separator();
@@ -2709,6 +2723,100 @@ impl BeamWrightApp {
         }
     }
 
+    fn repeat_window(&mut self, ctx: &egui::Context) {
+        use crate::editor::RepeatMode;
+
+        let mut open = self.repeat_open;
+        let mut apply = false;
+        egui::Window::new("Repeat selection")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::ComboBox::from_label("Mode")
+                    .selected_text(match self.repeat_options.mode {
+                        RepeatMode::Linear => "Linear",
+                        RepeatMode::Circular => "Circular",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.repeat_options.mode,
+                            RepeatMode::Linear,
+                            "Linear",
+                        );
+                        ui.selectable_value(
+                            &mut self.repeat_options.mode,
+                            RepeatMode::Circular,
+                            "Circular",
+                        );
+                    });
+                ui.horizontal(|ui| {
+                    ui.label("Copies");
+                    ui.add(
+                        egui::DragValue::new(&mut self.repeat_options.copies)
+                            .speed(1.0)
+                            .range(1..=100),
+                    );
+                });
+                match self.repeat_options.mode {
+                    RepeatMode::Linear => {
+                        ui.horizontal(|ui| {
+                            ui.label("Spacing X");
+                            ui.add(
+                                egui::DragValue::new(&mut self.repeat_options.dx)
+                                    .speed(0.5)
+                                    .suffix(" mm"),
+                            );
+                            ui.label("Y");
+                            ui.add(
+                                egui::DragValue::new(&mut self.repeat_options.dy)
+                                    .speed(0.5)
+                                    .suffix(" mm"),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Rotation per copy");
+                            ui.add(
+                                egui::DragValue::new(&mut self.repeat_options.rotation_degrees)
+                                    .speed(1.0)
+                                    .suffix(" deg"),
+                            );
+                        });
+                    }
+                    RepeatMode::Circular => {
+                        ui.horizontal(|ui| {
+                            ui.label("Radius");
+                            ui.add(
+                                egui::DragValue::new(&mut self.repeat_options.radius)
+                                    .speed(0.5)
+                                    .range(0.0..=10000.0)
+                                    .suffix(" mm"),
+                            );
+                        });
+                        ui.checkbox(
+                            &mut self.repeat_options.rotate_copies,
+                            "Rotate copies along the orbit",
+                        );
+                    }
+                }
+                ui.weak("Copies are spaced evenly and stay separate from the original.");
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+            });
+        if apply {
+            match self.editor.repeat_selection(&self.repeat_options) {
+                Ok(count) => {
+                    self.status = format!("Created {count} copy/copies");
+                    self.repeat_open = false;
+                }
+                Err(error) => self.status = format!("Repeat failed: {error}"),
+            }
+        } else {
+            self.repeat_open = open;
+        }
+    }
+
     fn open_nest(&mut self) {
         self.nest_open = true;
         self.refresh_nest();
@@ -3783,6 +3891,9 @@ impl BeamWrightApp {
         }
         if self.nest_open {
             self.nest_window(ctx);
+        }
+        if self.repeat_open {
+            self.repeat_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

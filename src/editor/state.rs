@@ -10,6 +10,43 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
+/// Copy distribution modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    Linear,
+    Circular,
+}
+
+/// Parameters for [`EditorState::repeat_selection`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RepeatOptions {
+    pub mode: RepeatMode,
+    /// Number of copies to create.
+    pub copies: usize,
+    /// Linear step per copy, in millimetres.
+    pub dx: f64,
+    pub dy: f64,
+    /// Circular orbit radius, in millimetres.
+    pub radius: f64,
+    /// Rotate each linear copy by this angle, or circular copies along the orbit.
+    pub rotation_degrees: f64,
+    pub rotate_copies: bool,
+}
+
+impl Default for RepeatOptions {
+    fn default() -> Self {
+        Self {
+            mode: RepeatMode::Linear,
+            copies: 3,
+            dx: 10.0,
+            dy: 0.0,
+            radius: 20.0,
+            rotation_degrees: 0.0,
+            rotate_copies: true,
+        }
+    }
+}
+
 /// One straight segment in world space.
 type LineSegment = ((f64, f64), (f64, f64));
 
@@ -1618,6 +1655,101 @@ impl EditorState {
         }
     }
 
+    /// Duplicate the selection along a line or around a circle (PLAN.md §19.2).
+    ///
+    /// Linear copies step by `(dx, dy)` and may be rotated by a fixed angle each
+    /// (repetition by distance is the same operation with a normalised step).
+    /// Circular copies sit on a circle of `radius` around the selection centre,
+    /// evenly spaced with the original as one position, and can follow the
+    /// orbit with their own rotation. Copies never join the original's group.
+    pub fn repeat_selection(
+        &mut self,
+        options: &RepeatOptions,
+    ) -> std::result::Result<usize, String> {
+        if self.selection.is_empty() {
+            return Err("Select at least one object".to_string());
+        }
+        if !(1..=100).contains(&options.copies) {
+            return Err("Copies must be between 1 and 100".to_string());
+        }
+        for value in [
+            options.dx,
+            options.dy,
+            options.radius,
+            options.rotation_degrees,
+        ] {
+            if !value.is_finite() {
+                return Err("Repeat parameters must be finite".to_string());
+            }
+        }
+        if options.mode == RepeatMode::Circular && options.radius < 0.0 {
+            return Err("Radius must be zero or positive".to_string());
+        }
+        if self.selected_bounds().is_none() {
+            return Err("The selection has no bounds".to_string());
+        }
+        let sources: Vec<crate::document::Object> = self
+            .selection
+            .ids()
+            .iter()
+            .filter_map(|id| self.document.object(id).cloned())
+            .collect();
+        if sources.is_empty() {
+            return Err("The selection is empty".to_string());
+        }
+        self.record();
+        let mut created = Vec::new();
+        for copy in 1..=options.copies {
+            #[allow(clippy::cast_precision_loss)]
+            let fraction = copy as f64;
+            let (offset, angle) = match options.mode {
+                RepeatMode::Linear => (
+                    Point2::new(options.dx * fraction, options.dy * fraction),
+                    options.rotation_degrees.to_radians() * fraction,
+                ),
+                RepeatMode::Circular => {
+                    #[allow(clippy::cast_precision_loss)]
+                    let step = std::f64::consts::TAU * fraction / (options.copies as f64 + 1.0);
+                    (
+                        Point2::new(options.radius * step.cos(), options.radius * step.sin()),
+                        if options.rotate_copies { step } else { 0.0 },
+                    )
+                }
+            };
+            for source in &sources {
+                let mut object = source.clone();
+                object.id = uuid::Uuid::new_v4().to_string();
+                object.group_id = None;
+                object.name = if options.mode == RepeatMode::Linear {
+                    format!("{} copy {}", source.name, copy)
+                } else {
+                    format!("{} around {}", source.name, copy)
+                };
+                object.translate(offset.x, offset.y);
+                if angle != 0.0 {
+                    let Some((copy_min, copy_max)) = object.bounds() else {
+                        continue;
+                    };
+                    let copy_center = Point2::new(
+                        f64::midpoint(copy_min.x, copy_max.x),
+                        f64::midpoint(copy_min.y, copy_max.y),
+                    );
+                    let forward = Transform2::translate(-copy_center.x, -copy_center.y);
+                    let back = Transform2::translate(copy_center.x, copy_center.y);
+                    let rotation = back.compose(&Transform2::rotate(angle).compose(&forward));
+                    object.transform = rotation.compose(&object.transform);
+                }
+                created.push(object.id.clone());
+                self.document.add_object(object);
+            }
+        }
+        self.selection.clear();
+        for id in &created {
+            self.selection.add(id.clone());
+        }
+        Ok(created.len())
+    }
+
     /// Duplicate the selection in a rectangular grid.
     ///
     /// Returns the number of new objects. The original objects stay in place;
@@ -3174,6 +3306,183 @@ mod tests {
         editor.selection.add(rect);
         let error = editor.close_paths().unwrap_err();
         assert!(error.contains("No open paths"), "{error}");
+    }
+
+    #[test]
+    fn linear_repeat_steps_by_the_offset() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        let options = RepeatOptions {
+            mode: RepeatMode::Linear,
+            copies: 3,
+            dx: 10.0,
+            dy: 0.0,
+            ..RepeatOptions::default()
+        };
+        assert_eq!(editor.repeat_selection(&options).unwrap(), 3);
+        assert_eq!(editor.document.objects.len(), 4);
+        let mut mins: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| min.x)
+            .collect();
+        mins.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        assert_eq!(mins, vec![0.0, 10.0, 20.0, 30.0]);
+        assert_eq!(editor.selection.len(), 3);
+    }
+
+    #[test]
+    fn repeat_by_distance_is_a_normalised_step() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        // A 3-4-5 step repeated twice covers 10 mm.
+        let options = RepeatOptions {
+            mode: RepeatMode::Linear,
+            copies: 2,
+            dx: 6.0,
+            dy: 8.0,
+            ..RepeatOptions::default()
+        };
+        editor.repeat_selection(&options).unwrap();
+        let mut mins: Vec<(f64, f64)> = editor
+            .document
+            .objects
+            .iter()
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| (min.x, min.y))
+            .collect();
+        mins.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap());
+        assert_eq!(mins, vec![(0.0, 0.0), (6.0, 8.0), (12.0, 16.0)]);
+    }
+
+    #[test]
+    fn linear_repeat_can_rotate_each_copy() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 2.0));
+        let options = RepeatOptions {
+            mode: RepeatMode::Linear,
+            copies: 1,
+            dx: 0.0,
+            dy: 20.0,
+            rotation_degrees: 90.0,
+            ..RepeatOptions::default()
+        };
+        editor.repeat_selection(&options).unwrap();
+        let copy = &editor.document.objects[1];
+        let (min, max) = copy.bounds().unwrap();
+        assert!((max.x - min.x - 2.0).abs() < 1e-6);
+        assert!((max.y - min.y - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn circular_repeat_orbit() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        let options = RepeatOptions {
+            mode: RepeatMode::Circular,
+            copies: 3,
+            radius: 10.0,
+            rotate_copies: false,
+            ..RepeatOptions::default()
+        };
+        editor.repeat_selection(&options).unwrap();
+        let centres: Vec<(f64, f64)> = editor
+            .document
+            .objects
+            .iter()
+            .skip(1)
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, max)| (f64::midpoint(min.x, max.x), f64::midpoint(min.y, max.y)))
+            .collect();
+        assert_eq!(centres.len(), 3);
+        let expected = [
+            (f64::midpoint(5.0, 5.0), 15.0),
+            (-5.0, f64::midpoint(5.0, 5.0)),
+            (f64::midpoint(5.0, 5.0), -5.0),
+        ];
+        for (index, expected) in expected.iter().enumerate() {
+            assert!((centres[index].0 - expected.0).abs() < 1e-6);
+            assert!((centres[index].1 - expected.1).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn circular_repeat_can_rotate_copies() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 2.0));
+        let options = RepeatOptions {
+            mode: RepeatMode::Circular,
+            copies: 2,
+            radius: 0.0,
+            rotate_copies: true,
+            ..RepeatOptions::default()
+        };
+        editor.repeat_selection(&options).unwrap();
+        let copy = &editor.document.objects[1];
+        let (min, max) = copy.bounds().unwrap();
+        // 120 degrees is not a multiple of 90, so the bounds are no longer
+        // axis-aligned with the original 10 x 2 rectangle.
+        assert!((max.x - min.x - 10.0).abs() > 1e-3 || (max.y - min.y - 2.0).abs() > 1e-3);
+    }
+
+    #[test]
+    fn repeat_requires_a_selection_and_valid_parameters() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        editor.selection.clear();
+        assert!(editor.repeat_selection(&RepeatOptions::default()).is_err());
+        editor.select_all();
+        for options in [
+            RepeatOptions {
+                copies: 0,
+                ..RepeatOptions::default()
+            },
+            RepeatOptions {
+                copies: 101,
+                ..RepeatOptions::default()
+            },
+            RepeatOptions {
+                copies: 2,
+                dx: f64::NAN,
+                ..RepeatOptions::default()
+            },
+            RepeatOptions {
+                copies: 2,
+                mode: RepeatMode::Circular,
+                radius: -1.0,
+                ..RepeatOptions::default()
+            },
+        ] {
+            assert!(editor.repeat_selection(&options).is_err());
+        }
+        assert_eq!(editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn repeat_is_undoable_and_detaches_groups() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        editor.add_rectangle(Point2::new(20.0, 0.0), Point2::new(24.0, 4.0));
+        editor.select_all();
+        assert!(editor.group_selection());
+        assert!(editor.document.objects[0].group_id.is_some());
+        let options = RepeatOptions {
+            copies: 1,
+            dx: 10.0,
+            dy: 0.0,
+            ..RepeatOptions::default()
+        };
+        editor.repeat_selection(&options).unwrap();
+        assert_eq!(editor.document.objects.len(), 4);
+        assert!(
+            editor.document.objects[2..]
+                .iter()
+                .all(|object| object.group_id.is_none())
+        );
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 2);
     }
 
     #[test]
