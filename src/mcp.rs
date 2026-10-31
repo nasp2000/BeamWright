@@ -621,6 +621,18 @@ impl McpServer {
                 let aligned = self.editor.align_selected_node_handles();
                 Ok(json!({"aligned": aligned}))
             }
+            "fit_text_to_path" => {
+                let text = string(arguments, "text").ok_or_else(|| missing("text"))?;
+                let path = string(arguments, "path").ok_or_else(|| missing("path"))?;
+                let outlines = self
+                    .editor
+                    .fit_text_to_path(&text, &path)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "outlines": outlines.len(),
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "text_to_outlines" => {
                 let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
                 let outlines = self
@@ -1143,6 +1155,14 @@ fn tool_definitions() -> Vec<Value> {
             json!({"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"]}),
         ),
         tool_with(
+            "fit_text_to_path",
+            "Lay a text's first line along another object's path as outlines.",
+            json!({"type": "object", "properties": {
+                "text": {"type": "string"},
+                "path": {"type": "string"}
+            }, "required": ["text", "path"]}),
+        ),
+        tool_with(
             "text_to_outlines",
             "Replace a text object with vector outlines from the bundled font.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
@@ -1398,6 +1418,44 @@ mod tests {
         assert!(server.editor.document.object(&id).is_none());
         let missing = call(&mut server, "text_to_outlines", json!({"id": "missing"}));
         assert!(missing.get("error").is_some());
+    }
+
+    #[test]
+    fn fit_text_to_path_tool() {
+        let mut server = McpServer::new();
+        let text = call(
+            &mut server,
+            "add_text",
+            json!({"x": 0.0, "y": 0.0, "content": "AB", "size": 8.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let path = call(
+            &mut server,
+            "add_line",
+            json!({"x1": 0.0, "y1": 0.0, "x2": 40.0, "y2": 0.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let fitted = call(
+            &mut server,
+            "fit_text_to_path",
+            json!({"text": text, "path": path}),
+        );
+        assert!(fitted["result"]["outlines"].as_u64().unwrap() >= 2);
+        assert!(server.editor.document.object(&text).is_none());
+        assert!(server.editor.document.object(&path).is_some());
+        assert!(
+            call(
+                &mut server,
+                "fit_text_to_path",
+                json!({"text": "x", "path": path})
+            )
+            .get("error")
+            .is_some()
+        );
     }
 
     #[test]

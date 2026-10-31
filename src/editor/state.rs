@@ -529,6 +529,65 @@ impl EditorState {
         Ok(ids)
     }
 
+    /// Lay a text's first line along another object's outline.
+    ///
+    /// The text object is replaced by its outline contours, which follow the
+    /// path's arc length and rotate with its tangent. The path object is kept.
+    /// Returns the new object identifiers.
+    pub fn fit_text_to_path(
+        &mut self,
+        text_id: &str,
+        path_id: &str,
+    ) -> std::result::Result<Vec<String>, String> {
+        let text_index = self
+            .document
+            .objects
+            .iter()
+            .position(|object| object.id == text_id)
+            .ok_or_else(|| format!("unknown object: {text_id}"))?;
+        let path_index = self
+            .document
+            .objects
+            .iter()
+            .position(|object| object.id == path_id)
+            .ok_or_else(|| format!("unknown object: {path_id}"))?;
+        if text_index == path_index {
+            return Err("the text and the path must be different objects".to_string());
+        }
+        self.ensure_editable(text_index)?;
+        let text_object = self.document.objects[text_index].clone();
+        let Shape::Text(text) = &text_object.shape else {
+            return Err(format!("'{}' is not text", text_object.name));
+        };
+        let path = self.document.objects[path_index].world_path();
+        if path.is_empty() {
+            return Err("the target object has no path".to_string());
+        }
+        let paths = crate::objects::text_along_path(text, &path)?;
+        if paths.is_empty() {
+            return Err("the text could not be placed on the path".to_string());
+        }
+        self.record();
+        let mut style = text_object.style.clone();
+        if style.fill.is_none() && style.stroke.is_none() {
+            style.fill = Some("#000000".to_string());
+        }
+        self.document.objects.remove(text_index);
+        self.selection.clear();
+        let mut ids = Vec::with_capacity(paths.len());
+        for (position, outline_path) in paths.into_iter().enumerate() {
+            let mut outline = Object::new(text_object.layer_id.clone(), Shape::Path(outline_path))
+                .with_style(style.clone());
+            outline.name = format!("{} path {}", text_object.name, position + 1);
+            outline.operation_id.clone_from(&text_object.operation_id);
+            let id = outline.id.clone();
+            ids.push(id.clone());
+            self.selection.add(id);
+            self.document.objects.insert(text_index + position, outline);
+        }
+        Ok(ids)
+    }
+
     /// Insert a text object whose anchor is `at`, selected and ready to edit.
     pub fn add_text(&mut self, at: Point2) -> Option<String> {
         let text = crate::objects::TextObject {
@@ -4279,6 +4338,82 @@ mod tests {
             .unwrap();
         assert!(editor.convert_text_to_outlines(&rect).is_err());
         assert!(editor.convert_text_to_outlines("missing").is_err());
+    }
+
+    #[test]
+    fn text_follows_a_horizontal_path() {
+        let mut editor = editor();
+        let text = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        if let Some(crate::document::Object {
+            shape: Shape::Text(content),
+            ..
+        }) = editor.document.object_mut(&text)
+        {
+            content.content = "AB".to_string();
+        }
+        let path = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(40.0, 0.0))
+            .unwrap();
+        let outlines = editor.fit_text_to_path(&text, &path).unwrap();
+        assert!(outlines.len() >= 2);
+        assert!(editor.document.object(&text).is_none());
+        assert!(editor.document.object(&path).is_some());
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!(min.x >= -1.0 && max.x <= 41.0);
+        assert!(min.y >= -0.5 && max.y <= 11.0);
+    }
+
+    #[test]
+    fn text_rotates_with_a_vertical_path() {
+        let mut editor = editor();
+        let text = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        if let Some(crate::document::Object {
+            shape: Shape::Text(content),
+            ..
+        }) = editor.document.object_mut(&text)
+        {
+            content.content = "AB".to_string();
+        }
+        let path = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 40.0))
+            .unwrap();
+        editor.fit_text_to_path(&text, &path).unwrap();
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!(max.y - min.y > 8.0);
+        assert!(max.x <= 1.0);
+    }
+
+    #[test]
+    fn text_longer_than_the_path_is_scaled_down() {
+        let mut editor = editor();
+        let text = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        if let Some(crate::document::Object {
+            shape: Shape::Text(content),
+            ..
+        }) = editor.document.object_mut(&text)
+        {
+            content.content = "ABCDEFGH".to_string();
+        }
+        let path = editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(5.0, 0.0))
+            .unwrap();
+        editor.fit_text_to_path(&text, &path).unwrap();
+        let (min, max) = editor.selected_bounds().unwrap();
+        assert!(max.x - min.x <= 5.0 + 1e-6);
+        assert!(max.x > 3.0);
+    }
+
+    #[test]
+    fn fitting_rejects_invalid_pairs() {
+        let mut editor = editor();
+        let text = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        assert!(editor.fit_text_to_path(&rect, &text).is_err());
+        assert!(editor.fit_text_to_path(&text, &text).is_err());
+        assert!(editor.fit_text_to_path(&text, "missing").is_err());
+        assert!(editor.fit_text_to_path("missing", &rect).is_err());
     }
 
     #[test]

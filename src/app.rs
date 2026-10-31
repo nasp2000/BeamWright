@@ -1048,6 +1048,16 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
+                        .add_enabled(
+                            self.editor.selection.len() == 2,
+                            egui::Button::new("Fit text to path"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_text_on_path();
+                        ui.close();
+                    }
+                    if ui
                         .add_enabled(enabled, egui::Button::new("Reset transforms"))
                         .clicked()
                     {
@@ -3191,6 +3201,31 @@ impl BeamWrightApp {
             self.status = format!("{} outline intersection(s)", hits.len());
         }
         self.show_report(report);
+    }
+
+    fn apply_text_on_path(&mut self) {
+        let ids = self.editor.selection.ids().to_vec();
+        let text = ids.iter().find(|id| {
+            self.editor
+                .document
+                .object(id)
+                .is_some_and(|object| matches!(object.shape, crate::document::Shape::Text(_)))
+        });
+        let Some(text) = text else {
+            self.status = "Select a text object and a path".to_string();
+            return;
+        };
+        let path = ids.iter().find(|id| *id != text);
+        let Some(path) = path else {
+            self.status = "Select a text object and a path".to_string();
+            return;
+        };
+        match self.editor.fit_text_to_path(text, path) {
+            Ok(outlines) => {
+                self.status = format!("Fitted text to path ({} contour(s))", outlines.len());
+            }
+            Err(error) => self.status = format!("Fit failed: {error}"),
+        }
     }
 
     fn apply_text_outlines(&mut self) {

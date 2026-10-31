@@ -7,7 +7,7 @@
 use ab_glyph::{Font, FontRef, GlyphId, OutlineCurve};
 
 use crate::geometry::Path;
-use crate::objects::TextObject;
+use crate::objects::{TextAlign, TextObject};
 
 /// `DejaVu Sans`, embedded so outline conversion works everywhere.
 const FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans.ttf");
@@ -56,22 +56,19 @@ pub fn text_to_paths(text: &TextObject) -> Result<Vec<Path>, String> {
     Ok(paths)
 }
 
-/// Split a glyph outline into closed contours, scaled and offset to a baseline.
-fn contours(curves: &[OutlineCurve], factor: f64, offset_x: f64, offset_y: f64) -> Vec<Path> {
-    let mut paths = Vec::new();
+/// Split a glyph outline into closed contours in glyph-local millimetres.
+///
+/// The origin is the glyph's pen position on the baseline; y points up.
+fn local_contours(curves: &[OutlineCurve], factor: f64) -> Vec<Vec<(f64, f64)>> {
+    let mut paths: Vec<Vec<(f64, f64)>> = Vec::new();
     let mut current: Vec<(f64, f64)> = Vec::new();
     let mut finish = |points: &mut Vec<(f64, f64)>| {
         if points.len() >= 3 {
-            paths.push(Path::from_points(points, true));
+            paths.push(points.clone());
         }
         points.clear();
     };
-    let place = |point: ab_glyph::Point| {
-        (
-            offset_x + f64::from(point.x) * factor,
-            offset_y + f64::from(point.y) * factor,
-        )
-    };
+    let place = |point: ab_glyph::Point| (f64::from(point.x) * factor, f64::from(point.y) * factor);
     for curve in curves {
         let start = match curve {
             OutlineCurve::Line(start, _)
@@ -127,6 +124,163 @@ fn contours(curves: &[OutlineCurve], factor: f64, offset_x: f64, offset_y: f64) 
     }
     finish(&mut current);
     paths
+}
+
+/// Close off contours into paths, applying a per-point placement.
+fn placed_paths(
+    contours: Vec<Vec<(f64, f64)>>,
+    place: impl Fn((f64, f64)) -> (f64, f64),
+) -> Vec<Path> {
+    contours
+        .into_iter()
+        .filter(|contour| contour.len() >= 3)
+        .map(|contour| {
+            let points: Vec<(f64, f64)> = contour.into_iter().map(&place).collect();
+            Path::from_points(&points, true)
+        })
+        .collect()
+}
+
+/// Split a glyph outline into closed contours placed at a pen position.
+fn contours(curves: &[OutlineCurve], factor: f64, offset_x: f64, offset_y: f64) -> Vec<Path> {
+    placed_paths(local_contours(curves, factor), |(x, y)| {
+        (offset_x + x, offset_y + y)
+    })
+}
+
+/// Lay a text's first line along a path, in world coordinates.
+///
+/// Characters follow the path's arc length and rotate with its tangent. When the
+/// line is wider than the path, the whole line is scaled down uniformly to fit;
+/// characters past the end of the path are dropped. Alignment shifts the line
+/// along the path. Additional lines are not placed (the path would need parallel
+/// offsets) and the caller is expected to document that.
+pub fn text_along_path(text: &TextObject, path: &Path) -> Result<Vec<Path>, String> {
+    text.validate()?;
+    let font = FontRef::try_from_slice(FONT_DATA)
+        .map_err(|error| format!("the bundled font is unreadable: {error}"))?;
+    let units = font.units_per_em().unwrap_or(1000.0);
+    if units <= 0.0 {
+        return Err("the bundled font has no units per em".to_string());
+    }
+    let factor = text.size / f64::from(units);
+    let line = text.lines().first().copied().unwrap_or("");
+    if line.trim().is_empty() {
+        return Err("the text has no characters on its first line".to_string());
+    }
+    let walker = PathWalker::new(path);
+    if walker.total <= 1e-9 {
+        return Err("the path has no length".to_string());
+    }
+    // Advances in millimetres, including kerning and letter spacing.
+    let mut advances: Vec<(GlyphId, f64)> = Vec::new();
+    let mut previous: Option<GlyphId> = None;
+    for character in line.chars() {
+        let id = font.glyph_id(character);
+        let mut advance = f64::from(font.h_advance_unscaled(id)) * factor;
+        if let Some(previous) = previous {
+            advance += f64::from(font.kern_unscaled(previous, id)) * factor;
+        }
+        advances.push((id, advance + text.letter_spacing));
+        previous = Some(id);
+    }
+    let width: f64 = advances.iter().map(|(_, advance)| *advance).sum();
+    if width <= 1e-9 {
+        return Err("the text has no width".to_string());
+    }
+    let scale = if width > walker.total {
+        walker.total / width
+    } else {
+        1.0
+    };
+    let fitted = width * scale;
+    let start = match text.align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center => (walker.total - fitted) / 2.0,
+        TextAlign::Right => walker.total - fitted,
+    };
+    let mut distance = start;
+    let mut paths = Vec::new();
+    for (id, advance) in advances {
+        let in_range = (0.0..=walker.total).contains(&distance);
+        if in_range {
+            if let Some((point, tangent)) = walker.at(distance) {
+                if let Some(outline) = font.outline(id) {
+                    let contours = local_contours(&outline.curves, factor * scale);
+                    let normal = (-tangent.1, tangent.0);
+                    paths.extend(placed_paths(contours, |(x, y)| {
+                        (
+                            point.0 + tangent.0 * x + normal.0 * y,
+                            point.1 + tangent.1 * x + normal.1 * y,
+                        )
+                    }));
+                }
+            }
+        }
+        distance += advance * scale;
+        if distance > walker.total + 1e-9 {
+            break;
+        }
+    }
+    Ok(paths)
+}
+
+/// Arc-length walker over a flattened path.
+struct PathWalker {
+    points: Vec<(f64, f64)>,
+    cumulative: Vec<f64>,
+    total: f64,
+}
+
+impl PathWalker {
+    fn new(path: &Path) -> Self {
+        let points: Vec<(f64, f64)> = path
+            .flatten(0.2)
+            .into_iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        let mut cumulative = Vec::with_capacity(points.len());
+        let mut total = 0.0;
+        for (index, point) in points.iter().enumerate() {
+            if index > 0 {
+                let previous = points[index - 1];
+                total += (point.0 - previous.0).hypot(point.1 - previous.1);
+            }
+            cumulative.push(total);
+        }
+        Self {
+            points,
+            cumulative,
+            total,
+        }
+    }
+
+    /// Point and unit tangent at a distance along the path.
+    fn at(&self, distance: f64) -> Option<((f64, f64), (f64, f64))> {
+        if self.points.len() < 2 {
+            return None;
+        }
+        let distance = distance.clamp(0.0, self.total);
+        let index = self
+            .cumulative
+            .iter()
+            .position(|cumulative| *cumulative >= distance)
+            .unwrap_or(self.points.len() - 1)
+            .max(1);
+        let start = self.points[index - 1];
+        let end = self.points[index];
+        let segment = (end.0 - start.0, end.1 - start.1);
+        let length = segment.0.hypot(segment.1);
+        if length <= 1e-9 {
+            return Some((start, (1.0, 0.0)));
+        }
+        let before = self.cumulative[index - 1];
+        let ratio = ((distance - before) / length).clamp(0.0, 1.0);
+        Some((
+            (start.0 + segment.0 * ratio, start.1 + segment.1 * ratio),
+            (segment.0 / length, segment.1 / length),
+        ))
+    }
 }
 
 #[cfg(test)]
