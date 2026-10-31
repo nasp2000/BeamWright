@@ -24,4 +24,5 @@ pub mod objects;
 pub mod operations;
 pub mod profiles;
 pub mod raster;
+pub mod report;
 pub mod ui;

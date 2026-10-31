@@ -13,6 +13,7 @@ pub fn detect_format(path: &Path) -> &'static str {
     {
         Some("svg") => "svg",
         Some("dxf") => "dxf",
+        Some("png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff") => "raster",
         Some("bwp") => "bwp",
         _ => "unknown",
     }
@@ -81,6 +82,8 @@ mod tests {
         assert_eq!(detect_format(Path::new("a.svg")), "svg");
         assert_eq!(detect_format(Path::new("a.DXF")), "dxf");
         assert_eq!(detect_format(Path::new("a.bwp")), "bwp");
+        assert_eq!(detect_format(Path::new("a.PNG")), "raster");
+        assert_eq!(detect_format(Path::new("a.jpeg")), "raster");
         assert_eq!(detect_format(Path::new("a.xyz")), "unknown");
     }
 
@@ -119,6 +122,17 @@ mod tests {
         assert!(outcome.warnings[0].contains("recovered"));
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn imports_a_raster_through_the_dispatcher() {
+        let path = temp_dir().join("bw_fmt_raster.png");
+        let image = image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255]));
+        image.save(&path).unwrap();
+        let outcome = import_with_report(&path).unwrap();
+        assert_eq!(outcome.document.objects.len(), 1);
+        assert_eq!(outcome.warnings.len(), 0);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

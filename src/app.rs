@@ -17,6 +17,7 @@ use crate::document::{Document, Shape, Unit};
 use crate::editor::renderer::{PreviewShape, Theme, format_mm, paint_canvas};
 use crate::editor::{EditorState, Tool};
 use crate::geometry::Point2;
+use crate::report::FileReport;
 use crate::ui::file_dialog::{DialogResult, FileDialog, FileMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +76,8 @@ pub struct BeamWrightApp {
     profile_io_path: String,
     selected_image_profile: Option<String>,
     selected_project_profile: Option<String>,
-    import_warnings: Vec<String>,
+    file_report: Option<FileReport>,
+    report_open: bool,
     preview_toolpaths: bool,
     image_previews: std::collections::HashMap<String, ImagePreview>,
     preferences: crate::config::preferences::AppPreferences,
@@ -139,7 +141,8 @@ impl BeamWrightApp {
                 .to_string(),
             selected_image_profile: None,
             selected_project_profile: None,
-            import_warnings: Vec::new(),
+            file_report: None,
+            report_open: false,
             preview_toolpaths: false,
             image_previews: std::collections::HashMap::new(),
             preferences: preferences.clone(),
@@ -228,24 +231,26 @@ impl BeamWrightApp {
                     &crate::export::PngOptions::default(),
                 ) {
                     Ok(report) => {
-                        self.status = format!(
-                            "Exported PNG to {} ({} × {} px{})",
-                            path.display(),
-                            report.width_px,
-                            report.height_px,
-                            if report.warnings.is_empty() {
-                                String::new()
-                            } else {
-                                format!(", {} warning(s)", report.warnings.len())
-                            }
-                        );
+                        let file_report = FileReport::new("Export PNG", path.display().to_string())
+                            .with_summary("Width", format!("{} px", report.width_px))
+                            .with_summary("Height", format!("{} px", report.height_px))
+                            .with_summary("Resolution", "96 dpi")
+                            .with_warnings(report.warnings);
+                        self.status = file_report.headline();
+                        self.show_report(file_report);
                     }
                     Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
             FileMode::ExportDxf => match crate::export::export_dxf(&self.editor.document) {
                 Ok(dxf) => match std::fs::write(path, dxf) {
-                    Ok(()) => self.status = format!("Exported DXF to {}", path.display()),
+                    Ok(()) => {
+                        let report = FileReport::new("Export DXF", path.display().to_string())
+                            .with_summary("Objects", self.editor.document.objects.len().to_string())
+                            .with_summary("Format", "LWPOLYLINE subset");
+                        self.status = report.headline();
+                        self.show_report(report);
+                    }
                     Err(error) => self.status = format!("Export failed: {error}"),
                 },
                 Err(error) => self.status = format!("Export failed: {error}"),
@@ -257,25 +262,30 @@ impl BeamWrightApp {
                     &crate::gcode::JobOptions::default(),
                 ) {
                     Ok(report) => {
-                        self.status = format!(
-                            "Exported G-code to {} ({} paths, {} lines, {:.1} s){}",
-                            path.display(),
-                            report.paths,
-                            report.lines,
-                            report.seconds,
-                            if report.warnings.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" — {} warning(s)", report.warnings.len())
-                            }
-                        );
+                        let file_report =
+                            FileReport::new("Export G-code", path.display().to_string())
+                                .with_summary("Paths", report.paths.to_string())
+                                .with_summary("Lines", report.lines.to_string())
+                                .with_summary("Bytes", report.bytes.to_string())
+                                .with_summary("Estimated", format!("{:.1} s", report.seconds))
+                                .with_warnings(report.warnings);
+                        self.status = file_report.headline();
+                        self.show_report(file_report);
                     }
                     Err(error) => self.status = format!("Export failed: {error}"),
                 }
             }
             FileMode::ExportSvg => match crate::export::export_svg(&self.editor.document) {
                 Ok(svg) => match std::fs::write(path, svg) {
-                    Ok(()) => self.status = format!("Exported SVG to {}", path.display()),
+                    Ok(()) => {
+                        let report = FileReport::new("Export SVG", path.display().to_string())
+                            .with_summary(
+                                "Objects",
+                                self.editor.document.objects.len().to_string(),
+                            );
+                        self.status = report.headline();
+                        self.show_report(report);
+                    }
                     Err(error) => self.status = format!("Export failed: {error}"),
                 },
                 Err(error) => self.status = format!("Export failed: {error}"),
@@ -287,7 +297,8 @@ impl BeamWrightApp {
         match crate::import::format::import_with_report(path) {
             Ok(outcome) => {
                 let mut document = outcome.document;
-                self.import_warnings = outcome.warnings;
+                let object_count = document.objects.len();
+                let layer_count = document.layers.len();
                 let is_project = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -306,15 +317,19 @@ impl BeamWrightApp {
                 self.saved_snapshot = if is_project { Some(document) } else { None };
                 self.needs_fit = true;
                 self.drag = None;
-                self.status = if self.import_warnings.is_empty() {
-                    format!("Opened {}", path.display())
-                } else {
-                    format!(
-                        "Opened {} with {} warning(s)",
-                        path.display(),
-                        self.import_warnings.len()
-                    )
-                };
+                let report = FileReport::new(
+                    if is_project { "Open project" } else { "Import" },
+                    path.display().to_string(),
+                )
+                .with_summary(
+                    "Format",
+                    crate::import::format::detect_format(path).to_uppercase(),
+                )
+                .with_summary("Objects", object_count.to_string())
+                .with_summary("Layers", layer_count.to_string())
+                .with_warnings(outcome.warnings);
+                self.status = report.headline();
+                self.show_report(report);
             }
             Err(error) => self.status = format!("Open failed: {error}"),
         }
@@ -961,16 +976,6 @@ impl BeamWrightApp {
                     ui.label(format!("Estimated: {:.1} s", report.seconds));
                     for warning in &report.warnings {
                         ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
-                    }
-                }
-                if !self.import_warnings.is_empty() {
-                    ui.separator();
-                    ui.heading("Import warnings");
-                    for warning in &self.import_warnings {
-                        ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
-                    }
-                    if ui.button("Dismiss").clicked() {
-                        self.import_warnings.clear();
                     }
                 }
                 ui.separator();
@@ -1840,6 +1845,57 @@ impl BeamWrightApp {
         }
     }
 
+    fn show_report(&mut self, report: FileReport) {
+        self.file_report = Some(report);
+        self.report_open = true;
+    }
+
+    fn report_window(&mut self, ctx: &egui::Context) {
+        let Some(report) = self.file_report.clone() else {
+            self.report_open = false;
+            return;
+        };
+        let mut open = self.report_open;
+        egui::Window::new(format!("{} report", report.action))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.label(&report.path);
+                egui::Grid::new("file_report_summary")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        for (label, value) in &report.summary {
+                            ui.label(label);
+                            ui.label(value);
+                            ui.end_row();
+                        }
+                    });
+                ui.separator();
+                if report.is_clean() {
+                    ui.colored_label(Color32::from_rgb(40, 140, 60), "Nothing was skipped.");
+                } else {
+                    ui.heading(format!("Warnings ({})", report.warning_count()));
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for warning in &report.warnings {
+                                ui.colored_label(Color32::from_rgb(180, 120, 0), warning);
+                            }
+                        });
+                }
+                if ui.button("Close").clicked() {
+                    self.report_open = false;
+                }
+            });
+        self.report_open = open && self.report_open;
+        if !self.report_open {
+            self.file_report = None;
+        }
+    }
+
     fn grid_array_window(&mut self, ctx: &egui::Context) {
         let mut open = self.grid_array_open;
         egui::Window::new("Grid array")
@@ -2593,6 +2649,9 @@ impl BeamWrightApp {
         }
         if self.grid_array_open {
             self.grid_array_window(ctx);
+        }
+        if self.report_open {
+            self.report_window(ctx);
         }
         if self.about_open {
             let mut open = true;

@@ -61,9 +61,17 @@ pub fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Commands::Import { input, output }) => {
-            let document = open_document(&input)?;
-            serialization::save_to_file(&document, &output)?;
-            println!("Imported {} -> {}", input.display(), output.display());
+            let outcome = crate::import::format::import_with_report(&input)?;
+            serialization::save_to_file(&outcome.document, &output)?;
+            println!(
+                "Imported {} -> {} ({} objects)",
+                input.display(),
+                output.display(),
+                outcome.document.objects.len()
+            );
+            for warning in outcome.warnings {
+                eprintln!("warning: {warning}");
+            }
             Ok(())
         }
         Some(Commands::ExportSvg { input, output }) => {

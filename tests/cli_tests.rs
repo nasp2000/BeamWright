@@ -305,3 +305,28 @@ fn cli_recover_without_backup_fails() {
     assert!(run(cli).is_err());
     let _ = fs::remove_file(&path);
 }
+
+#[test]
+fn cli_import_raster_png() {
+    let source = temp_dir().join("bw_cli_raster.png");
+    let project = temp_dir().join("bw_cli_raster.bwp");
+    let image = image::RgbaImage::from_pixel(8, 4, image::Rgba([0, 0, 0, 255]));
+    image.save(&source).unwrap();
+    let _ = fs::remove_file(&project);
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "import",
+        source.to_str().unwrap(),
+        project.to_str().unwrap(),
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let document = beamwright::document::serialization::load_from_file(&project).unwrap();
+    assert_eq!(document.objects.len(), 1);
+    assert!(matches!(
+        document.objects[0].shape,
+        beamwright::document::Shape::Image(_)
+    ));
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&project);
+}
