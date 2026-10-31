@@ -10,6 +10,9 @@ use crate::geometry::{Path, Point2, Transform2};
 
 use super::state::EditorState;
 
+/// Samples per segment when mapping a click back to a parameter.
+const SEGMENT_SAMPLES: usize = 64;
+
 impl EditorState {
     /// Enter node editing for one path object, baking its transform.
     pub fn begin_node_edit(&mut self, object_id: &str) -> std::result::Result<(), String> {
@@ -87,6 +90,34 @@ impl EditorState {
         self.record();
     }
 
+    /// Nearest point on the edited path, as a segment index and parameter.
+    ///
+    /// Used to insert a node where the user double-clicked. The parameter is
+    /// sampled, so it is accurate to roughly one percent of the segment.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn nearest_segment_on_path(&self, point: Point2) -> Option<(usize, f64)> {
+        use crate::geometry::path::Segment;
+
+        let path = self.node_path()?;
+        let mut best: Option<(usize, f64, f64)> = None;
+        for (index, segment) in path.segments.iter().enumerate() {
+            for step in 0..=SEGMENT_SAMPLES {
+                let t = step as f64 / SEGMENT_SAMPLES as f64;
+                let candidate = match segment {
+                    Segment::Line { from, to } => {
+                        Point2::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
+                    }
+                    Segment::Cubic(cubic) => cubic.eval(t),
+                };
+                let distance = candidate.distance(point);
+                if best.is_none_or(|(_, _, current)| distance < current) {
+                    best = Some((index, t, distance));
+                }
+            }
+        }
+        best.map(|(index, t, _)| (index, t))
+    }
+
     /// Select the nearest node within `tolerance`.
     ///
     /// Returns the node index. Without `additive` the previous selection is
@@ -132,6 +163,10 @@ impl EditorState {
     }
 
     /// Move every selected node by `(dx, dy)` millimetres.
+    ///
+    /// Like [`EditorState::move_selection`], this does not record history: a
+    /// drag records once when it starts. Use [`Self::nudge_selected_nodes`] for
+    /// a discrete move.
     pub fn move_selected_nodes(&mut self, dx: f64, dy: f64) -> bool {
         if self.node_selection.is_empty() || (dx == 0.0 && dy == 0.0) {
             return false;
@@ -139,7 +174,6 @@ impl EditorState {
         if self.node_path().is_none() {
             return false;
         }
-        self.record_node_edit();
         let indices = self.node_selection.clone();
         let mut moved = false;
         if let Some(path) = self.node_path_mut() {
@@ -148,6 +182,15 @@ impl EditorState {
             }
         }
         moved
+    }
+
+    /// Move the selected nodes and record one undo step.
+    pub fn nudge_selected_nodes(&mut self, dx: f64, dy: f64) -> bool {
+        if self.node_selection.is_empty() || (dx == 0.0 && dy == 0.0) {
+            return false;
+        }
+        self.record();
+        self.move_selected_nodes(dx, dy)
     }
 
     /// Position a single selected node exactly.
@@ -230,7 +273,7 @@ impl EditorState {
         let Some(node) = path.nodes().get(index).copied() else {
             return false;
         };
-        self.record_node_edit();
+        // Dragging a handle records once when the drag starts.
         let (handle_in, handle_out) = if outgoing {
             (node.handle_in, Some(point))
         } else {
@@ -432,7 +475,7 @@ mod tests {
         let path = open_polyline(&mut editor);
         editor.begin_node_edit(&path).unwrap();
         editor.select_node_at(Point2::new(10.0, 10.0), 0.5, false);
-        assert!(editor.move_selected_nodes(5.0, -5.0));
+        assert!(editor.nudge_selected_nodes(5.0, -5.0));
         let points = editor.node_points();
         assert!(points.contains(&Point2::new(15.0, 5.0)));
         let (min, max) = editor.document.object(&path).unwrap().bounds().unwrap();
@@ -452,6 +495,22 @@ mod tests {
         assert!(editor.node_points().contains(&Point2::new(2.5, 3.5)));
         editor.select_node_at(Point2::new(10.0, 0.0), 0.5, true);
         assert!(!editor.set_selected_node_position(Point2::new(0.0, 0.0)));
+    }
+
+    #[test]
+    fn nearest_segment_finds_the_click_parameter() {
+        let mut editor = editor();
+        let path = open_polyline(&mut editor);
+        editor.begin_node_edit(&path).unwrap();
+        let (segment, t) = editor
+            .nearest_segment_on_path(Point2::new(5.0, 1.0))
+            .unwrap();
+        assert_eq!(segment, 0);
+        assert!((t - 0.5).abs() < 0.02);
+        let (segment, _) = editor
+            .nearest_segment_on_path(Point2::new(10.0, 5.0))
+            .unwrap();
+        assert_eq!(segment, 1);
     }
 
     #[test]

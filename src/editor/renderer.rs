@@ -118,10 +118,42 @@ pub fn paint_canvas(
     if let Some((playback, progress)) = overlays.playback {
         paint_playback(painter, rect, editor, playback, progress);
     }
+    paint_nodes(painter, rect, editor);
     if let Some(preview) = preview {
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+/// Draw the editable nodes and handles of the path under editing.
+fn paint_nodes(painter: &Painter, rect: Rect, editor: &EditorState) {
+    if !editor.is_editing_nodes() {
+        return;
+    }
+    let accent = Color32::from_rgb(0, 140, 255);
+    let handle_color = Color32::from_rgb(120, 170, 220);
+    let points = editor.node_points();
+    let handles = editor.node_handles();
+    for (index, point) in points.iter().enumerate() {
+        let center = screen_pos(rect, editor, *point);
+        if let Some((handle_in, handle_out)) = handles.get(index) {
+            for handle in [handle_in, handle_out].into_iter().flatten() {
+                let handle_pos = screen_pos(rect, editor, *handle);
+                painter.line_segment([center, handle_pos], Stroke::new(1.0, handle_color));
+                painter.circle_filled(handle_pos, 3.0, handle_color);
+            }
+        }
+        let selected = editor.node_is_selected(index);
+        let size = if selected { 4.5 } else { 3.5 };
+        let square = Rect::from_center_size(center, egui::vec2(size * 2.0, size * 2.0));
+        painter.rect_filled(square, 0.0, if selected { accent } else { Color32::WHITE });
+        painter.rect_stroke(
+            square,
+            0.0,
+            Stroke::new(1.0, accent),
+            egui::StrokeKind::Outside,
+        );
+    }
 }
 
 /// Draw the part of the job already simulated and the laser head.

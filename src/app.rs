@@ -33,6 +33,15 @@ enum DragState {
         last: Point2,
         recorded: bool,
     },
+    NodeMove {
+        last: Point2,
+        recorded: bool,
+    },
+    Handle {
+        node: usize,
+        outgoing: bool,
+        recorded: bool,
+    },
     Draw {
         tool: Tool,
         start: Point2,
@@ -92,6 +101,8 @@ pub struct BeamWrightApp {
     grid_array_open: bool,
     offset_open: bool,
     offset_distance: f64,
+    simplify_open: bool,
+    simplify_tolerance: f64,
     grid_array: (usize, usize, f64, f64),
     search_query: String,
     preview_open: bool,
@@ -298,6 +309,8 @@ impl BeamWrightApp {
             grid_array_open: false,
             offset_open: false,
             offset_distance: 1.0,
+            simplify_open: false,
+            simplify_tolerance: 0.2,
             grid_array: (3, 2, 20.0, 20.0),
             search_query: String::new(),
             preview_open: false,
@@ -611,7 +624,12 @@ impl BeamWrightApp {
             self.editor.duplicate_selection();
         }
         if delete {
-            self.editor.delete_selection();
+            if self.editor.is_editing_nodes() && !self.editor.node_selection.is_empty() {
+                let removed = self.editor.delete_selected_nodes();
+                self.status = format!("Deleted {removed} node(s)");
+            } else {
+                self.editor.delete_selection();
+            }
         }
         if group && self.editor.group_selection() {
             self.status = "Objects grouped".to_string();
@@ -621,6 +639,9 @@ impl BeamWrightApp {
         }
         if escape {
             self.drag = None;
+            if self.editor.is_editing_nodes() {
+                self.editor.end_node_edit();
+            }
             self.editor.selection.clear();
         }
         if fit {
@@ -646,17 +667,35 @@ impl BeamWrightApp {
         } else {
             1.0
         };
+        let editing_nodes =
+            self.editor.is_editing_nodes() && !self.editor.node_selection.is_empty();
         if left {
-            self.editor.nudge_selection(-step, 0.0);
+            if editing_nodes {
+                self.editor.nudge_selected_nodes(-step, 0.0);
+            } else {
+                self.editor.nudge_selection(-step, 0.0);
+            }
         }
         if right {
-            self.editor.nudge_selection(step, 0.0);
+            if editing_nodes {
+                self.editor.nudge_selected_nodes(step, 0.0);
+            } else {
+                self.editor.nudge_selection(step, 0.0);
+            }
         }
         if up {
-            self.editor.nudge_selection(0.0, step);
+            if editing_nodes {
+                self.editor.nudge_selected_nodes(0.0, step);
+            } else {
+                self.editor.nudge_selection(0.0, step);
+            }
         }
         if down {
-            self.editor.nudge_selection(0.0, -step);
+            if editing_nodes {
+                self.editor.nudge_selected_nodes(0.0, -step);
+            } else {
+                self.editor.nudge_selection(0.0, -step);
+            }
         }
     }
 
@@ -836,6 +875,36 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.apply_close_paths();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if self.editor.is_editing_nodes() {
+                        if ui.button("Exit node editing").clicked() {
+                            self.editor.end_node_edit();
+                            ui.close();
+                        }
+                        if ui.button("Simplify path...").clicked() {
+                            self.simplify_open = true;
+                            ui.close();
+                        }
+                    } else if ui
+                        .add_enabled(
+                            self.editor.selection.len() == 1,
+                            egui::Button::new("Edit nodes"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(id) = self.editor.selection.ids().first().cloned() {
+                            match self.editor.begin_node_edit(&id) {
+                                Ok(()) => {
+                                    self.status = "Editing nodes: drag to move, double-click a segment to insert"
+                                        .to_string();
+                                }
+                                Err(error) => {
+                                    self.status = format!("Cannot edit nodes: {error}");
+                                }
+                            }
+                        }
                         ui.close();
                     }
                     ui.separator();
@@ -1418,6 +1487,10 @@ impl BeamWrightApp {
                     } else {
                         self.multi_selection_properties(ui);
                     }
+                    if self.editor.is_editing_nodes() {
+                        ui.separator();
+                        self.node_properties(ui);
+                    }
                 });
                 if self.editor.document != before {
                     self.editor.history.record(&before);
@@ -1691,6 +1764,84 @@ impl BeamWrightApp {
             });
     }
 
+    fn node_properties(&mut self, ui: &mut Ui) {
+        ui.heading("Path nodes");
+        let count = self.editor.node_points().len();
+        ui.label(format!(
+            "{count} node(s), {} selected",
+            self.editor.node_selection.len()
+        ));
+        if self.editor.node_selection.len() == 1 {
+            let index = self.editor.node_selection[0];
+            if let Some(point) = self.editor.node_points().get(index).copied() {
+                let mut x = point.x;
+                let mut y = point.y;
+                ui.horizontal(|ui| {
+                    ui.label("X");
+                    if ui
+                        .add(egui::DragValue::new(&mut x).speed(0.1).suffix(" mm"))
+                        .changed()
+                    {
+                        self.editor
+                            .set_selected_node_position(Point2::new(x, point.y));
+                    }
+                    ui.label("Y");
+                    if ui
+                        .add(egui::DragValue::new(&mut y).speed(0.1).suffix(" mm"))
+                        .changed()
+                    {
+                        self.editor
+                            .set_selected_node_position(Point2::new(point.x, y));
+                    }
+                });
+            }
+        }
+        let has_nodes = !self.editor.node_selection.is_empty();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(has_nodes, egui::Button::new("Corner"))
+                .clicked()
+            {
+                self.editor.convert_selected_nodes(false);
+            }
+            if ui
+                .add_enabled(has_nodes, egui::Button::new("Smooth"))
+                .clicked()
+            {
+                self.editor.convert_selected_nodes(true);
+            }
+            if ui
+                .add_enabled(has_nodes, egui::Button::new("Delete node"))
+                .clicked()
+            {
+                let removed = self.editor.delete_selected_nodes();
+                self.status = format!("Deleted {removed} node(s)");
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.editor.node_selection.len() == 1,
+                    egui::Button::new("Open at node"),
+                )
+                .clicked()
+            {
+                self.editor.open_path_at_selected_node();
+            }
+            if ui
+                .add_enabled(
+                    self.editor.node_selection.len() == 1,
+                    egui::Button::new("Split at node"),
+                )
+                .clicked()
+                && self.editor.split_path_at_selected_node().is_some()
+            {
+                self.status = "Path split".to_string();
+            }
+        });
+        ui.weak("Double-click a segment to insert a node.");
+    }
+
     fn multi_selection_properties(&mut self, ui: &mut Ui) {
         ui.label(format!("{} objects selected", self.editor.selection.len()));
         if let Some((min, max)) = self.editor.selected_bounds() {
@@ -1822,34 +1973,54 @@ impl BeamWrightApp {
                     response.request_focus();
                     if let Some(pos) = pointer {
                         let point = self.doc_point(rect, pos);
-                        match self.editor.tool {
-                            Tool::Select => self.begin_select(point, shift),
-                            Tool::Rect
-                            | Tool::Ellipse
-                            | Tool::Line
-                            | Tool::Polygon
-                            | Tool::Pencil => {
-                                if self.editor.layer_locked(&self.editor.active_layer_id)
-                                    || !self.editor.layer_visible(&self.editor.active_layer_id)
-                                {
-                                    self.status =
-                                        "Cannot draw on a hidden or locked layer".to_string();
-                                } else if self.editor.tool == Tool::Pencil {
-                                    self.drag = Some(DragState::Sketch {
-                                        points: vec![point],
-                                    });
-                                } else {
-                                    self.drag = Some(DragState::Draw {
-                                        tool: self.editor.tool,
-                                        start: point,
-                                        end: point,
+                        if self.editor.is_editing_nodes() {
+                            self.begin_node_interaction(point, shift);
+                            if primary_released {
+                                self.drag = None;
+                            }
+                        } else {
+                            match self.editor.tool {
+                                Tool::Select => self.begin_select(point, shift),
+                                Tool::Rect
+                                | Tool::Ellipse
+                                | Tool::Line
+                                | Tool::Polygon
+                                | Tool::Pencil => {
+                                    if self.editor.layer_locked(&self.editor.active_layer_id)
+                                        || !self.editor.layer_visible(&self.editor.active_layer_id)
+                                    {
+                                        self.status =
+                                            "Cannot draw on a hidden or locked layer".to_string();
+                                    } else if self.editor.tool == Tool::Pencil {
+                                        self.drag = Some(DragState::Sketch {
+                                            points: vec![point],
+                                        });
+                                    } else {
+                                        self.drag = Some(DragState::Draw {
+                                            tool: self.editor.tool,
+                                            start: point,
+                                            end: point,
+                                        });
+                                    }
+                                }
+                                Tool::Pan => {
+                                    self.drag = Some(DragState::Pan {
+                                        last: (pos.x, pos.y),
                                     });
                                 }
                             }
-                            Tool::Pan => {
-                                self.drag = Some(DragState::Pan {
-                                    last: (pos.x, pos.y),
-                                });
+                        }
+                    }
+                }
+
+                if self.editor.is_editing_nodes() && pointer_in_canvas && response.double_clicked()
+                {
+                    if let Some(pos) = pointer {
+                        let point = self.doc_point(rect, pos);
+                        if let Some((segment, t)) = self.editor.nearest_segment_on_path(point) {
+                            if self.editor.insert_node_at(segment, t).is_some() {
+                                self.status = "Node inserted".to_string();
+                                self.drag = None;
                             }
                         }
                     }
@@ -1984,6 +2155,44 @@ impl BeamWrightApp {
         self.editor.snap(Point2::new(x, y))
     }
 
+    fn nearest_node_handle(&self, point: Point2, tolerance: f64) -> Option<(usize, bool)> {
+        let mut best: Option<(usize, bool, f64)> = None;
+        for (index, (handle_in, handle_out)) in self.editor.node_handles().iter().enumerate() {
+            for (outgoing, handle) in [(false, handle_in), (true, handle_out)] {
+                let Some(handle) = handle else {
+                    continue;
+                };
+                let distance = handle.distance(point);
+                if distance <= tolerance && best.is_none_or(|(_, _, current)| distance < current) {
+                    best = Some((index, outgoing, distance));
+                }
+            }
+        }
+        best.map(|(index, outgoing, _)| (index, outgoing))
+    }
+
+    fn begin_node_interaction(&mut self, point: Point2, shift: bool) {
+        let tolerance = 6.0 / self.editor.canvas.zoom.max(0.01);
+        if let Some((node, outgoing)) = self.nearest_node_handle(point, tolerance) {
+            self.drag = Some(DragState::Handle {
+                node,
+                outgoing,
+                recorded: false,
+            });
+            return;
+        }
+        if self
+            .editor
+            .select_node_at(point, tolerance, shift)
+            .is_some()
+        {
+            self.drag = Some(DragState::NodeMove {
+                last: point,
+                recorded: false,
+            });
+        }
+    }
+
     fn begin_select(&mut self, point: Point2, shift: bool) {
         let tolerance = 5.0 / self.editor.canvas.zoom.max(0.01);
         let hit = self.editor.object_at(point, tolerance);
@@ -2029,6 +2238,29 @@ impl BeamWrightApp {
                     self.editor.move_selection(dx, dy);
                     *last = point;
                 }
+            }
+            DragState::NodeMove { last, recorded } => {
+                let dx = point.x - last.x;
+                let dy = point.y - last.y;
+                if dx.abs() > 1e-9 || dy.abs() > 1e-9 {
+                    if !*recorded {
+                        self.editor.record();
+                        *recorded = true;
+                    }
+                    self.editor.move_selected_nodes(dx, dy);
+                    *last = point;
+                }
+            }
+            DragState::Handle {
+                node,
+                outgoing,
+                recorded,
+            } => {
+                if !*recorded {
+                    self.editor.record();
+                    *recorded = true;
+                }
+                self.editor.set_node_handle(*node, *outgoing, point);
             }
             DragState::Draw { end, .. } | DragState::Marquee { end, .. } => {
                 *end = point;
@@ -2084,7 +2316,10 @@ impl BeamWrightApp {
                     self.editor.select_in_rect((min, max), additive);
                 }
             }
-            DragState::Move { .. } | DragState::Pan { .. } => {}
+            DragState::Move { .. }
+            | DragState::Pan { .. }
+            | DragState::NodeMove { .. }
+            | DragState::Handle { .. } => {}
         }
     }
 
@@ -2407,6 +2642,39 @@ impl BeamWrightApp {
                 };
             }
             Err(error) => self.status = format!("{} failed: {error}", op.label()),
+        }
+    }
+
+    fn simplify_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.simplify_open;
+        let mut apply = false;
+        egui::Window::new("Simplify path")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Tolerance");
+                ui.add(
+                    egui::DragValue::new(&mut self.simplify_tolerance)
+                        .speed(0.05)
+                        .range(0.001..=5.0)
+                        .suffix(" mm"),
+                );
+                ui.weak("Curves are flattened and straightened within the tolerance.");
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+            });
+        if apply {
+            match self.editor.simplify_selected_path(self.simplify_tolerance) {
+                Ok(nodes) => {
+                    self.status = format!("Simplified to {nodes} node(s)");
+                    self.simplify_open = false;
+                }
+                Err(error) => self.status = format!("Simplify failed: {error}"),
+            }
+        } else {
+            self.simplify_open = open;
         }
     }
 
@@ -3283,6 +3551,9 @@ impl BeamWrightApp {
         }
         if self.offset_open {
             self.offset_window(ctx);
+        }
+        if self.simplify_open {
+            self.simplify_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);
