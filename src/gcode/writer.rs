@@ -149,7 +149,10 @@ mod tests {
         plain.push(MoveKind::Cut, 10.0, 5.0);
         let text = GCodeWriter::new(GCodeOptions::default()).render(&[assisted, plain]);
         assert!(text.contains("M8"), "air assist was not enabled\n{text}");
-        assert!(text.contains("M3"), "constant power was not selected\n{text}");
+        assert!(
+            text.contains("M3"),
+            "constant power was not selected\n{text}"
+        );
         assert!(text.contains("M9"), "air assist was not disabled\n{text}");
         assert!(
             text.matches("M4").count() >= 2,
