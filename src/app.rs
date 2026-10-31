@@ -46,6 +46,8 @@ enum DragState {
         tool: Tool,
         start: Point2,
         end: Point2,
+        /// Shift: square/circle for rectangles and ellipses, 45° steps for lines.
+        constrain: bool,
     },
     Marquee {
         start: Point2,
@@ -1801,6 +1803,9 @@ impl BeamWrightApp {
                     );
                     ui.label("sides");
                 }
+                if matches!(self.editor.tool, Tool::Rect | Tool::Ellipse | Tool::Line) {
+                    ui.weak("Shift: square/circle or 45° steps");
+                }
                 if self.editor.tool == Tool::Star {
                     ui.add(
                         egui::DragValue::new(&mut self.star_points)
@@ -3067,6 +3072,7 @@ impl BeamWrightApp {
                                             tool: self.editor.tool,
                                             start: point,
                                             end: point,
+                                            constrain: shift,
                                         });
                                     }
                                 }
@@ -3106,7 +3112,9 @@ impl BeamWrightApp {
                 }
 
                 let preview = match &self.drag {
-                    Some(DragState::Draw { tool, start, end }) => Some(match tool {
+                    Some(DragState::Draw {
+                        tool, start, end, ..
+                    }) => Some(match tool {
                         Tool::Rect => PreviewShape::Rect {
                             start: *start,
                             end: *end,
@@ -3353,7 +3361,23 @@ impl BeamWrightApp {
                 }
                 self.editor.set_node_handle(*node, *outgoing, point);
             }
-            DragState::Draw { end, .. } | DragState::Marquee { end, .. } => {
+            DragState::Draw {
+                end,
+                start,
+                tool,
+                constrain,
+            } => {
+                *end = match (*constrain, tool) {
+                    (true, Tool::Rect | Tool::Ellipse) => {
+                        crate::geometry::point::square_corner(*start, point)
+                    }
+                    (true, Tool::Line) => {
+                        crate::geometry::point::constrain_angle(*start, point, 45.0)
+                    }
+                    _ => point,
+                };
+            }
+            DragState::Marquee { end, .. } => {
                 *end = point;
             }
             DragState::Sketch { points } => {
@@ -3372,7 +3396,9 @@ impl BeamWrightApp {
 
     fn finish_drag(&mut self, drag: DragState) {
         match drag {
-            DragState::Draw { tool, start, end } => match tool {
+            DragState::Draw {
+                tool, start, end, ..
+            } => match tool {
                 Tool::Rect => {
                     self.editor.add_rectangle(start, end);
                 }

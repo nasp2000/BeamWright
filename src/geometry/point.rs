@@ -51,9 +51,39 @@ impl Point2 {
     }
 }
 
+/// Corner of a square (or circle) drag: both sides take the larger length.
+///
+/// The sign of each axis is kept, so the shape grows in the direction the
+/// pointer was dragged.
+pub fn square_corner(start: Point2, end: Point2) -> Point2 {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let size = dx.abs().max(dy.abs());
+    Point2::new(
+        start.x + size * if dx < 0.0 { -1.0 } else { 1.0 },
+        start.y + size * if dy < 0.0 { -1.0 } else { 1.0 },
+    )
+}
+
+/// Constrain a drag to multiples of `step_degrees`, keeping its length.
+pub fn constrain_angle(start: Point2, end: Point2, step_degrees: f64) -> Point2 {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let length = dx.hypot(dy);
+    if length <= 1e-9 || !step_degrees.is_finite() || step_degrees <= 0.0 {
+        return end;
+    }
+    let step = step_degrees.to_radians();
+    let angle = (dy.atan2(dx) / step).round() * step;
+    Point2::new(
+        start.x + length * angle.cos(),
+        start.y + length * angle.sin(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Point2;
+    use super::{Point2, constrain_angle, square_corner};
 
     const EPS: f64 = 1e-9;
 
@@ -74,6 +104,28 @@ mod tests {
         let p = Point2::new(2.0, 3.0).scale(2.0);
         assert!((p.x - 4.0).abs() < EPS);
         assert!((p.y - 6.0).abs() < EPS);
+    }
+
+    #[test]
+    fn square_corner_uses_the_larger_side() {
+        let start = Point2::new(0.0, 0.0);
+        let corner = square_corner(start, Point2::new(10.0, 4.0));
+        assert!((corner.x - 10.0).abs() < EPS);
+        assert!((corner.y - 10.0).abs() < EPS);
+        let corner = square_corner(start, Point2::new(-4.0, -12.0));
+        assert!((corner.x + 12.0).abs() < EPS);
+        assert!((corner.y + 12.0).abs() < EPS);
+    }
+
+    #[test]
+    fn angle_constraint_keeps_length() {
+        let start = Point2::new(0.0, 0.0);
+        let near_horizontal = Point2::new(10.0, 1.0);
+        let constrained = constrain_angle(start, near_horizontal, 45.0);
+        assert!((constrained.y).abs() < 1e-9);
+        assert!((constrained.distance(start) - near_horizontal.distance(start)).abs() < 1e-9);
+        let diagonal = constrain_angle(start, Point2::new(10.0, 9.0), 45.0);
+        assert!((diagonal.x - diagonal.y).abs() < 1e-9);
     }
 
     #[test]
