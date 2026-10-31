@@ -14,7 +14,7 @@ impl Default for GeneralPrefs {
     fn default() -> Self {
         Self {
             default_unit: "mm".to_string(),
-            theme: "light".to_string(),
+            theme: "dark".to_string(),
             confirm_destructive: true,
             backup_enabled: true,
             default_directory: String::new(),
@@ -112,11 +112,18 @@ mod tests {
     }
 
     #[test]
+    fn the_first_run_is_dark() {
+        let preferences = AppPreferences::default();
+        assert_eq!(preferences.general.theme, "dark");
+        assert!(preferences.validate().is_ok());
+    }
+
+    #[test]
     fn missing_file_loads_defaults() {
         let path = std::env::temp_dir().join("bw_prefs_missing.json");
         let _ = std::fs::remove_file(&path);
         let preferences = AppPreferences::load_or_default(&path).unwrap();
-        assert_eq!(preferences.general.theme, "light");
+        assert_eq!(preferences.general.theme, "dark");
         assert_eq!(preferences.drawing.grid_spacing_mm, 10.0);
     }
 
