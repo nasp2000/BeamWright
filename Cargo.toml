@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "BeamWright"
 path = "src/main.rs"
 
+[features]
+# Builds the Windows executable with a console subsystem, for CLI output.
+console = []
+
 [dependencies]
 eframe = { version = "=0.36.2", default-features = true }
 egui = "=0.36.2"
