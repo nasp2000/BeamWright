@@ -446,71 +446,69 @@ fn alignment_snap(
     dx: f64,
     dy: f64,
 ) -> (f64, f64, Vec<(bool, f64)>) {
-        let Some((min, max)) = bounds else {
-            return (dx, dy, Vec::new());
-        };
-        let tolerance = 6.0 / zoom.max(0.01);
-        let selected: std::collections::HashSet<&str> =
-            selection.iter().map(String::as_str).collect();
-        let mut verticals = Vec::new();
-        let mut horizontals = Vec::new();
-        for object in &document.objects {
-            if selected.contains(object.id.as_str()) || !object.visible || object.locked {
-                continue;
-            }
-            let Some((other_min, other_max)) = object.bounds() else {
-                continue;
-            };
-            verticals.extend([
-                other_min.x,
-                f64::midpoint(other_min.x, other_max.x),
-                other_max.x,
-            ]);
-            horizontals.extend([
-                other_min.y,
-                f64::midpoint(other_min.y, other_max.y),
-                other_max.y,
-            ]);
+    let Some((min, max)) = bounds else {
+        return (dx, dy, Vec::new());
+    };
+    let tolerance = 6.0 / zoom.max(0.01);
+    let selected: std::collections::HashSet<&str> = selection.iter().map(String::as_str).collect();
+    let mut verticals = Vec::new();
+    let mut horizontals = Vec::new();
+    for object in &document.objects {
+        if selected.contains(object.id.as_str()) || !object.visible || object.locked {
+            continue;
         }
-        let current_x = [min.x + dx, f64::midpoint(min.x, max.x) + dx, max.x + dx];
-        let current_y = [min.y + dy, f64::midpoint(min.y, max.y) + dy, max.y + dy];
-        let mut guides = Vec::new();
-        let snap = |lines: [f64; 3], candidates: &[f64], guides: &mut Vec<f64>| -> f64 {
-            let mut best: Option<(f64, f64)> = None;
-            for line in lines {
-                for candidate in candidates {
-                    let difference = candidate - line;
-                    if difference.abs() <= tolerance {
-                        if best.is_none_or(|(best, _)| difference.abs() < best.abs()) {
-                            best = Some((difference, *candidate));
-                        }
+        let Some((other_min, other_max)) = object.bounds() else {
+            continue;
+        };
+        verticals.extend([
+            other_min.x,
+            f64::midpoint(other_min.x, other_max.x),
+            other_max.x,
+        ]);
+        horizontals.extend([
+            other_min.y,
+            f64::midpoint(other_min.y, other_max.y),
+            other_max.y,
+        ]);
+    }
+    let current_x = [min.x + dx, f64::midpoint(min.x, max.x) + dx, max.x + dx];
+    let current_y = [min.y + dy, f64::midpoint(min.y, max.y) + dy, max.y + dy];
+    let mut guides = Vec::new();
+    let snap = |lines: [f64; 3], candidates: &[f64], guides: &mut Vec<f64>| -> f64 {
+        let mut best: Option<(f64, f64)> = None;
+        for line in lines {
+            for candidate in candidates {
+                let difference = candidate - line;
+                if difference.abs() <= tolerance {
+                    if best.is_none_or(|(best, _)| difference.abs() < best.abs()) {
+                        best = Some((difference, *candidate));
                     }
                 }
             }
-            match best {
-                Some((difference, coordinate)) => {
-                    guides.push(coordinate);
-                    difference
-                }
-                None => 0.0,
-            }
-        };
-        let adjust_x = snap(current_x, &verticals, &mut guides);
-        let adjust_y = snap(current_y, &horizontals, &mut guides);
-        guides.sort_by(|left, right| left.total_cmp(right));
-        guides.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
-        let mut result = Vec::new();
-        for guide in guides {
-            if verticals.iter().any(|value| (value - guide).abs() < 1e-9) {
-                result.push((true, guide));
-            }
-            if horizontals.iter().any(|value| (value - guide).abs() < 1e-9) {
-                result.push((false, guide));
-            }
         }
-        (dx + adjust_x, dy + adjust_y, result)
+        match best {
+            Some((difference, coordinate)) => {
+                guides.push(coordinate);
+                difference
+            }
+            None => 0.0,
+        }
+    };
+    let adjust_x = snap(current_x, &verticals, &mut guides);
+    let adjust_y = snap(current_y, &horizontals, &mut guides);
+    guides.sort_by(|left, right| left.total_cmp(right));
+    guides.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+    let mut result = Vec::new();
+    for guide in guides {
+        if verticals.iter().any(|value| (value - guide).abs() < 1e-9) {
+            result.push((true, guide));
+        }
+        if horizontals.iter().any(|value| (value - guide).abs() < 1e-9) {
+            result.push((false, guide));
+        }
     }
-
+    (dx + adjust_x, dy + adjust_y, result)
+}
 
 fn boolean_icon(op: crate::geometry::BooleanOp) -> Icon {
     match op {
@@ -5692,13 +5690,13 @@ impl BeamWrightApp {
                 match *kind {
                     HandleKind::Move => {
                         let (dx, dy, guides) = alignment_snap(
-                    &self.editor.document,
-                    self.editor.selection.ids(),
-                    self.editor.selected_bounds(),
-                    self.editor.canvas.zoom,
-                    dx,
-                    dy,
-                );
+                            &self.editor.document,
+                            self.editor.selection.ids(),
+                            self.editor.selected_bounds(),
+                            self.editor.canvas.zoom,
+                            dx,
+                            dy,
+                        );
                         self.smart_guides = guides;
                         self.editor.move_selection(dx, dy);
                     }
