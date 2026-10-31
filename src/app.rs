@@ -5026,6 +5026,13 @@ impl BeamWrightApp {
                                         .range(0.0..=50.0),
                                 );
                                 ui.end_row();
+                                ui.label("Kerf (mm)");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.kerf_mm)
+                                        .speed(0.01)
+                                        .range(0.0..=10.0),
+                                );
+                                ui.end_row();
                                 ui.label("Constant power mode");
                                 ui.checkbox(&mut operation.params.constant_power, "");
                                 ui.end_row();

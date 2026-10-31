@@ -59,6 +59,7 @@ struct Resolved {
     fill_margin_mm: f64,
     fill_offset_mm: f64,
     overscan_mm: f64,
+    kerf_mm: f64,
     cross_hatch: bool,
     air_assist: bool,
     constant_power: bool,
@@ -84,6 +85,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             fill_alternate: operation.params.fill_alternate,
             fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
             overscan_mm: operation.params.overscan_mm.max(0.0),
+            kerf_mm: operation.params.kerf_mm.max(0.0),
             cross_hatch: operation.params.cross_hatch,
             air_assist: operation.params.air_assist,
             constant_power: operation.params.constant_power,
@@ -103,6 +105,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 fill_margin_mm: params.fill_margin_mm.max(0.0),
                 fill_offset_mm: params.fill_offset_mm,
                 overscan_mm: params.overscan_mm.max(0.0),
+                kerf_mm: params.kerf_mm.max(0.0),
                 cross_hatch: params.cross_hatch,
                 air_assist: params.air_assist,
                 constant_power: params.constant_power,
@@ -185,6 +188,7 @@ pub fn build_toolpaths_cancellable(
                             resolved.power,
                             resolved.passes,
                         );
+                        let points = kerfed(&points, resolved.kerf_mm);
                         append_contour(&mut toolpath, &points);
                         let mut toolpath = toolpath
                             .with_operation(object.operation_id.as_deref())
@@ -414,7 +418,8 @@ fn push_fill_toolpath(
         toolpath.push(MoveKind::Cut, x1, y1);
     }
     if resolved.op_type == OperationType::FillWithOutline {
-        append_contour(&mut toolpath, points);
+        let points = kerfed(points, resolved.kerf_mm);
+        append_contour(&mut toolpath, &points);
     }
     if !toolpath.is_empty() {
         let mut toolpath = toolpath

@@ -77,6 +77,9 @@ pub struct OperationParams {
     /// Extend every fill line by this distance at both ends.
     #[serde(default)]
     pub overscan_mm: f64,
+    /// Half of this is removed from contour cuts to compensate the kerf.
+    #[serde(default)]
+    pub kerf_mm: f64,
 }
 
 fn default_cut_color() -> String {
@@ -168,6 +171,11 @@ impl OperationParams {
             yes_no(target.show_in_preview),
         );
         push("Colour", self.color.clone(), target.color.clone());
+        push(
+            "Kerf",
+            format!("{:.2} mm", self.kerf_mm),
+            format!("{:.2} mm", target.kerf_mm),
+        );
         changes
     }
 }
@@ -189,6 +197,7 @@ impl Default for OperationParams {
             constant_power: false,
             cross_hatch: false,
             overscan_mm: 0.0,
+            kerf_mm: 0.0,
         }
     }
 }
