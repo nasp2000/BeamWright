@@ -40,6 +40,14 @@ impl McpServer {
             .unwrap_or_else(|| crate::textfont::BUNDLED_NAME.to_string())
     }
 
+    /// Swap the editor used by the server, returning the previous one.
+    ///
+    /// Used by the live bridge to execute a request against the document that is
+    /// open in the GUI, then put it back.
+    pub fn replace_editor(&mut self, editor: EditorState) -> EditorState {
+        std::mem::replace(&mut self.editor, editor)
+    }
+
     pub fn new() -> Self {
         Self {
             editor: EditorState::new(Document::default()),

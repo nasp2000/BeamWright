@@ -68,7 +68,22 @@ pub enum Commands {
         ids: Option<String>,
     },
     /// Run the MCP server on stdin/stdout
-    Mcp,
+    Mcp {
+        /// Control the running editor instead of a separate document
+        #[arg(long)]
+        live: bool,
+        /// Live bridge port
+        #[arg(long, default_value_t = crate::bridge::DEFAULT_PORT)]
+        port: u16,
+    },
+    /// Send one JSON-RPC request to the running editor
+    LiveRequest {
+        /// JSON-RPC request object
+        json: String,
+        /// Live bridge port
+        #[arg(long, default_value_t = crate::bridge::DEFAULT_PORT)]
+        port: u16,
+    },
     /// Measure build, export, save and G-code times on a synthetic project
     Bench {
         /// Number of objects to create
@@ -212,9 +227,17 @@ pub fn run(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
-        Some(Commands::Mcp) => {
-            let mut server = crate::mcp::McpServer::new();
-            server.serve_stdio()?;
+        Some(Commands::Mcp { live, port }) => {
+            if live {
+                crate::bridge::proxy_stdio(port)?;
+            } else {
+                let mut server = crate::mcp::McpServer::new();
+                server.serve_stdio()?;
+            }
+            Ok(())
+        }
+        Some(Commands::LiveRequest { json, port }) => {
+            println!("{}", crate::bridge::request(port, &json)?);
             Ok(())
         }
         Some(Commands::Bench { objects }) => {

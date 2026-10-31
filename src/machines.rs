@@ -142,6 +142,32 @@ impl MachineLibrary {
         Ok(())
     }
 
+    /// Write the library to a user-chosen file.
+    pub fn export_to(&self, path: &Path) -> Result<(), String> {
+        self.save(path)
+    }
+
+    /// Merge another library file, skipping names that already exist.
+    pub fn import_into(&mut self, path: &Path) -> Result<usize, String> {
+        let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let imported: Self =
+            serde_json::from_str(&text).map_err(|error| format!("invalid machines: {error}"))?;
+        imported.validate()?;
+        let mut added = 0;
+        for machine in imported.machines {
+            if self
+                .machines
+                .iter()
+                .any(|existing| existing.name.eq_ignore_ascii_case(&machine.name))
+            {
+                continue;
+            }
+            self.machines.push(machine);
+            added += 1;
+        }
+        Ok(added)
+    }
+
     pub fn remove(&mut self, id: &str) -> bool {
         let before = self.machines.len();
         self.machines.retain(|machine| machine.id != id);

@@ -285,6 +285,12 @@ pub struct BeamWrightApp {
     cuts_open: bool,
     cuts_snapshot: Option<Document>,
     help_shortcuts_open: bool,
+    multi_props_recorded: bool,
+    smart_guides: Vec<(bool, f64)>,
+    cuts_drag: Option<usize>,
+    cuts_drag_target: Option<usize>,
+    bridge: Option<crate::bridge::LiveBridge>,
+    live_server: crate::mcp::McpServer,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -696,6 +702,12 @@ impl BeamWrightApp {
             cuts_open: false,
             cuts_snapshot: None,
             help_shortcuts_open: false,
+            multi_props_recorded: false,
+            smart_guides: Vec::new(),
+            cuts_drag: None,
+            cuts_drag_target: None,
+            bridge: crate::bridge::LiveBridge::start(crate::bridge::configured_port()),
+            live_server: crate::mcp::McpServer::new(),
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -768,6 +780,12 @@ impl BeamWrightApp {
         if let Some(path) = file {
             app.open_path(&path);
         }
+        if let Some(bridge) = &app.bridge {
+            app.status = format!(
+                "Ready - live bridge on 127.0.0.1:{} (BeamWright mcp --live)",
+                bridge.port()
+            );
+        }
         app
     }
 
@@ -829,6 +847,7 @@ impl BeamWrightApp {
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::RelinkImage => "image.png".to_string(),
             FileMode::ImportProfiles | FileMode::ExportProfiles => "profiles.json".to_string(),
+            FileMode::ImportMachines | FileMode::ExportMachines => "machines.json".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
         };
         let default_directory = self.preferences.general.default_directory.trim();
@@ -878,6 +897,23 @@ impl BeamWrightApp {
                     Err(error) => self.status = format!("Profile export failed: {error}"),
                 }
             }
+            FileMode::ImportMachines => match self.machines.import_into(path) {
+                Ok(count) => match self.machines.save(&self.machines_path) {
+                    Ok(()) => {
+                        self.status = format!("Imported {count} machine profile(s)");
+                    }
+                    Err(error) => {
+                        self.status = format!("Cannot save the machine library: {error}");
+                    }
+                },
+                Err(error) => self.status = format!("Machine import failed: {error}"),
+            },
+            FileMode::ExportMachines => match self.machines.export_to(path) {
+                Ok(()) => {
+                    self.status = format!("Exported machine profiles to {}", path.display());
+                }
+                Err(error) => self.status = format!("Machine export failed: {error}"),
+            },
             FileMode::SaveProject => self.save_to(path),
             FileMode::ExportPng
             | FileMode::ExportDxf
@@ -2802,13 +2838,25 @@ impl BeamWrightApp {
                 for (id, name, visible, locked, color) in layers.iter().rev() {
                     ui.horizontal(|ui| {
                         let mut is_visible = *visible;
-                        if ui.checkbox(&mut is_visible, "").changed() {
+                        if icons::icon_button(ui, is_visible, Icon::Eye, 18.0, "Layer visible")
+                            .clicked()
+                        {
+                            is_visible = !is_visible;
                             if let Some(layer) = self.editor.document.layer_mut(id) {
                                 layer.visible = is_visible;
                             }
                         }
                         let mut is_locked = *locked;
-                        if ui.checkbox(&mut is_locked, "L").changed() {
+                        if icons::icon_button(
+                            ui,
+                            is_locked,
+                            if is_locked { Icon::Lock } else { Icon::Unlock },
+                            18.0,
+                            "Layer locked",
+                        )
+                        .clicked()
+                        {
+                            is_locked = !is_locked;
                             if let Some(layer) = self.editor.document.layer_mut(id) {
                                 layer.locked = is_locked;
                             }
@@ -3775,23 +3823,61 @@ impl BeamWrightApp {
     fn multi_selection_properties(&mut self, ui: &mut Ui) {
         ui.label(format!("{} objects selected", self.editor.selection.len()));
         if let Some((min, max)) = self.editor.selected_bounds() {
+            let mut left = min.x;
+            let mut bottom = min.y;
+            let mut width = max.x - min.x;
+            let mut height = max.y - min.y;
+            let mut changed = false;
             egui::Grid::new("multi_bounds")
                 .num_columns(2)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Left");
-                    ui.weak(format!("{:.2} mm", min.x));
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut left).speed(0.1).suffix(" mm"))
+                        .changed();
                     ui.end_row();
                     ui.label("Bottom");
-                    ui.weak(format!("{:.2} mm", min.y));
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut bottom).speed(0.1).suffix(" mm"))
+                        .changed();
                     ui.end_row();
                     ui.label("Width");
-                    ui.weak(format!("{:.2} mm", max.x - min.x));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .speed(0.1)
+                                .range(0.01..=100_000.0)
+                                .suffix(" mm"),
+                        )
+                        .changed();
                     ui.end_row();
                     ui.label("Height");
-                    ui.weak(format!("{:.2} mm", max.y - min.y));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut height)
+                                .speed(0.1)
+                                .range(0.01..=100_000.0)
+                                .suffix(" mm"),
+                        )
+                        .changed();
                     ui.end_row();
                 });
+            if changed {
+                if !self.multi_props_recorded {
+                    self.editor.record_action("Multi-selection transform");
+                    self.multi_props_recorded = true;
+                }
+                let dx = left - min.x;
+                let dy = bottom - min.y;
+                if dx.abs() > 1e-9 || dy.abs() > 1e-9 {
+                    self.editor.move_selection(dx, dy);
+                }
+                if (width - (max.x - min.x)).abs() > 1e-9 || (height - (max.y - min.y)).abs() > 1e-9
+                {
+                    self.editor.set_selection_size(width, height, false);
+                }
+            }
         }
         ui.separator();
         ui.horizontal(|ui| {
@@ -4696,6 +4782,27 @@ impl BeamWrightApp {
         }
     }
 
+    fn handle_live_request(&mut self, request: &str) -> String {
+        let request: serde_json::Value = match serde_json::from_str(request) {
+            Ok(value) => value,
+            Err(error) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {"code": -32700, "message": format!("invalid JSON: {error}")}
+                })
+                .to_string();
+            }
+        };
+        let placeholder = crate::editor::EditorState::new(Document::default());
+        let app_editor = std::mem::replace(&mut self.editor, placeholder);
+        let old = self.live_server.replace_editor(app_editor);
+        let response = self.live_server.handle(&request);
+        let app_editor = self.live_server.replace_editor(old);
+        self.editor = app_editor;
+        response.to_string()
+    }
+
     fn machine_wizard(&mut self, ctx: &egui::Context) {
         let mut create = false;
         let mut skip = false;
@@ -4772,6 +4879,14 @@ impl BeamWrightApp {
                 ui.label(
                     "Work areas used to prepare projects. No connection or controller settings are stored.",
                 );
+                ui.horizontal(|ui| {
+                    if ui.button("Import...").clicked() {
+                        self.open_dialog(FileMode::ImportMachines);
+                    }
+                    if ui.button("Export...").clicked() {
+                        self.open_dialog(FileMode::ExportMachines);
+                    }
+                });
                 ui.separator();
                 let machines = self.machines.machines.clone();
                 ui.horizontal_top(|ui| {
@@ -7670,6 +7785,24 @@ impl eframe::App for BeamWrightApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let requests = self
+            .bridge
+            .as_ref()
+            .map(crate::bridge::LiveBridge::drain)
+            .unwrap_or_default();
+        if !requests.is_empty() {
+            for pending in requests {
+                let response = self.handle_live_request(&pending.request);
+                let _ = pending.reply.send(response);
+            }
+            ctx.request_repaint();
+        }
+        if !ctx.input(|input| input.pointer.any_down()) {
+            self.multi_props_recorded = false;
+        }
+        if self.drag.is_none() {
+            self.smart_guides.clear();
+        }
         self.advance_playback(ctx);
         self.autosave(ctx);
         self.poll_task(ctx);

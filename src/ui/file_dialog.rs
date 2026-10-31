@@ -12,6 +12,8 @@ pub enum FileMode {
     RelinkImage,
     ImportProfiles,
     ExportProfiles,
+    ImportMachines,
+    ExportMachines,
 }
 
 impl FileMode {
@@ -27,6 +29,8 @@ impl FileMode {
             FileMode::RelinkImage => "Relink image",
             FileMode::ImportProfiles => "Import profiles",
             FileMode::ExportProfiles => "Export profiles",
+            FileMode::ImportMachines => "Import machine profiles",
+            FileMode::ExportMachines => "Export machine profiles",
         }
     }
 
@@ -38,9 +42,10 @@ impl FileMode {
             | FileMode::ExportDxf
             | FileMode::ExportPng
             | FileMode::ExportGcode
-            | FileMode::ExportProfiles => "Export",
+            | FileMode::ExportProfiles
+            | FileMode::ExportMachines => "Export",
             FileMode::RelinkImage => "Relink",
-            FileMode::ImportProfiles => "Import",
+            FileMode::ImportProfiles | FileMode::ImportMachines => "Import",
         }
     }
 
@@ -51,7 +56,10 @@ impl FileMode {
             FileMode::ExportDxf => "dxf",
             FileMode::ExportPng | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
-            FileMode::ImportProfiles | FileMode::ExportProfiles => "json",
+            FileMode::ImportProfiles
+            | FileMode::ExportProfiles
+            | FileMode::ImportMachines
+            | FileMode::ExportMachines => "json",
         }
     }
 
@@ -60,6 +68,7 @@ impl FileMode {
         match self {
             FileMode::OpenProject => "Shows .bwp and .svg files",
             FileMode::ImportProfiles | FileMode::ExportProfiles => "Shows .json profile libraries",
+            FileMode::ImportMachines | FileMode::ExportMachines => "Shows .json machine libraries",
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::ImportFile => {
                 "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif and .tiff files"
@@ -96,7 +105,10 @@ impl FileMode {
                     "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
                 )
             }
-            FileMode::ImportProfiles | FileMode::ExportProfiles => extension == "json",
+            FileMode::ImportProfiles
+            | FileMode::ExportProfiles
+            | FileMode::ImportMachines
+            | FileMode::ExportMachines => extension == "json",
         }
     }
 }
@@ -300,6 +312,7 @@ impl FileDialog {
                     | FileMode::ExportPng
                     | FileMode::ExportGcode
                     | FileMode::ExportProfiles
+                    | FileMode::ExportMachines
             ) {
                 path.set_extension(self.mode.default_extension());
             } else {
@@ -310,7 +323,8 @@ impl FileDialog {
             FileMode::OpenProject
             | FileMode::ImportFile
             | FileMode::RelinkImage
-            | FileMode::ImportProfiles => {
+            | FileMode::ImportProfiles
+            | FileMode::ImportMachines => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
                 }
@@ -320,7 +334,8 @@ impl FileDialog {
             | FileMode::ExportDxf
             | FileMode::ExportPng
             | FileMode::ExportGcode
-            | FileMode::ExportProfiles => {
+            | FileMode::ExportProfiles
+            | FileMode::ExportMachines => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {
                         return Err(format!("Directory not found: {}", parent.display()));
