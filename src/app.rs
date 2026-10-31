@@ -225,6 +225,13 @@ enum DragState {
     Sketch {
         points: Vec<Point2>,
     },
+    Transform {
+        kind: HandleKind,
+        last: Point2,
+        centre: Point2,
+        recorded: bool,
+        constrain: bool,
+    },
     Pan {
         last: (f32, f32),
     },
@@ -4338,6 +4345,7 @@ impl BeamWrightApp {
         use crate::operations::OperationType;
 
         let mut open = self.cuts_open;
+        let mut close_requested = false;
         let mut operations = self.editor.document.operations.clone();
         egui::Window::new("Cuts / Layers")
             .open(&mut open)
@@ -4559,11 +4567,14 @@ impl BeamWrightApp {
                         }
                     }
                     if ui.button("Close").clicked() {
-                        open = false;
+                        close_requested = true;
                     }
                 });
             });
         self.editor.document.operations = operations;
+        if close_requested {
+            open = false;
+        }
         self.cuts_open = open;
         if !open {
             if let Some(snapshot) = self.cuts_snapshot.take() {

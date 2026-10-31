@@ -96,6 +96,10 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 fill_alternate: params.fill_alternate,
                 fill_margin_mm: params.fill_margin_mm.max(0.0),
                 fill_offset_mm: params.fill_offset_mm,
+                overscan_mm: params.overscan_mm.max(0.0),
+                cross_hatch: params.cross_hatch,
+                air_assist: params.air_assist,
+                constant_power: params.constant_power,
                 operation_name: None,
             })
         }
