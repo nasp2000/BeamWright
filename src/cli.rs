@@ -229,7 +229,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Some(Commands::Mcp { live, port }) => {
             if live {
-                crate::bridge::proxy_stdio(port)?;
+                crate::bridge::proxy_stdio(port).map_err(BeamError::InvalidInput)?;
             } else {
                 let mut server = crate::mcp::McpServer::new();
                 server.serve_stdio()?;
@@ -237,7 +237,10 @@ pub fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Commands::LiveRequest { json, port }) => {
-            println!("{}", crate::bridge::request(port, &json)?);
+            println!(
+                "{}",
+                crate::bridge::request(port, &json).map_err(BeamError::InvalidInput)?
+            );
             Ok(())
         }
         Some(Commands::Bench { objects }) => {
