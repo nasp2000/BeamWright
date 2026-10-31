@@ -139,6 +139,7 @@ pub struct BeamWrightApp {
     operations_compare_open: bool,
     profile_pending: Option<(String, crate::profiles::OperationProfile)>,
     relink_target: Option<String>,
+    pending_file: Option<(FileMode, PathBuf)>,
     guides_open: bool,
     guide_position: f64,
     exact_size: bool,
@@ -429,6 +430,7 @@ impl BeamWrightApp {
             operations_compare_open: false,
             profile_pending: None,
             relink_target: None,
+            pending_file: None,
             guides_open: false,
             guide_position: 50.0,
             exact_size: false,
@@ -5492,8 +5494,42 @@ impl BeamWrightApp {
                 DialogResult::Accepted(path) => {
                     let mode = dialog.mode;
                     self.dialog = None;
-                    self.handle_file(mode, &path);
+                    let overwrites = path.exists()
+                        && !matches!(
+                            mode,
+                            FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage
+                        );
+                    if overwrites {
+                        self.pending_file = Some((mode, path));
+                    } else {
+                        self.handle_file(mode, &path);
+                    }
                 }
+            }
+        }
+        if let Some((mode, path)) = self.pending_file.clone() {
+            let mut replace = false;
+            let mut cancel = false;
+            egui::Window::new("Replace file?")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(format!("{} already exists.", path.display()));
+                    ui.label("Replacing it cannot be undone.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Replace").clicked() {
+                            replace = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if replace {
+                self.pending_file = None;
+                self.handle_file(mode, &path);
+            } else if cancel {
+                self.pending_file = None;
             }
         }
         if self.confirm.is_some() {
