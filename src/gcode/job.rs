@@ -18,6 +18,10 @@ pub struct JobOptions {
     pub travel_speed_mm_min: f64,
     /// Reorder operations to shorten rapid moves between them.
     pub assisted_ordering: bool,
+    /// Shift the whole job so its lower-left corner is at (0, 0).
+    ///
+    /// Use it with a selection to engrave only that zone at the machine origin.
+    pub offset_to_origin: bool,
 }
 
 impl Default for JobOptions {
@@ -26,6 +30,7 @@ impl Default for JobOptions {
             gcode: GCodeOptions::default(),
             travel_speed_mm_min: 3000.0,
             assisted_ordering: true,
+            offset_to_origin: false,
         }
     }
 }
@@ -629,6 +634,27 @@ pub fn estimate_seconds(toolpaths: &[Toolpath], travel_speed_mm_min: f64) -> f64
     seconds
 }
 
+/// Move every toolpath so the job starts at (0, 0).
+pub fn shift_to_origin(toolpaths: &mut [Toolpath]) {
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    for toolpath in toolpaths.iter() {
+        for movement in &toolpath.moves {
+            min_x = min_x.min(movement.x);
+            min_y = min_y.min(movement.y);
+        }
+    }
+    if !min_x.is_finite() || !min_y.is_finite() {
+        return;
+    }
+    for toolpath in toolpaths.iter_mut() {
+        for movement in &mut toolpath.moves {
+            movement.x -= min_x;
+            movement.y -= min_y;
+        }
+    }
+}
+
 /// Toolpaths in the order they will be executed.
 pub fn planned_toolpaths(
     document: &Document,
@@ -669,6 +695,9 @@ pub fn render_job_cancellable(
     let (toolpaths, mut warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
     if cancel() {
         return Err(cancelled());
+    }
+    if options.offset_to_origin {
+        shift_to_origin(&mut toolpaths);
     }
     validate_bounds(document, &toolpaths)?;
     for (index, toolpath) in toolpaths.iter().enumerate() {

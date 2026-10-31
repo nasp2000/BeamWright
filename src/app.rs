@@ -356,6 +356,7 @@ pub struct BeamWrightApp {
     profile_confirm_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
+    export_offset_origin: bool,
     recover_next: bool,
     pen_nodes: Vec<crate::geometry::path::Node>,
     pen_drag_start: Option<Point2>,
@@ -370,6 +371,7 @@ fn run_export(
     path: &Path,
     document: &crate::document::Document,
     cancel: &std::sync::atomic::AtomicBool,
+    offset_origin: bool,
 ) -> std::result::Result<FileReport, String> {
     let cancelled = || {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -404,7 +406,10 @@ fn run_export(
             let report = crate::gcode::export_job_cancellable(
                 document,
                 path,
-                &crate::gcode::JobOptions::default(),
+                &crate::gcode::JobOptions {
+                    offset_to_origin: offset_origin,
+                    ..crate::gcode::JobOptions::default()
+                },
                 &cancelled_flag,
             )
             .map_err(|error| error.to_string())?;
@@ -865,6 +870,7 @@ impl BeamWrightApp {
             profile_confirm_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
+            export_offset_origin: false,
             recover_next: false,
             pen_nodes: Vec::new(),
             pen_drag_start: None,
@@ -971,7 +977,9 @@ impl BeamWrightApp {
             return;
         }
         let selection_only = self.export_subset && !self.editor.selection.is_empty();
+        let offset_origin = self.export_offset_origin;
         self.export_subset = false;
+        self.export_offset_origin = false;
         let document = if selection_only {
             self.editor.document.subset(self.editor.selection.ids())
         } else {
@@ -1021,7 +1029,7 @@ impl BeamWrightApp {
             FileMode::ExportPng
             | FileMode::ExportDxf
             | FileMode::ExportGcode
-            | FileMode::ExportSvg => self.start_export(mode, path, document),
+            | FileMode::ExportSvg => self.start_export(mode, path, document, offset_origin),
             FileMode::RelinkImage => self.relink_image(path),
         }
     }
@@ -1427,7 +1435,13 @@ impl BeamWrightApp {
         self.status = "Importing...".to_string();
     }
 
-    fn start_export(&mut self, mode: FileMode, path: &Path, document: crate::document::Document) {
+    fn start_export(
+        &mut self,
+        mode: FileMode,
+        path: &Path,
+        document: crate::document::Document,
+        offset_origin: bool,
+    ) {
         if self.task.is_some() {
             self.status = "Another operation is still running".to_string();
             return;
@@ -1444,6 +1458,7 @@ impl BeamWrightApp {
                 &worker_path,
                 &document,
                 cancel,
+                offset_origin,
             )))
         }));
         self.status = "Exporting...".to_string();
@@ -1863,6 +1878,22 @@ impl BeamWrightApp {
                             .clicked()
                         {
                             self.export_subset = true;
+                            self.open_dialog(FileMode::ExportGcode);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                enabled,
+                                icons::widget(
+                                    ui,
+                                    Icon::Export,
+                                    "As G-code at origin...",
+                                ),
+                            )
+                            .clicked()
+                        {
+                            self.export_subset = true;
+                            self.export_offset_origin = true;
                             self.open_dialog(FileMode::ExportGcode);
                             ui.close();
                         }
