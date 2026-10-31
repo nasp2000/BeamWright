@@ -301,6 +301,7 @@ impl BeamWrightApp {
         editor.snap_midpoints = preferences.drawing.snap_midpoints;
         editor.snap_intersections = preferences.drawing.snap_intersections;
         editor.snap_limits = preferences.drawing.snap_limits;
+        editor.show_rulers = preferences.drawing.show_rulers;
         let dark_mode = preferences.general.theme == "dark";
         let mut app = Self {
             editor,
@@ -1132,6 +1133,7 @@ impl BeamWrightApp {
                         (Tool::Polygon, "Polygon"),
                         (Tool::Star, "Star"),
                         (Tool::Text, "Text"),
+                        (Tool::Measure, "Measure"),
                         (Tool::Pencil, "Freehand"),
                     ] {
                         if ui.selectable_label(self.editor.tool == tool, label).clicked() {
@@ -1559,6 +1561,7 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
+                    ui.checkbox(&mut self.editor.show_rulers, "Show rulers");
                     ui.menu_button("Snapping", |ui| {
                         ui.checkbox(&mut self.editor.snap_enabled, "Grid");
                         ui.checkbox(&mut self.editor.snap_nodes, "Nodes");
@@ -1612,6 +1615,7 @@ impl BeamWrightApp {
                     Tool::Polygon,
                     Tool::Star,
                     Tool::Text,
+                    Tool::Measure,
                     Tool::Pencil,
                     Tool::Pan,
                 ] {
@@ -2824,6 +2828,7 @@ impl BeamWrightApp {
                                 | Tool::Polygon
                                 | Tool::Star
                                 | Tool::Text
+                                | Tool::Measure
                                 | Tool::Pencil => {
                                     if self.editor.layer_locked(&self.editor.active_layer_id)
                                         || !self.editor.layer_visible(&self.editor.active_layer_id)
@@ -3164,6 +3169,11 @@ impl BeamWrightApp {
                 }
                 Tool::Text => {
                     self.editor.add_text(start);
+                }
+                Tool::Measure => {
+                    let distance = start.distance(end);
+                    let angle = (end.y - start.y).atan2(end.x - start.x).to_degrees();
+                    self.status = format!("Distance {distance:.2} mm at {angle:.1}°");
                 }
                 _ => {}
             },
@@ -4127,6 +4137,7 @@ impl BeamWrightApp {
                     self.editor.snap_midpoints = self.preferences.drawing.snap_midpoints;
                     self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
                     self.editor.snap_limits = self.preferences.drawing.snap_limits;
+                    self.editor.show_rulers = self.preferences.drawing.show_rulers;
                     self.dark_mode = self.preferences.general.theme == "dark";
                     match self.preferences.save(&self.preferences_path) {
                         Ok(()) => self.status = "Preferences saved".to_string(),

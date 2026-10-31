@@ -126,10 +126,96 @@ pub fn paint_canvas(
     if let Some(placements) = overlays.nest {
         paint_nest(painter, rect, editor, placements);
     }
+    paint_rulers(painter, rect, editor, theme);
     if let Some(preview) = preview {
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+/// Draw millimetre rulers along the top and left edges.
+fn paint_rulers(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
+    if !editor.show_rulers {
+        return;
+    }
+    let band = 18.0;
+    let background = if theme.dark {
+        Color32::from_gray(34)
+    } else {
+        Color32::from_gray(238)
+    };
+    let color = if theme.dark {
+        Color32::from_gray(185)
+    } else {
+        Color32::from_gray(70)
+    };
+    let top = Rect::from_min_size(rect.min, Vec2::new(rect.width(), band));
+    let left = Rect::from_min_size(rect.min, Vec2::new(band, rect.height()));
+    painter.rect_filled(top, 0.0, background);
+    painter.rect_filled(left, 0.0, background);
+    painter.line_segment(
+        [
+            Pos2::new(rect.min.x, rect.min.y + band),
+            Pos2::new(rect.max.x, rect.min.y + band),
+        ],
+        Stroke::new(1.0, color),
+    );
+    painter.line_segment(
+        [
+            Pos2::new(rect.min.x + band, rect.min.y),
+            Pos2::new(rect.min.x + band, rect.max.y),
+        ],
+        Stroke::new(1.0, color),
+    );
+    let step = editor.canvas.effective_grid_spacing().max(1.0);
+    let label_step = step * 5.0;
+    let labelled = |value: f64| ((value / label_step).round() * label_step - value).abs() < 1e-6;
+    let mut x = 0.0;
+    while x <= editor.document.width_mm + 1e-9 {
+        let screen_x = rect.min.x + editor.canvas.doc_to_screen(x, 0.0).0 as f32;
+        if screen_x >= rect.min.x + band && screen_x <= rect.max.x {
+            painter.line_segment(
+                [
+                    Pos2::new(screen_x, rect.min.y + band - 5.0),
+                    Pos2::new(screen_x, rect.min.y + band),
+                ],
+                Stroke::new(1.0, color),
+            );
+            if labelled(x) {
+                painter.text(
+                    Pos2::new(screen_x, rect.min.y + 1.0),
+                    Align2::CENTER_TOP,
+                    format!("{x:.0}"),
+                    FontId::monospace(9.0),
+                    color,
+                );
+            }
+        }
+        x += step;
+    }
+    let mut y = 0.0;
+    while y <= editor.document.height_mm + 1e-9 {
+        let screen_y = rect.min.y + editor.canvas.doc_to_screen(0.0, y).1 as f32;
+        if screen_y >= rect.min.y + band && screen_y <= rect.max.y {
+            painter.line_segment(
+                [
+                    Pos2::new(rect.min.x + band - 5.0, screen_y),
+                    Pos2::new(rect.min.x + band, screen_y),
+                ],
+                Stroke::new(1.0, color),
+            );
+            if labelled(y) {
+                painter.text(
+                    Pos2::new(rect.min.x + 1.0, screen_y),
+                    Align2::LEFT_CENTER,
+                    format!("{y:.0}"),
+                    FontId::monospace(9.0),
+                    color,
+                );
+            }
+        }
+        y += step;
+    }
 }
 
 /// Draw the proposed nesting positions.

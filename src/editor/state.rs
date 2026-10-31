@@ -131,6 +131,8 @@ pub struct EditorState {
     pub snap_limits: bool,
     /// Pull radius in screen pixels; converted to millimetres by the zoom.
     pub snap_tolerance_px: f64,
+    /// Draw millimetre rulers along the top and left edges.
+    pub show_rulers: bool,
     /// Path object whose nodes are being edited.
     pub node_object: Option<String>,
     /// Indices of the selected nodes in that path.
@@ -161,6 +163,7 @@ impl EditorState {
             snap_intersections: false,
             snap_limits: false,
             snap_tolerance_px: 8.0,
+            show_rulers: true,
             node_object: None,
             node_selection: Vec::new(),
         }
