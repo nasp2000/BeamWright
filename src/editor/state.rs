@@ -2220,6 +2220,49 @@ impl EditorState {
         true
     }
 
+    /// Assign an operation (or clear it) on every object of a layer.
+    ///
+    /// This is the layer-level form of the per-object association: the result is
+    /// stored on each object, so it stays explicit and editable, and it can be
+    /// undone as one step.
+    pub fn assign_operation_to_layer(
+        &mut self,
+        layer_id: &str,
+        operation_id: Option<&str>,
+    ) -> usize {
+        if self.document.layer(layer_id).is_none() {
+            return 0;
+        }
+        if let Some(id) = operation_id {
+            if !self
+                .document
+                .operations
+                .iter()
+                .any(|operation| operation.id == id)
+            {
+                return 0;
+            }
+        }
+        let targets: Vec<usize> = self
+            .document
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, object)| {
+                object.layer_id == layer_id && object.operation_id.as_deref() != operation_id
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if targets.is_empty() {
+            return 0;
+        }
+        self.record();
+        for index in &targets {
+            self.document.objects[*index].operation_id = operation_id.map(str::to_string);
+        }
+        targets.len()
+    }
+
     /// Assign an operation (or clear the assignment) on the whole selection.
     pub fn assign_operation(&mut self, operation_id: Option<&str>) -> usize {
         if self.selection.is_empty() {
@@ -2997,6 +3040,55 @@ mod tests {
             }),
             0
         );
+    }
+
+    #[test]
+    fn operations_can_be_assigned_to_a_whole_layer() {
+        use crate::operations::OperationType;
+
+        let mut editor = editor();
+        let first = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        let second = editor
+            .add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0))
+            .unwrap();
+        let operation = editor.add_operation("Cut", OperationType::OutlineCutting);
+        let layer = editor.document.layers[0].id.clone();
+        assert_eq!(
+            editor.assign_operation_to_layer(&layer, Some(&operation)),
+            2
+        );
+        for id in [&first, &second] {
+            assert_eq!(
+                editor.document.object(id).unwrap().operation_id.as_deref(),
+                Some(operation.as_str())
+            );
+        }
+        assert_eq!(
+            editor.assign_operation_to_layer(&layer, Some(&operation)),
+            0
+        );
+        assert!(editor.undo());
+        assert_eq!(
+            editor
+                .document
+                .object(&first)
+                .unwrap()
+                .operation_id
+                .as_deref(),
+            None
+        );
+        assert_eq!(
+            editor.assign_operation_to_layer(&layer, Some(&operation)),
+            2
+        );
+        assert_eq!(editor.assign_operation_to_layer(&layer, None), 2);
+        assert_eq!(
+            editor.assign_operation_to_layer("missing", Some(&operation)),
+            0
+        );
+        assert_eq!(editor.assign_operation_to_layer(&layer, Some("missing")), 0);
     }
 
     #[test]

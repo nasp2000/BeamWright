@@ -262,6 +262,16 @@ impl McpServer {
                 }
                 Ok(json!({"id": id, "operations": self.editor.document.operations.len()}))
             }
+            "assign_operation_to_layer" => {
+                let operation =
+                    string(arguments, "operation").ok_or_else(|| missing("operation"))?;
+                let layer = string(arguments, "layer")
+                    .unwrap_or_else(|| self.editor.active_layer_id.clone());
+                let assigned = self
+                    .editor
+                    .assign_operation_to_layer(&layer, Some(&operation));
+                Ok(json!({"assigned": assigned, "layer": layer}))
+            }
             "duplicate_operation" => {
                 let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
                 let copy = self
@@ -901,6 +911,14 @@ fn tool_definitions() -> Vec<Value> {
             }}),
         ),
         tool_with(
+            "assign_operation_to_layer",
+            "Assign an operation to every object of a layer (active layer by default).",
+            json!({"type": "object", "properties": {
+                "operation": {"type": "string"},
+                "layer": {"type": "string"}
+            }, "required": ["operation"]}),
+        ),
+        tool_with(
             "duplicate_operation",
             "Duplicate an operation, keeping its parameters.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
@@ -1312,6 +1330,31 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn layer_operation_tool() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 2.0, "height": 2.0}),
+        );
+        let operation = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "Cut", "type": "outline_cutting"}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let assigned = call(
+            &mut server,
+            "assign_operation_to_layer",
+            json!({"operation": operation}),
+        );
+        assert_eq!(assigned["result"]["assigned"], 1);
+        assert!(server.editor.document.objects[0].operation_id.is_some());
     }
 
     #[test]

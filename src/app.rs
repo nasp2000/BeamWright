@@ -1768,6 +1768,28 @@ impl BeamWrightApp {
                     let changed = self.editor.assign_operation(None);
                     self.status = format!("Cleared operation on {changed} object(s)");
                 }
+                if ui
+                    .add_enabled(
+                        !self.editor.document.objects.is_empty(),
+                        egui::Button::new("Assign to active layer"),
+                    )
+                    .clicked()
+                {
+                    let layer = self.editor.active_layer_id.clone();
+                    let changed = self.editor.assign_operation_to_layer(&layer, Some(&active));
+                    self.status = format!("Assigned operation to {changed} layer object(s)");
+                }
+                if ui
+                    .add_enabled(
+                        !self.editor.document.objects.is_empty(),
+                        egui::Button::new("Clear layer assignment"),
+                    )
+                    .clicked()
+                {
+                    let layer = self.editor.active_layer_id.clone();
+                    let changed = self.editor.assign_operation_to_layer(&layer, None);
+                    self.status = format!("Cleared operation on {changed} layer object(s)");
+                }
             });
         }
         if let Some(active) = self.active_operation.clone() {
