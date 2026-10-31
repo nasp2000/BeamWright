@@ -20,6 +20,15 @@ use crate::geometry::Point2;
 use crate::report::FileReport;
 use crate::ui::file_dialog::{DialogResult, FileDialog, FileMode};
 
+/// Result produced by a background task.
+#[derive(Debug)]
+enum TaskResult {
+    Import {
+        path: PathBuf,
+        outcome: std::result::Result<crate::import::format::ImportOutcome, String>,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingAction {
     New,
@@ -144,6 +153,7 @@ pub struct BeamWrightApp {
     last_autosave: std::time::Instant,
     recovery_prompt_open: bool,
     recovery_timestamp: String,
+    task: Option<crate::task::BackgroundTask<TaskResult>>,
     guides_open: bool,
     guide_position: f64,
     exact_size: bool,
@@ -448,6 +458,7 @@ impl BeamWrightApp {
             last_autosave: std::time::Instant::now(),
             recovery_prompt_open,
             recovery_timestamp,
+            task: None,
             guides_open: false,
             guide_position: 50.0,
             exact_size: false,
@@ -550,7 +561,7 @@ impl BeamWrightApp {
             self.editor.document.clone()
         };
         match mode {
-            FileMode::OpenProject | FileMode::ImportFile => self.open_path(path),
+            FileMode::OpenProject | FileMode::ImportFile => self.start_import(path),
             FileMode::SaveProject => self.save_to(path),
             FileMode::ExportPng => {
                 match crate::export::export_png(
@@ -925,45 +936,70 @@ impl BeamWrightApp {
             path,
             self.preferences.drawing.max_image_pixels,
         ) {
-            Ok(outcome) => {
-                let mut document = outcome.document;
-                let object_count = document.objects.len();
-                let layer_count = document.layers.len();
-                let is_project = path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| value.eq_ignore_ascii_case("bwp"));
-                if !is_project {
-                    if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
-                        document.name = stem.to_string();
-                    }
-                }
-                self.editor.set_document(document.clone());
-                self.current_path = if is_project {
-                    Some(path.to_path_buf())
-                } else {
-                    None
-                };
-                self.saved_snapshot = if is_project { Some(document) } else { None };
-                self.needs_fit = true;
-                self.drag = None;
-                let _ = std::fs::remove_file(&self.recovery_path);
-                let report = FileReport::new(
-                    if is_project { "Open project" } else { "Import" },
-                    path.display().to_string(),
-                )
-                .with_summary(
-                    "Format",
-                    crate::import::format::detect_format(path).to_uppercase(),
-                )
-                .with_summary("Objects", object_count.to_string())
-                .with_summary("Layers", layer_count.to_string())
-                .with_warnings(outcome.warnings);
-                self.status = report.headline();
-                self.show_report(report);
-            }
+            Ok(outcome) => self.apply_import(path, outcome),
             Err(error) => self.status = format!("Open failed: {error}"),
         }
+    }
+
+    fn start_import(&mut self, path: &Path) {
+        if self.task.is_some() {
+            self.status = "Another import is still running".to_string();
+            return;
+        }
+        let path = path.to_path_buf();
+        let limit = self.preferences.drawing.max_image_pixels;
+        let label = format!("Importing {}", path.display());
+        let worker_path = path.clone();
+        self.task = Some(crate::task::BackgroundTask::spawn(label, move |cancel| {
+            let outcome = crate::import::format::import_with_report_limited(&worker_path, limit)
+                .map_err(|error| error.to_string());
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            Some(TaskResult::Import {
+                path: worker_path,
+                outcome,
+            })
+        }));
+        self.status = "Importing...".to_string();
+    }
+
+    fn apply_import(&mut self, path: &Path, outcome: crate::import::format::ImportOutcome) {
+        let mut document = outcome.document;
+        let object_count = document.objects.len();
+        let layer_count = document.layers.len();
+        let is_project = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("bwp"));
+        if !is_project {
+            if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+                document.name = stem.to_string();
+            }
+        }
+        self.editor.set_document(document.clone());
+        self.current_path = if is_project {
+            Some(path.to_path_buf())
+        } else {
+            None
+        };
+        self.saved_snapshot = if is_project { Some(document) } else { None };
+        self.needs_fit = true;
+        self.drag = None;
+        let _ = std::fs::remove_file(&self.recovery_path);
+        let report = FileReport::new(
+            if is_project { "Open project" } else { "Import" },
+            path.display().to_string(),
+        )
+        .with_summary(
+            "Format",
+            crate::import::format::detect_format(path).to_uppercase(),
+        )
+        .with_summary("Objects", object_count.to_string())
+        .with_summary("Layers", layer_count.to_string())
+        .with_warnings(outcome.warnings);
+        self.status = report.headline();
+        self.show_report(report);
     }
 
     fn save(&mut self) {
@@ -3288,7 +3324,10 @@ impl BeamWrightApp {
                     self.zoom_to_selection_request = false;
                 }
                 let ctx = ui.ctx().clone();
-                let modal = self.dialog.is_some() || self.confirm.is_some() || self.about_open;
+                let modal = self.dialog.is_some()
+                    || self.confirm.is_some()
+                    || self.about_open
+                    || self.task.is_some();
                 let pointer = if modal {
                     None
                 } else {
@@ -3852,6 +3891,55 @@ impl BeamWrightApp {
         match crate::profiles::save(&self.profiles, &self.profiles_path) {
             Ok(()) => self.profile_message = "Profiles saved".to_string(),
             Err(error) => self.profile_message = format!("Cannot save profiles: {error}"),
+        }
+    }
+
+    fn poll_task(&mut self, ctx: &egui::Context) {
+        let Some(task) = &self.task else {
+            return;
+        };
+        match task.poll() {
+            crate::task::TaskPoll::Pending => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            crate::task::TaskPoll::Cancelled => {
+                self.task = None;
+                self.status = "Import cancelled".to_string();
+            }
+            crate::task::TaskPoll::Finished(TaskResult::Import { path, outcome }) => {
+                self.task = None;
+                match outcome {
+                    Ok(outcome) => self.apply_import(&path, outcome),
+                    Err(error) => self.status = format!("Import failed: {error}"),
+                }
+            }
+        }
+    }
+
+    fn task_window(&mut self, ctx: &egui::Context) {
+        let Some(task) = &self.task else {
+            return;
+        };
+        let mut cancel = false;
+        egui::Window::new("Working")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(task.label());
+                });
+                ui.weak("You can stop waiting; the result will be discarded.");
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        if cancel {
+            if let Some(task) = &self.task {
+                task.cancel();
+            }
+            self.task = None;
+            self.status = "Import cancelled".to_string();
         }
     }
 
@@ -5548,6 +5636,9 @@ impl BeamWrightApp {
                 }
             }
         }
+        if self.task.is_some() {
+            self.task_window(ctx);
+        }
         if self.recovery_prompt_open {
             let mut open_draft = false;
             let mut discard = false;
@@ -5740,6 +5831,7 @@ impl eframe::App for BeamWrightApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.advance_playback(ctx);
         self.autosave(ctx);
+        self.poll_task(ctx);
         let title = format!("BeamWright - {}", self.title());
         let current = ctx.input(|input| input.viewport().title.clone());
         if current.as_deref() != Some(title.as_str()) {

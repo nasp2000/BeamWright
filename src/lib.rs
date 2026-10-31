@@ -25,4 +25,5 @@ pub mod operations;
 pub mod profiles;
 pub mod raster;
 pub mod report;
+pub mod task;
 pub mod ui;
