@@ -4187,11 +4187,12 @@ impl BeamWrightApp {
         if let Some(crop) = image.crop {
             picture = picture.crop_imm(crop.x, crop.y, crop.width, crop.height);
         }
-        if image.settings.rotation_degrees == 90.0 {
+        let rotation = image.settings.rotation_degrees;
+        if (rotation - 90.0).abs() < f64::EPSILON {
             picture = picture.rotate90();
-        } else if image.settings.rotation_degrees == 180.0 {
+        } else if (rotation - 180.0).abs() < f64::EPSILON {
             picture = picture.rotate180();
-        } else if image.settings.rotation_degrees == 270.0 {
+        } else if (rotation - 270.0).abs() < f64::EPSILON {
             picture = picture.rotate270();
         }
         let width = picture.width().max(1);
@@ -4234,13 +4235,12 @@ impl BeamWrightApp {
             self.image_adjust = None;
             return;
         };
-        let mut image = match &self.editor.document.objects[index].shape {
-            crate::document::Shape::Image(image) => image.clone(),
-            _ => {
-                self.image_adjust = None;
-                return;
-            }
+        let crate::document::Shape::Image(image) = &self.editor.document.objects[index].shape
+        else {
+            self.image_adjust = None;
+            return;
         };
+        let mut image = image.clone();
         let object_name = self.editor.document.objects[index].name.clone();
         let original = image.clone();
         let original_texture = self.original_image_texture(ctx, &image);

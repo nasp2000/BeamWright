@@ -25,7 +25,13 @@ impl RasterBitmap {
 
 /// Convert a luminance buffer using the image settings.
 ///
-/// Pipeline: brightness, contrast, gamma, invert, then threshold or dithering.
+/// Pipeline: brightness, contrast, gamma, enhancement, invert, then threshold or
+/// dithering.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 pub fn process_luma(
     luma: &[u8],
     width: usize,
