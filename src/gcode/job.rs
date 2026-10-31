@@ -831,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn out_of_bounds_geometry_is_rejected() {
+    fn out_of_bounds_geometry_is_generated_with_a_warning() {
         let mut document = Document {
             width_mm: 10.0,
             height_mm: 10.0,
@@ -847,8 +847,15 @@ mod tests {
             },
         );
         document.add_object(object);
-        let error = render_job(&document, &JobOptions::default()).unwrap_err();
-        assert!(matches!(error, BeamError::InvalidInput(_)));
+        let (_, report) = render_job(&document, &JobOptions::default()).unwrap();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("outside")),
+            "{:?}",
+            report.warnings
+        );
     }
 
     #[test]

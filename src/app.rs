@@ -4992,6 +4992,23 @@ impl BeamWrightApp {
                             .suffix(" mm"),
                     );
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Firmware");
+                    let mut firmware = self.machine_editor.firmware;
+                    egui::ComboBox::from_id_salt("wizard_firmware")
+                        .selected_text(firmware.label())
+                        .show_ui(ui, |ui| {
+                            for candidate in crate::machines::Firmware::all() {
+                                ui.selectable_value(
+                                    &mut firmware,
+                                    candidate,
+                                    candidate.label(),
+                                );
+                            }
+                        });
+                    self.machine_editor.firmware = firmware;
+                });
+                ui.weak("The firmware is a label for the intended G-code dialect; nothing is connected or configured.");
                 if let Some(error) = &self.machine_error {
                     ui.colored_label(Color32::from_rgb(200, 60, 60), error);
                 }
@@ -5041,6 +5058,11 @@ impl BeamWrightApp {
                     if ui.button("Export...").clicked() {
                         self.open_dialog(FileMode::ExportMachines);
                     }
+                    if ui.button("Add common presets").clicked() {
+                        let added = self.machines.add_common_presets();
+                        let _ = self.machines.save(&self.machines_path);
+                        self.status = format!("Added {added} machine preset(s)");
+                    }
                 });
                 ui.separator();
                 let machines = self.machines.machines.clone();
@@ -5052,8 +5074,11 @@ impl BeamWrightApp {
                                 .selectable_label(
                                     self.machine_edit_id.as_deref() == Some(&machine.id),
                                     format!(
-                                        "{} ({:.0} x {:.0} mm)",
-                                        machine.name, machine.work_width_mm, machine.work_height_mm
+                                        "{} [{}] ({:.0} x {:.0} mm)",
+                                        machine.name,
+                                        machine.firmware.label(),
+                                        machine.work_width_mm,
+                                        machine.work_height_mm
                                     ),
                                 )
                                 .clicked()
@@ -5091,6 +5116,22 @@ impl BeamWrightApp {
                                     .range(10.0..=100_000.0)
                                     .suffix(" mm"),
                             );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Firmware");
+                            let mut firmware = self.machine_editor.firmware;
+                            egui::ComboBox::from_id_salt("machine_firmware")
+                                .selected_text(firmware.label())
+                                .show_ui(ui, |ui| {
+                                    for candidate in crate::machines::Firmware::all() {
+                                        ui.selectable_value(
+                                            &mut firmware,
+                                            candidate,
+                                            candidate.label(),
+                                        );
+                                    }
+                                });
+                            self.machine_editor.firmware = firmware;
                         });
                         ui.label("Notes");
                         ui.text_edit_multiline(&mut self.machine_editor.notes);

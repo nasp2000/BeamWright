@@ -11,6 +11,63 @@ use uuid::Uuid;
 /// Current file format version.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// Open-source firmware families a profile can be prepared for.
+///
+/// The value only labels the intended G-code dialect in the interface. No
+/// connection, port, controller setting or firmware command is stored or sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Firmware {
+    /// GRBL 1.1 and compatible controllers.
+    #[default]
+    Grbl,
+    /// GRBL-LPC.
+    GrblLpc,
+    /// FluidNC, the GRBL successor.
+    FluidNc,
+    /// Marlin.
+    Marlin,
+    /// SmoothieWare.
+    Smoothie,
+    /// Klipper.
+    Klipper,
+    /// LinuxCNC.
+    LinuxCnc,
+    /// RepRapFirmware.
+    RepRapFirmware,
+    /// Any other controller that reads plain G-code.
+    Generic,
+}
+
+impl Firmware {
+    pub fn label(self) -> &'static str {
+        match self {
+            Firmware::Grbl => "GRBL 1.1",
+            Firmware::GrblLpc => "GRBL-LPC",
+            Firmware::FluidNc => "FluidNC",
+            Firmware::Marlin => "Marlin",
+            Firmware::Smoothie => "SmoothieWare",
+            Firmware::Klipper => "Klipper",
+            Firmware::LinuxCnc => "LinuxCNC",
+            Firmware::RepRapFirmware => "RepRapFirmware",
+            Firmware::Generic => "Generic G-code",
+        }
+    }
+
+    pub fn all() -> [Firmware; 9] {
+        [
+            Firmware::Grbl,
+            Firmware::GrblLpc,
+            Firmware::FluidNc,
+            Firmware::Marlin,
+            Firmware::Smoothie,
+            Firmware::Klipper,
+            Firmware::LinuxCnc,
+            Firmware::RepRapFirmware,
+            Firmware::Generic,
+        ]
+    }
+}
+
 /// One saved machine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MachineProfile {
@@ -18,6 +75,9 @@ pub struct MachineProfile {
     pub name: String,
     pub work_width_mm: f64,
     pub work_height_mm: f64,
+    /// Intended firmware family, used as a label and for choosing the dialect.
+    #[serde(default)]
+    pub firmware: Firmware,
     #[serde(default)]
     pub notes: String,
 }
@@ -29,6 +89,7 @@ impl MachineProfile {
             name: name.into(),
             work_width_mm: width_mm,
             work_height_mm: height_mm,
+            firmware: Firmware::default(),
             notes: String::new(),
         }
     }
@@ -125,6 +186,44 @@ impl MachineLibrary {
         Ok(())
     }
 
+    /// Common open-source presets, excluding names that already exist.
+    pub fn common_presets() -> Vec<MachineProfile> {
+        let mut presets = vec![
+            MachineProfile::new("GRBL 300 x 200", 300.0, 200.0),
+            MachineProfile::new("GRBL 400 x 400", 400.0, 400.0),
+            MachineProfile::new("FluidNC 600 x 400", 600.0, 400.0),
+            MachineProfile::new("Marlin 220 x 220", 220.0, 220.0),
+            MachineProfile::new("SmoothieWare 500 x 500", 500.0, 500.0),
+            MachineProfile::new("Klipper 350 x 350", 350.0, 350.0),
+            MachineProfile::new("LinuxCNC 1000 x 1000", 1000.0, 1000.0),
+            MachineProfile::new("RepRapFirmware 400 x 300", 400.0, 300.0),
+        ];
+        for (preset, firmware) in presets.iter_mut().zip([
+            Firmware::Grbl,
+            Firmware::Grbl,
+            Firmware::FluidNc,
+            Firmware::Marlin,
+            Firmware::Smoothie,
+            Firmware::Klipper,
+            Firmware::LinuxCnc,
+            Firmware::RepRapFirmware,
+        ]) {
+            preset.firmware = firmware;
+        }
+        presets
+    }
+
+    /// Add every common preset whose name is not already used.
+    pub fn add_common_presets(&mut self) -> usize {
+        let mut added = 0;
+        for preset in Self::common_presets() {
+            if self.add(preset).is_ok() {
+                added += 1;
+            }
+        }
+        added
+    }
+
     pub fn machine(&self, id: &str) -> Option<&MachineProfile> {
         self.machines.iter().find(|machine| machine.id == id)
     }
@@ -201,6 +300,27 @@ mod tests {
                 .validate()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn firmware_labels_are_unique() {
+        let labels: Vec<&str> = Firmware::all().iter().map(|item| item.label()).collect();
+        let mut sorted = labels.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len());
+    }
+
+    #[test]
+    fn common_presets_are_valid_and_distinct() {
+        let presets = MachineLibrary::common_presets();
+        assert!(presets.len() >= 8);
+        for preset in &presets {
+            preset.validate().unwrap();
+        }
+        let mut library = MachineLibrary::default();
+        assert_eq!(library.add_common_presets(), presets.len());
+        assert_eq!(library.add_common_presets(), 0);
     }
 
     #[test]
