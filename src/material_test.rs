@@ -197,24 +197,30 @@ mod tests {
 
     #[test]
     fn invalid_ranges_are_rejected() {
-        assert!(Options {
-            speed_min: 0.0,
-            ..Options::default()
-        }
-        .validate()
-        .is_err());
-        assert!(Options {
-            power_max: 120.0,
-            ..Options::default()
-        }
-        .validate()
-        .is_err());
-        assert!(Options {
-            columns: 0,
-            ..Options::default()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            Options {
+                speed_min: 0.0,
+                ..Options::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Options {
+                power_max: 120.0,
+                ..Options::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Options {
+                columns: 0,
+                ..Options::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
