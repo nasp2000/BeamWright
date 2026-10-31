@@ -84,6 +84,7 @@ pub struct BeamWrightApp {
     polygon_sides: usize,
     grid_array_open: bool,
     grid_array: (usize, usize, f64, f64),
+    search_query: String,
 }
 
 struct ImagePreview {
@@ -147,6 +148,7 @@ impl BeamWrightApp {
             polygon_sides: 6,
             grid_array_open: false,
             grid_array: (3, 2, 20.0, 20.0),
+            search_query: String::new(),
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -818,6 +820,35 @@ impl BeamWrightApp {
             .default_size(210.0)
             .resizable(true)
             .show(ui, |ui| {
+                ui.heading("Search");
+                ui.text_edit_singleline(&mut self.search_query);
+                let hits = crate::editor::search::search_document(
+                    &self.editor.document,
+                    &self.search_query,
+                );
+                if !hits.is_empty() {
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            for hit in &hits {
+                                if ui.button(&hit.label).clicked() {
+                                    match hit.kind {
+                                        crate::editor::search::SearchKind::Object => {
+                                            self.editor.selection.clear();
+                                            self.editor.selection.add(hit.id.clone());
+                                        }
+                                        crate::editor::search::SearchKind::Layer => {
+                                            self.editor.active_layer_id.clone_from(&hit.id);
+                                        }
+                                        crate::editor::search::SearchKind::Operation => {
+                                            self.active_operation = Some(hit.id.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                }
+                ui.separator();
                 ui.heading("Layers");
                 let before = self.editor.document.clone();
                 let mut message: Option<String> = None;
