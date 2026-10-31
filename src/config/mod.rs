@@ -82,6 +82,9 @@ pub struct DrawingPrefs {
     /// Zoom factor applied by the mouse wheel.
     #[serde(default = "default_scroll_zoom_step")]
     pub scroll_zoom_step: f64,
+    /// Largest raster image accepted on import, in pixels.
+    #[serde(default = "default_max_image_pixels")]
+    pub max_image_pixels: u64,
 }
 
 impl Default for DrawingPrefs {
@@ -105,6 +108,7 @@ impl Default for DrawingPrefs {
             zoom_step: default_zoom_step(),
             select_whole_group: true,
             scroll_zoom_step: default_scroll_zoom_step(),
+            max_image_pixels: default_max_image_pixels(),
         }
     }
 }
@@ -132,6 +136,9 @@ impl DrawingPrefs {
         if !self.scroll_zoom_step.is_finite() || !(1.01..=2.0).contains(&self.scroll_zoom_step) {
             return Err("wheel zoom step must be between 1.01 and 2".to_string());
         }
+        if !(1_000_000..=500_000_000).contains(&self.max_image_pixels) {
+            return Err("image pixel limit must be between 1 and 500 million".to_string());
+        }
         Ok(())
     }
 }
@@ -158,6 +165,10 @@ fn default_zoom_step() -> f64 {
 
 fn default_scroll_zoom_step() -> f64 {
     1.15
+}
+
+fn default_max_image_pixels() -> u64 {
+    50_000_000
 }
 
 #[cfg(test)]

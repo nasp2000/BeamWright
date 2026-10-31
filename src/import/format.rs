@@ -26,8 +26,16 @@ pub struct ImportOutcome {
     pub warnings: Vec<String>,
 }
 
-/// Import a file, choosing the parser from its extension.
+/// Import a file with the default raster pixel limit.
 pub fn import_with_report(path: &Path) -> Result<ImportOutcome> {
+    import_with_report_limited(path, crate::raster::MAX_PIXELS)
+}
+
+/// Import a file, choosing the parser from its extension.
+///
+/// `max_pixels` only affects raster images; it is the limit the preferences
+/// configure.
+pub fn import_with_report_limited(path: &Path, max_pixels: u64) -> Result<ImportOutcome> {
     match detect_format(path) {
         "svg" => {
             let source = std::fs::read_to_string(path)?;
@@ -46,7 +54,7 @@ pub fn import_with_report(path: &Path) -> Result<ImportOutcome> {
             })
         }
         "raster" => Ok(ImportOutcome {
-            document: crate::import::raster::import_raster(path)?,
+            document: crate::import::raster::import_raster_with_limit(path, max_pixels)?,
             warnings: Vec::new(),
         }),
         "bwp" => {
@@ -122,6 +130,23 @@ mod tests {
         assert!(outcome.warnings[0].contains("recovered"));
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn the_raster_limit_is_forwarded() {
+        let path = temp_dir().join("bw_fmt_limit.png");
+        let image = image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 0, 255]));
+        image.save(&path).unwrap();
+        assert!(import_with_report_limited(&path, 10).is_err());
+        assert_eq!(
+            import_with_report_limited(&path, 64)
+                .unwrap()
+                .document
+                .objects
+                .len(),
+            1
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

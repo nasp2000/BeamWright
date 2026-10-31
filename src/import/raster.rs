@@ -7,8 +7,16 @@ use std::path::Path;
 /// Default resolution assumed when the file carries no usable DPI metadata.
 pub const DEFAULT_DPI: f64 = 96.0;
 
-/// Import a raster image as one image object, sized at [`DEFAULT_DPI`].
+/// Import a raster image with the default pixel limit.
 pub fn import_raster(path: &Path) -> Result<Document> {
+    import_raster_with_limit(path, crate::raster::MAX_PIXELS)
+}
+
+/// Import a raster image as one image object, sized at [`DEFAULT_DPI`].
+///
+/// `max_pixels` rejects images that would use more memory than the configured
+/// limit before they are decoded into a document.
+pub fn import_raster_with_limit(path: &Path, max_pixels: u64) -> Result<Document> {
     let image = image::open(path)
         .map_err(|error| BeamError::InvalidInput(format!("cannot read image: {error}")))?;
     let width_px = image.width();
@@ -17,10 +25,9 @@ pub fn import_raster(path: &Path) -> Result<Document> {
         return Err(BeamError::InvalidInput("image has no pixels".to_string()));
     }
     let pixels = u64::from(width_px) * u64::from(height_px);
-    if pixels > crate::raster::MAX_PIXELS {
+    if pixels > max_pixels {
         return Err(BeamError::InvalidInput(format!(
-            "image has {pixels} pixels; the limit is {}",
-            crate::raster::MAX_PIXELS
+            "image has {pixels} pixels; the limit is {max_pixels}"
         )));
     }
     let image_object = ImageObject::new(path.to_string_lossy(), width_px, height_px, DEFAULT_DPI);
@@ -46,6 +53,20 @@ mod tests {
         let path = temp_dir().join("bw_missing_image.png");
         let _ = std::fs::remove_file(&path);
         assert!(import_raster(&path).is_err());
+    }
+
+    #[test]
+    fn a_pixel_limit_rejects_large_images() {
+        let path = temp_dir().join("bw_limit_image.png");
+        let image = image::RgbaImage::from_pixel(4, 3, image::Rgba([0, 0, 0, 255]));
+        image.save(&path).unwrap();
+        let error = import_raster_with_limit(&path, 10).unwrap_err();
+        assert!(error.to_string().contains("limit"));
+        assert_eq!(
+            import_raster_with_limit(&path, 12).unwrap().objects.len(),
+            1
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

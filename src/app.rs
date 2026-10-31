@@ -921,7 +921,10 @@ impl BeamWrightApp {
     }
 
     fn open_path(&mut self, path: &Path) {
-        match crate::import::format::import_with_report(path) {
+        match crate::import::format::import_with_report_limited(
+            path,
+            self.preferences.drawing.max_image_pixels,
+        ) {
             Ok(outcome) => {
                 let mut document = outcome.document;
                 let object_count = document.objects.len();
