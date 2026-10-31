@@ -192,6 +192,19 @@ pub fn render_rgba(
     document: &Document,
     options: &PngOptions,
 ) -> Result<(Vec<u8>, u32, u32, Vec<String>)> {
+    render_rgba_cancellable(document, options, &|| false)
+}
+
+fn png_cancelled() -> crate::errors::BeamError {
+    crate::errors::BeamError::InvalidInput("cancelled".to_string())
+}
+
+/// Render the document, checking `cancel` between layers and objects.
+pub fn render_rgba_cancellable(
+    document: &Document,
+    options: &PngOptions,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, u32, u32, Vec<String>)> {
     options.validate()?;
     document
         .validate()
@@ -201,6 +214,9 @@ pub fn render_rgba(
     let mut layers: Vec<_> = document.layers.iter().collect();
     layers.sort_by_key(|layer| layer.order);
     for layer in layers {
+        if cancel() {
+            return Err(png_cancelled());
+        }
         if !layer.visible {
             continue;
         }
@@ -210,6 +226,9 @@ pub fn render_rgba(
             .iter()
             .filter(|object| object.layer_id == layer.id && object.visible)
         {
+            if cancel() {
+                return Err(png_cancelled());
+            }
             draw_object(&mut canvas, object, (lr, lg, lb), &mut warnings);
         }
     }
@@ -297,7 +316,20 @@ fn draw_object(
 
 /// Write the document as a PNG file, atomically.
 pub fn export_png(document: &Document, path: &Path, options: &PngOptions) -> Result<PngReport> {
-    let (pixels, width, height, warnings) = render_rgba(document, options)?;
+    export_png_cancellable(document, path, options, &|| false)
+}
+
+/// Write a PNG atomically, checking `cancel` before touching the file.
+pub fn export_png_cancellable(
+    document: &Document,
+    path: &Path,
+    options: &PngOptions,
+    cancel: &dyn Fn() -> bool,
+) -> Result<PngReport> {
+    let (pixels, width, height, warnings) = render_rgba_cancellable(document, options, cancel)?;
+    if cancel() {
+        return Err(png_cancelled());
+    }
     let buffer = image::RgbaImage::from_raw(width, height, pixels)
         .ok_or_else(|| crate::errors::BeamError::InvalidInput("invalid PNG buffer".to_string()))?;
     let temporary = path.with_extension("png.tmp");
@@ -416,6 +448,19 @@ mod tests {
         // The 10 mm rectangle shifted by 5 mm starts at about pixel 2.
         assert_eq!(pixels[(2 * width as usize) * 4 + 3], 0);
         assert_eq!(pixels[(2 * width as usize + 3) * 4 + 3], 255);
+    }
+
+    #[test]
+    fn png_rendering_can_be_cancelled() {
+        let document = document_with_rect(Some("#ff0000"), false);
+        assert!(render_rgba_cancellable(&document, &PngOptions::default(), &|| false).is_ok());
+        assert!(render_rgba_cancellable(&document, &PngOptions::default(), &|| true).is_err());
+        let path = std::env::temp_dir().join("bw_cancelled.png");
+        let _ = std::fs::remove_file(&path);
+        let error =
+            export_png_cancellable(&document, &path, &PngOptions::default(), &|| true).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert!(!path.exists());
     }
 
     #[test]

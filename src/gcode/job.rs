@@ -96,6 +96,18 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
 
 /// Build toolpaths from visible document geometry.
 pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
+    build_toolpaths_cancellable(document, &|| false).unwrap_or_default()
+}
+
+fn cancelled() -> BeamError {
+    BeamError::InvalidInput("cancelled".to_string())
+}
+
+/// Build toolpaths, checking `cancel` between objects and inside long fills.
+pub fn build_toolpaths_cancellable(
+    document: &Document,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(Vec<Toolpath>, Vec<String>)> {
     let mut toolpaths = Vec::new();
     let mut warnings = Vec::new();
     let mut layers: Vec<_> = document.layers.iter().collect();
@@ -109,11 +121,14 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
             .iter()
             .filter(|object| object.layer_id == layer.id && object.visible)
         {
+            if cancel() {
+                return Err(cancelled());
+            }
             let Some(resolved) = resolve(object, document) else {
                 continue;
             };
             match &object.shape {
-                Shape::Image(image) => match raster_toolpath(object, image, &resolved) {
+                Shape::Image(image) => match raster_toolpath(object, image, &resolved, cancel) {
                     Ok(Some(toolpath)) => toolpaths.push(toolpath),
                     Ok(None) => {}
                     Err(error) => {
@@ -143,7 +158,8 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
                             &resolved,
                             &points,
                             &mut warnings,
-                        );
+                            cancel,
+                        )?;
                     } else {
                         let mut toolpath = Toolpath::new(
                             object.name.clone(),
@@ -160,7 +176,7 @@ pub fn build_toolpaths(document: &Document) -> (Vec<Toolpath>, Vec<String>) {
             }
         }
     }
-    (toolpaths, warnings)
+    Ok((toolpaths, warnings))
 }
 
 /// Build a raster toolpath for one image object.
@@ -171,6 +187,7 @@ fn raster_toolpath(
     object: &Object,
     image: &crate::objects::ImageObject,
     resolved: &Resolved,
+    cancel: &dyn Fn() -> bool,
 ) -> Result<Option<Toolpath>> {
     let path = std::path::Path::new(&image.path);
     if !path.is_file() {
@@ -193,6 +210,9 @@ fn raster_toolpath(
     #[allow(clippy::cast_precision_loss)]
     let pixel_y = height_mm / bitmap.height as f64;
     for row in 0..bitmap.height {
+        if row % 64 == 0 && cancel() {
+            return Err(cancelled());
+        }
         let mut run_start: Option<usize> = None;
         for column in 0..=bitmap.width {
             let burned = column < bitmap.width && bitmap.get(column, row);
@@ -255,7 +275,8 @@ fn push_fill_toolpath(
     resolved: &Resolved,
     points: &[Point2],
     warnings: &mut Vec<String>,
-) {
+    cancel: &dyn Fn() -> bool,
+) -> Result<()> {
     let mut polygon: Vec<(f64, f64)> = points.iter().map(|point| (point.x, point.y)).collect();
     // Flattened closed paths repeat the first point; offsets would treat it as
     // an extra, degenerate corner.
@@ -265,6 +286,9 @@ fn push_fill_toolpath(
         if (first.0 - last.0).abs() <= 1e-9 && (first.1 - last.1).abs() <= 1e-9 {
             polygon.pop();
         }
+    }
+    if cancel() {
+        return Err(cancelled());
     }
     if resolved.op_type == OperationType::FillWithOffset {
         let mut toolpath = Toolpath::new(
@@ -282,7 +306,7 @@ fn push_fill_toolpath(
         } else {
             toolpaths.push(toolpath.with_operation(object.operation_id.as_deref()));
         }
-        return;
+        return Ok(());
     }
     let mut fill_polygon = polygon;
     if crate::geometry::boolean::polygon_area(&fill_polygon) < 0.0 {
@@ -302,7 +326,7 @@ fn push_fill_toolpath(
                 "'{}' is too small to fill with a {} mm margin",
                 object.name, resolved.fill_margin_mm
             ));
-            return;
+            return Ok(());
         }
         fill_polygon = inset;
     }
@@ -327,7 +351,10 @@ fn push_fill_toolpath(
         resolved.power,
         resolved.passes,
     );
-    for ((x0, y0), (x1, y1)) in lines {
+    for (index, ((x0, y0), (x1, y1))) in lines.into_iter().enumerate() {
+        if index % 512 == 0 && cancel() {
+            return Err(cancelled());
+        }
         toolpath.push(MoveKind::Travel, x0, y0);
         toolpath.push(MoveKind::Cut, x1, y1);
     }
@@ -339,6 +366,7 @@ fn push_fill_toolpath(
         toolpath.operation_name.clone_from(&resolved.operation_name);
         toolpaths.push(toolpath);
     }
+    Ok(())
 }
 
 /// Add concentric inward offsets of `polygon` to `toolpath`.
@@ -535,20 +563,47 @@ pub fn planned_toolpaths(
     document: &Document,
     options: &JobOptions,
 ) -> (Vec<Toolpath>, Vec<String>) {
-    let (mut toolpaths, warnings) = build_toolpaths(document);
+    planned_toolpaths_cancellable(document, options, &|| false).unwrap_or_default()
+}
+
+/// Toolpaths in execution order, checking `cancel` while they are built.
+pub fn planned_toolpaths_cancellable(
+    document: &Document,
+    options: &JobOptions,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(Vec<Toolpath>, Vec<String>)> {
+    let (mut toolpaths, warnings) = build_toolpaths_cancellable(document, cancel)?;
     order_by_operation(&mut toolpaths, document);
     if options.assisted_ordering {
+        if cancel() {
+            return Err(cancelled());
+        }
         order_toolpaths(&mut toolpaths);
     }
-    (toolpaths, warnings)
+    Ok((toolpaths, warnings))
 }
 
 /// Generate the G-code text and a report without writing a file.
 pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, JobReport)> {
+    render_job_cancellable(document, options, &|| false)
+}
+
+/// Generate the G-code text, checking `cancel` between phases and paths.
+pub fn render_job_cancellable(
+    document: &Document,
+    options: &JobOptions,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(String, JobReport)> {
     document.validate().map_err(BeamError::InvalidInput)?;
-    let (toolpaths, warnings) = planned_toolpaths(document, options);
+    let (toolpaths, warnings) = planned_toolpaths_cancellable(document, options, cancel)?;
+    if cancel() {
+        return Err(cancelled());
+    }
     validate_bounds(document, &toolpaths)?;
-    for toolpath in &toolpaths {
+    for (index, toolpath) in toolpaths.iter().enumerate() {
+        if index % 64 == 0 && cancel() {
+            return Err(cancelled());
+        }
         if toolpath.speed <= 0.0 {
             return Err(BeamError::InvalidInput(format!(
                 "'{}' has a non-positive feed rate",
@@ -561,6 +616,9 @@ pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, 
                 toolpath.name
             )));
         }
+    }
+    if cancel() {
+        return Err(cancelled());
     }
     let text = GCodeWriter::new(options.gcode).render(&toolpaths);
     let report = JobReport {
@@ -575,7 +633,20 @@ pub fn render_job(document: &Document, options: &JobOptions) -> Result<(String, 
 
 /// Write the job atomically to `path`.
 pub fn export_job(document: &Document, path: &Path, options: &JobOptions) -> Result<JobReport> {
-    let (text, report) = render_job(document, options)?;
+    export_job_cancellable(document, path, options, &|| false)
+}
+
+/// Write the job atomically, checking `cancel` before touching the file.
+pub fn export_job_cancellable(
+    document: &Document,
+    path: &Path,
+    options: &JobOptions,
+    cancel: &dyn Fn() -> bool,
+) -> Result<JobReport> {
+    let (text, report) = render_job_cancellable(document, options, cancel)?;
+    if cancel() {
+        return Err(cancelled());
+    }
     let temporary = path.with_extension("nc.tmp");
     std::fs::write(&temporary, text)?;
     std::fs::rename(&temporary, path)?;
@@ -1045,6 +1116,22 @@ mod tests {
         assert_eq!(toolpaths.len(), 0);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("offset-fill"));
+    }
+
+    #[test]
+    fn job_generation_can_be_cancelled() {
+        let document = document_with_rect();
+        assert!(render_job_cancellable(&document, &JobOptions::default(), &|| false).is_ok());
+        let error =
+            render_job_cancellable(&document, &JobOptions::default(), &|| true).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+
+        let path = std::env::temp_dir().join("bw_cancelled_job.nc");
+        let _ = std::fs::remove_file(&path);
+        let error =
+            export_job_cancellable(&document, &path, &JobOptions::default(), &|| true).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert!(!path.exists());
     }
 
     #[test]

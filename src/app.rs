@@ -207,9 +207,14 @@ fn run_export(
         }
         FileMode::ExportGcode => {
             cancelled()?;
-            let report =
-                crate::gcode::export_job(document, path, &crate::gcode::JobOptions::default())
-                    .map_err(|error| error.to_string())?;
+            let cancelled_flag = || cancel.load(std::sync::atomic::Ordering::Relaxed);
+            let report = crate::gcode::export_job_cancellable(
+                document,
+                path,
+                &crate::gcode::JobOptions::default(),
+                &cancelled_flag,
+            )
+            .map_err(|error| error.to_string())?;
             Ok(FileReport::new("Export G-code", path.display().to_string())
                 .with_summary("Paths", report.paths.to_string())
                 .with_summary("Lines", report.lines.to_string())
