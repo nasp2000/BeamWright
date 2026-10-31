@@ -47,10 +47,7 @@ impl GCodeWriter {
                 air_on = false;
             }
             if self.options.dialect.supports_dynamic_power() {
-                let command = self
-                    .options
-                    .dialect
-                    .laser_command(toolpath.constant_power);
+                let command = self.options.dialect.laser_command(toolpath.constant_power);
                 if command != laser_command {
                     let _ = write!(out, "{command}{newline}");
                     laser_command = command;
