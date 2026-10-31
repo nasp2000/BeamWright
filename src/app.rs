@@ -778,7 +778,11 @@ impl BeamWrightApp {
             smart_guides: Vec::new(),
             cuts_drag: None,
             cuts_drag_target: None,
-            bridge: crate::bridge::LiveBridge::start(crate::bridge::configured_port()),
+            bridge: crate::bridge::LiveBridge::start(
+                crate::bridge::configured_address(),
+                crate::bridge::configured_port(),
+                crate::bridge::configured_token(),
+            ),
             live_server: crate::mcp::McpServer::new(),
             preferences: preferences.clone(),
             preferences_path,
@@ -853,10 +857,24 @@ impl BeamWrightApp {
             app.open_path(&path);
         }
         if let Some(bridge) = &app.bridge {
-            app.status = format!(
-                "Ready - live bridge on 127.0.0.1:{} (BeamWright mcp --live)",
-                bridge.port()
-            );
+            if bridge.is_network() {
+                app.status = format!(
+                    "Ready - live bridge on {}:{} (token required)",
+                    bridge.address(),
+                    bridge.port()
+                );
+            } else {
+                app.status = format!(
+                    "Ready - live bridge on 127.0.0.1:{} (BeamWright mcp --live)",
+                    bridge.port()
+                );
+            }
+            if !bridge.is_network()
+                && !crate::bridge::configured_address().is_loopback()
+                && crate::bridge::configured_token().is_none()
+            {
+                app.status = "Live bridge kept on localhost: set BEAMWRIGHT_BRIDGE_TOKEN to expose it on the network".to_string();
+            }
         }
         app
     }

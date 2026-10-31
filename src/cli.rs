@@ -72,17 +72,29 @@ pub enum Commands {
         /// Control the running editor instead of a separate document
         #[arg(long)]
         live: bool,
+        /// Live bridge host
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// Live bridge port
         #[arg(long, default_value_t = crate::bridge::DEFAULT_PORT)]
         port: u16,
+        /// Bridge token for a non-loopback host
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Send one JSON-RPC request to the running editor
     LiveRequest {
         /// JSON-RPC request object
         json: String,
+        /// Live bridge host
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// Live bridge port
         #[arg(long, default_value_t = crate::bridge::DEFAULT_PORT)]
         port: u16,
+        /// Bridge token for a non-loopback host
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Measure build, export, save and G-code times on a synthetic project
     Bench {
@@ -227,19 +239,40 @@ pub fn run(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
-        Some(Commands::Mcp { live, port }) => {
+        Some(Commands::Mcp {
+            live,
+            host,
+            port,
+            token,
+        }) => {
             if live {
-                crate::bridge::proxy_stdio(port).map_err(BeamError::InvalidInput)?;
+                crate::bridge::proxy_stdio(
+                    &host,
+                    port,
+                    token.or_else(crate::bridge::configured_token),
+                )
+                .map_err(BeamError::InvalidInput)?;
             } else {
                 let mut server = crate::mcp::McpServer::new();
                 server.serve_stdio()?;
             }
             Ok(())
         }
-        Some(Commands::LiveRequest { json, port }) => {
+        Some(Commands::LiveRequest {
+            json,
+            host,
+            port,
+            token,
+        }) => {
             println!(
                 "{}",
-                crate::bridge::request(port, &json).map_err(BeamError::InvalidInput)?
+                crate::bridge::request(
+                    &host,
+                    port,
+                    token.or_else(crate::bridge::configured_token),
+                    &json
+                )
+                .map_err(BeamError::InvalidInput)?
             );
             Ok(())
         }
