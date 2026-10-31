@@ -974,7 +974,39 @@ impl BeamWrightApp {
                 Some(std::path::PathBuf::from(default_directory))
             }
         });
-        self.dialog = Some(FileDialog::new(mode, start.as_deref(), &suggested));
+        let mut builder = rfd::FileDialog::new().set_file_name(&suggested);
+        if let Some(start) = &start {
+            let directory = if start.is_dir() {
+                start.clone()
+            } else {
+                start.parent().map_or_else(|| start.clone(), std::path::Path::to_path_buf)
+            };
+            builder = builder.set_directory(directory);
+        }
+        match mode {
+            FileMode::OpenProject => builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"]),
+            FileMode::ImportFile => builder = builder.add_filter("Drawing or image", &["svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"]),
+            FileMode::RelinkImage => builder = builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"]),
+            FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
+            FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
+            FileMode::ExportPng => builder = builder.add_filter("PNG", &["png"]),
+            FileMode::ExportGcode => builder = builder.add_filter("G-code", &["nc", "gcode", "gco", "gc", "ngc", "tap", "cnc", "mpf", "txt"]),
+            FileMode::ExportProfiles | FileMode::ExportMachines => builder = builder.add_filter("JSON", &["json"]),
+            FileMode::ImportProfiles | FileMode::ImportMachines => builder = builder.add_filter("JSON", &["json"]),
+            FileMode::SaveProject => builder = builder.add_filter("BeamWright", &["bwp"]),
+        }
+        let chosen = match mode {
+            FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage | FileMode::ImportProfiles | FileMode::ImportMachines => builder.pick_file(),
+            _ => builder.save_file(),
+        };
+        let Some(path) = chosen else {
+            return;
+        };
+        if path.exists() && !matches!(mode, FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage | FileMode::ImportProfiles | FileMode::ImportMachines) {
+            self.pending_file = Some((mode, path));
+        } else {
+            self.handle_file(mode, &path);
+        }
     }
 
     fn handle_file(&mut self, mode: FileMode, path: &Path) {
