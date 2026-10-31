@@ -86,6 +86,12 @@ pub struct OperationParams {
     /// Width of each holding tab, in millimetres.
     #[serde(default = "default_tab_width")]
     pub tab_width_mm: f64,
+    /// Extra cut distance before the contour, in millimetres.
+    #[serde(default)]
+    pub lead_in_mm: f64,
+    /// Extra cut distance after the contour, in millimetres.
+    #[serde(default)]
+    pub lead_out_mm: f64,
 }
 
 fn default_tab_width() -> f64 {
@@ -183,6 +189,16 @@ impl OperationParams {
         push("Colour", self.color.clone(), target.color.clone());
         push("Tabs", self.tabs.to_string(), target.tabs.to_string());
         push(
+            "Lead-in",
+            format!("{:.2} mm", self.lead_in_mm),
+            format!("{:.2} mm", target.lead_in_mm),
+        );
+        push(
+            "Lead-out",
+            format!("{:.2} mm", self.lead_out_mm),
+            format!("{:.2} mm", target.lead_out_mm),
+        );
+        push(
             "Tab width",
             format!("{:.2} mm", self.tab_width_mm),
             format!("{:.2} mm", target.tab_width_mm),
@@ -216,6 +232,8 @@ impl Default for OperationParams {
             kerf_mm: 0.0,
             tabs: 0,
             tab_width_mm: default_tab_width(),
+            lead_in_mm: 0.0,
+            lead_out_mm: 0.0,
         }
     }
 }

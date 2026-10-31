@@ -62,6 +62,8 @@ struct Resolved {
     kerf_mm: f64,
     tabs: u32,
     tab_width_mm: f64,
+    lead_in_mm: f64,
+    lead_out_mm: f64,
     cross_hatch: bool,
     air_assist: bool,
     constant_power: bool,
@@ -90,6 +92,8 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             kerf_mm: operation.params.kerf_mm.max(0.0),
             tabs: operation.params.tabs,
             tab_width_mm: operation.params.tab_width_mm.max(0.0),
+            lead_in_mm: operation.params.lead_in_mm.max(0.0),
+            lead_out_mm: operation.params.lead_out_mm.max(0.0),
             cross_hatch: operation.params.cross_hatch,
             air_assist: operation.params.air_assist,
             constant_power: operation.params.constant_power,
@@ -112,6 +116,8 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 kerf_mm: params.kerf_mm.max(0.0),
                 tabs: params.tabs,
                 tab_width_mm: params.tab_width_mm.max(0.0),
+                lead_in_mm: params.lead_in_mm.max(0.0),
+                lead_out_mm: params.lead_out_mm.max(0.0),
                 cross_hatch: params.cross_hatch,
                 air_assist: params.air_assist,
                 constant_power: params.constant_power,
@@ -430,7 +436,14 @@ fn push_fill_toolpath(
     }
     if resolved.op_type == OperationType::FillWithOutline {
         let points = kerfed(points, resolved.kerf_mm);
-        append_contour(&mut toolpath, &points, resolved.tabs, resolved.tab_width_mm);
+        append_contour(
+            &mut toolpath,
+            &points,
+            resolved.tabs,
+            resolved.tab_width_mm,
+            resolved.lead_in_mm,
+            resolved.lead_out_mm,
+        );
     }
     if !toolpath.is_empty() {
         let mut toolpath = toolpath
@@ -470,13 +483,20 @@ fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval:
             break;
         }
         let points: Vec<Point2> = offset.iter().map(|(x, y)| Point2::new(*x, *y)).collect();
-        append_contour(toolpath, &points, 0, 0.0);
+        append_contour(toolpath, &points, 0, 0.0, 0.0, 0.0);
         loops += 1;
     }
     loops
 }
 
-fn append_contour(toolpath: &mut Toolpath, points: &[Point2], tabs: u32, tab_width: f64) {
+fn append_contour(
+    toolpath: &mut Toolpath,
+    points: &[Point2],
+    tabs: u32,
+    tab_width: f64,
+    lead_in: f64,
+    lead_out: f64,
+) {
     let mut closed = points.to_vec();
     if closed.len() > 2 && closed[0].distance(closed[closed.len() - 1]) > 1e-9 {
         closed.push(closed[0]);
@@ -498,7 +518,17 @@ fn append_contour(toolpath: &mut Toolpath, points: &[Point2], tabs: u32, tab_wid
             gaps.push((center - tab_width / 2.0, center + tab_width / 2.0));
         }
     }
-    toolpath.push(MoveKind::Travel, closed[0].x, closed[0].y);
+    let first = closed[0];
+    let second = closed[1];
+    let direction = normalized(second, first);
+    let entry = Point2::new(
+        first.x + direction.0 * lead_in,
+        first.y + direction.1 * lead_in,
+    );
+    toolpath.push(MoveKind::Travel, entry.x, entry.y);
+    if lead_in > 0.0 {
+        toolpath.push(MoveKind::Cut, first.x, first.y);
+    }
     let mut travelled = 0.0;
     for (index, pair) in closed.windows(2).enumerate() {
         let (from, to) = (pair[0], pair[1]);
@@ -525,6 +555,27 @@ fn append_contour(toolpath: &mut Toolpath, points: &[Point2], tabs: u32, tab_wid
             toolpath.push(MoveKind::Cut, to.x, to.y);
         }
         travelled += length;
+    }
+    if lead_out > 0.0 {
+        let last = closed[closed.len() - 1];
+        let before = closed[closed.len() - 2];
+        let direction = normalized(last, before);
+        let exit = Point2::new(
+            last.x + direction.0 * lead_out,
+            last.y + direction.1 * lead_out,
+        );
+        toolpath.push(MoveKind::Cut, exit.x, exit.y);
+    }
+}
+
+fn normalized(from: Point2, to: Point2) -> (f64, f64) {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let length = dx.hypot(dy);
+    if length <= 1e-9 {
+        (0.0, 0.0)
+    } else {
+        (dx / length, dy / length)
     }
 }
 

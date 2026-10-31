@@ -5048,6 +5048,24 @@ impl BeamWrightApp {
                                     .range(0.0..=20.0),
                                 );
                                 ui.end_row();
+                                ui.label("Lead-in / out (mm)");
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(
+                                            &mut operation.params.lead_in_mm,
+                                        )
+                                        .speed(0.1)
+                                        .range(0.0..=50.0),
+                                    );
+                                    ui.add(
+                                        egui::DragValue::new(
+                                            &mut operation.params.lead_out_mm,
+                                        )
+                                        .speed(0.1)
+                                        .range(0.0..=50.0),
+                                    );
+                                });
+                                ui.end_row();
                                 ui.label("Constant power mode");
                                 ui.checkbox(&mut operation.params.constant_power, "");
                                 ui.end_row();
