@@ -278,6 +278,9 @@ pub struct BeamWrightApp {
     image_original_previews: std::collections::HashMap<String, egui::TextureHandle>,
     image_adjust: Option<String>,
     image_adjust_snapshot: Option<Document>,
+    image_burn_map: bool,
+    image_target_dpi: f64,
+    image_target_width_mm: f64,
     machines: crate::machines::MachineLibrary,
     machines_path: PathBuf,
     machines_open: bool,
@@ -689,6 +692,8 @@ struct ImagePreview {
     path: String,
     settings: crate::objects::ImageSettings,
     crop: Option<crate::objects::ImageCrop>,
+    /// The preview was built with the burn map palette instead of black/white.
+    burn_map: bool,
 }
 
 impl Default for BeamWrightApp {
@@ -788,6 +793,9 @@ impl BeamWrightApp {
             image_original_previews: std::collections::HashMap::new(),
             image_adjust: None,
             image_adjust_snapshot: None,
+            image_burn_map: false,
+            image_target_dpi: 254.0,
+            image_target_width_mm: 0.0,
             machines,
             machines_path,
             machines_open: false,
@@ -5587,14 +5595,22 @@ impl BeamWrightApp {
         let Some(id) = self.editor.selection.ids().first().cloned() else {
             return;
         };
-        let is_image = self.editor.document.objects.iter().any(|object| {
-            object.id == id && matches!(object.shape, crate::document::Shape::Image(_))
-        });
-        if !is_image {
+        let Some(object) = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+        else {
             return;
-        }
+        };
+        let crate::document::Shape::Image(image) = &object.shape else {
+            return;
+        };
         self.image_adjust_snapshot = Some(self.editor.document.clone());
         self.image_adjust = Some(id);
+        self.image_target_dpi = 254.0;
+        self.image_target_width_mm = image.width_mm();
     }
 
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
@@ -5670,6 +5686,9 @@ impl BeamWrightApp {
         let mut image = image.clone();
         let object_name = self.editor.document.objects[index].name.clone();
         let original = image.clone();
+        let mut burn_map = self.image_burn_map;
+        let mut target_dpi = self.image_target_dpi;
+        let mut target_width_mm = self.image_target_width_mm;
         let original_texture = self.original_image_texture(ctx, &image);
         let processed_texture = self
             .image_previews
@@ -5706,7 +5725,10 @@ impl BeamWrightApp {
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        ui.label("Preview");
+                        ui.horizontal(|ui| {
+                            ui.label("Preview");
+                            ui.checkbox(&mut burn_map, "Burn map");
+                        });
                         if let Some(texture) = &processed_texture {
                             ui.add(
                                 egui::Image::new(texture)
@@ -5721,7 +5743,64 @@ impl BeamWrightApp {
                             "{work_width} x {work_height} px at {:.0} dpi",
                             image.effective_dpi()
                         ));
+                        ui.weak(format!(
+                            "{:.1} x {:.1} mm at {:.0} dpi",
+                            image.width_mm(),
+                            image.height_mm(),
+                            image.effective_dpi()
+                        ));
                     });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    egui::Grid::new("image_target_resolution")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Target DPI");
+                            ui.add(
+                                egui::DragValue::new(&mut target_dpi)
+                                    .speed(1.0)
+                                    .range(50.0..=1000.0)
+                                    .fixed_decimals(0),
+                            );
+                            ui.end_row();
+                            ui.label("Target width (mm)");
+                            ui.add(
+                                egui::DragValue::new(&mut target_width_mm)
+                                    .speed(0.5)
+                                    .range(1.0..=10000.0)
+                                    .fixed_decimals(1)
+                                    .suffix(" mm"),
+                            );
+                            ui.end_row();
+                        });
+                    let current_px = image.effective_size_px().0;
+                    match crate::objects::target_resolution(target_width_mm, target_dpi, current_px)
+                    {
+                        Some(target) => {
+                            ui.weak(format!(
+                                "Needs {} px wide; the current {} px reach {:.0} dpi at {:.1} mm",
+                                target.required_width_px,
+                                current_px,
+                                target.effective_dpi,
+                                target_width_mm
+                            ));
+                            if target.low_resolution {
+                                let warning = ui.visuals().warn_fg_color;
+                                ui.colored_label(
+                                    warning,
+                                    format!(
+                                        "Below {:.0} dpi: detail may be lost.",
+                                        crate::objects::LOW_DPI_THRESHOLD
+                                    ),
+                                );
+                            }
+                        }
+                        None => {
+                            ui.weak("Enter a positive width and DPI");
+                        }
+                    }
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -5905,6 +5984,10 @@ impl BeamWrightApp {
                 });
             });
 
+        self.image_burn_map = burn_map;
+        self.image_target_dpi = target_dpi;
+        self.image_target_width_mm = target_width_mm;
+
         if export_prepared {
             match crate::raster::process_object(std::path::Path::new(&image.path), &image) {
                 Ok(bitmap) => {
@@ -6017,6 +6100,7 @@ impl BeamWrightApp {
                     && preview.path == image.path
                     && preview.settings == image.settings
                     && preview.crop == image.crop
+                    && preview.burn_map == self.image_burn_map
             })
         });
         for (id, image) in needed {
@@ -6031,9 +6115,13 @@ impl BeamWrightApp {
             let path = image.path.clone();
             let settings = image.settings;
             let crop = image.crop;
-            let color = preview_color_image(&bitmap);
+            let burn_map = self.image_burn_map;
+            let color = preview_color_image(&bitmap, burn_map);
             let texture = ctx.load_texture(
-                format!("image-preview-{id}"),
+                format!(
+                    "image-preview-{id}{}",
+                    if burn_map { "-burn-map" } else { "" }
+                ),
                 color,
                 egui::TextureOptions::NEAREST,
             );
@@ -6044,6 +6132,7 @@ impl BeamWrightApp {
                     path,
                     settings,
                     crop,
+                    burn_map,
                 },
             );
         }
@@ -8693,8 +8782,18 @@ fn sanitize_name(name: &str) -> String {
     }
 }
 
-/// Downscale a burn bitmap to a preview texture (white paper, black burn).
-fn preview_color_image(bitmap: &crate::raster::RasterBitmap) -> egui::ColorImage {
+/// Burned pixels in the burn map: the canvas selection orange, so the map reads
+/// as a preview of the work rather than as a grey picture.
+const BURN_MAP_BURN: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x7A, 0x1A);
+/// Paper in the burn map: near black, so the orange stays the only bright tone.
+const BURN_MAP_PAPER: egui::Color32 = egui::Color32::from_rgb(16, 17, 19);
+
+/// Downscale a burn bitmap to a preview texture.
+///
+/// Without the burn map the result is white paper with black burns, as the work
+/// would be engraved. With the burn map, burns use [`BURN_MAP_BURN`] over a very
+/// dark paper, which makes light engraving visible on a dark interface.
+fn preview_color_image(bitmap: &crate::raster::RasterBitmap, burn_map: bool) -> egui::ColorImage {
     const MAX_SIDE: usize = 320;
     let step = ((bitmap.width.max(bitmap.height) as f32) / MAX_SIDE as f32)
         .ceil()
@@ -8708,8 +8807,13 @@ fn preview_color_image(bitmap: &crate::raster::RasterBitmap) -> egui::ColorImage
                 (x * step).min(bitmap.width - 1),
                 (y * step).min(bitmap.height - 1),
             );
-            let value = if burned { 0 } else { 255 };
-            pixels.extend_from_slice(&[value, value, value, 255]);
+            let color = match (burn_map, burned) {
+                (true, true) => BURN_MAP_BURN,
+                (true, false) => BURN_MAP_PAPER,
+                (false, true) => egui::Color32::BLACK,
+                (false, false) => egui::Color32::WHITE,
+            };
+            pixels.extend_from_slice(&color.to_array());
         }
     }
     egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels)
@@ -8727,10 +8831,25 @@ mod tests {
             height: 1,
             burn: vec![true, false],
         };
-        let image = preview_color_image(&bitmap);
+        let image = preview_color_image(&bitmap, false);
         assert_eq!(image.size, [2, 1]);
         assert_eq!(image.pixels[0], egui::Color32::BLACK);
         assert_eq!(image.pixels[1], egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn burn_map_colours_burned_and_unburned_pixels() {
+        let bitmap = crate::raster::RasterBitmap {
+            width: 2,
+            height: 1,
+            burn: vec![true, false],
+        };
+        let image = preview_color_image(&bitmap, true);
+        assert_eq!(image.size, [2, 1]);
+        assert_eq!(image.pixels[0], egui::Color32::from_rgb(0xFF, 0x7A, 0x1A));
+        assert_eq!(image.pixels[1], egui::Color32::from_rgb(16, 17, 19));
+        assert_ne!(image.pixels[0], egui::Color32::BLACK);
+        assert_ne!(image.pixels[1], egui::Color32::WHITE);
     }
 
     #[test]
@@ -8740,7 +8859,7 @@ mod tests {
             height: 500,
             burn: vec![false; 500_000],
         };
-        let image = preview_color_image(&bitmap);
+        let image = preview_color_image(&bitmap, false);
         assert!(image.size[0] <= 320);
         assert!(image.size[1] <= 320);
         assert_eq!(image.size[0], 250);
@@ -8753,9 +8872,14 @@ mod tests {
             height: 1,
             burn: vec![true],
         };
-        let image = preview_color_image(&bitmap);
+        let image = preview_color_image(&bitmap, false);
         assert_eq!(image.size, [1, 1]);
         assert_eq!(image.pixels[0], egui::Color32::BLACK);
+        let burn_image = preview_color_image(&bitmap, true);
+        assert_eq!(
+            burn_image.pixels[0],
+            egui::Color32::from_rgb(0xFF, 0x7A, 0x1A)
+        );
     }
 
     #[test]

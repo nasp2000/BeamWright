@@ -204,6 +204,50 @@ pub struct ImageObject {
     pub crop: Option<ImageCrop>,
 }
 
+/// Resolution below which the interface warns that detail may be lost.
+pub const LOW_DPI_THRESHOLD: f64 = 100.0;
+
+/// Result of the target-resolution calculator in the image dialog.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetResolution {
+    /// Source pixels needed to reach the target DPI at the target width.
+    pub required_width_px: u64,
+    /// Resolution reached by the current pixel width at the target width.
+    pub effective_dpi: f64,
+    /// `true` when the target or the effective resolution is below
+    /// [`LOW_DPI_THRESHOLD`].
+    pub low_resolution: bool,
+}
+
+/// Target pixels and effective resolution for a physical width and DPI.
+///
+/// The DPI is a working reference, not a guarantee about the result: it only
+/// describes how many source pixels fit into a millimetre at the requested
+/// size. Returns `None` for a non-finite or non-positive width or DPI.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn target_resolution(
+    target_width_mm: f64,
+    target_dpi: f64,
+    current_width_px: u32,
+) -> Option<TargetResolution> {
+    if !target_width_mm.is_finite() || target_width_mm <= 0.0 {
+        return None;
+    }
+    if !target_dpi.is_finite() || target_dpi <= 0.0 {
+        return None;
+    }
+    // The small tolerance keeps exact whole-pixel targets (for example 254 dpi
+    // over 25.4 mm) from rounding up by one pixel.
+    let required = (target_width_mm / 25.4 * target_dpi - 1e-9).ceil();
+    let required_width_px = required.max(0.0) as u64;
+    let effective_dpi = f64::from(current_width_px) * 25.4 / target_width_mm;
+    Some(TargetResolution {
+        required_width_px,
+        effective_dpi,
+        low_resolution: effective_dpi < LOW_DPI_THRESHOLD || target_dpi < LOW_DPI_THRESHOLD,
+    })
+}
+
 impl ImageObject {
     pub fn new(path: impl Into<String>, width_px: u32, height_px: u32, dpi: f64) -> Self {
         Self {
@@ -416,5 +460,42 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), labels.len());
+    }
+
+    #[test]
+    fn target_resolution_rounds_the_required_pixels_up() {
+        let exact = target_resolution(25.4, 254.0, 100).unwrap();
+        assert_eq!(exact.required_width_px, 254);
+        let rounded = target_resolution(10.0, 300.0, 100).unwrap();
+        assert_eq!(rounded.required_width_px, 119);
+        let tiny = target_resolution(1.0, 50.0, 100).unwrap();
+        assert_eq!(tiny.required_width_px, 2);
+    }
+
+    #[test]
+    fn target_resolution_reports_the_effective_dpi_and_warns_below_the_threshold() {
+        let exact = target_resolution(25.4, 254.0, 100).unwrap();
+        assert!((exact.effective_dpi - 100.0).abs() < 1e-9);
+        assert!(!exact.low_resolution);
+
+        let below = target_resolution(25.4, 254.0, 99).unwrap();
+        assert!((below.effective_dpi - 99.0).abs() < 1e-9);
+        assert!(below.low_resolution);
+
+        let weak_target = target_resolution(25.4, 99.9, 300).unwrap();
+        assert!(weak_target.low_resolution);
+
+        let zero_pixels = target_resolution(50.0, 254.0, 0).unwrap();
+        assert!(zero_pixels.effective_dpi.abs() < f64::EPSILON);
+        assert!(zero_pixels.low_resolution);
+    }
+
+    #[test]
+    fn target_resolution_rejects_invalid_sizes() {
+        assert!(target_resolution(0.0, 254.0, 100).is_none());
+        assert!(target_resolution(-10.0, 254.0, 100).is_none());
+        assert!(target_resolution(f64::NAN, 254.0, 100).is_none());
+        assert!(target_resolution(25.4, 0.0, 100).is_none());
+        assert!(target_resolution(25.4, f64::INFINITY, 100).is_none());
     }
 }
