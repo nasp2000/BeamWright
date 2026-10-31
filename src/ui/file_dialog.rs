@@ -76,7 +76,9 @@ impl FileMode {
             FileMode::ExportSvg => "Saves .svg files",
             FileMode::ExportDxf => "Saves .dxf files",
             FileMode::ExportPng => "Saves .png files",
-            FileMode::ExportGcode => "Saves .nc and .gcode files",
+            FileMode::ExportGcode => {
+                "Saves .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
+            }
             FileMode::RelinkImage => "Shows .png, .jpg, .jpeg, .bmp, .tif and .tiff files",
         }
     }
@@ -98,7 +100,10 @@ impl FileMode {
             FileMode::ExportSvg => extension == "svg",
             FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportPng => extension == "png",
-            FileMode::ExportGcode => extension == "nc" || extension == "gcode",
+            FileMode::ExportGcode => matches!(
+                extension.as_str(),
+                "nc" | "gcode" | "gco" | "gc" | "ngc" | "tap" | "cnc" | "mpf" | "txt"
+            ),
             FileMode::RelinkImage => {
                 matches!(
                     extension.as_str(),

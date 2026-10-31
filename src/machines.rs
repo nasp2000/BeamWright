@@ -22,17 +22,17 @@ pub enum Firmware {
     Grbl,
     /// GRBL-LPC.
     GrblLpc,
-    /// FluidNC, the GRBL successor.
+    /// `FluidNC`, the `GRBL` successor.
     FluidNc,
     /// Marlin.
     Marlin,
-    /// SmoothieWare.
+    /// `SmoothieWare`.
     Smoothie,
     /// Klipper.
     Klipper,
-    /// LinuxCNC.
+    /// `LinuxCNC`.
     LinuxCnc,
-    /// RepRapFirmware.
+    /// `RepRapFirmware`.
     RepRapFirmware,
     /// Any other controller that reads plain G-code.
     Generic,
@@ -284,7 +284,7 @@ pub fn default_path() -> PathBuf {
 #[cfg(test)]
 #[allow(clippy::assert_is_empty)]
 mod tests {
-    use super::{FORMAT_VERSION, MachineLibrary, MachineProfile};
+    use super::{FORMAT_VERSION, Firmware, MachineLibrary, MachineProfile};
 
     #[test]
     fn a_profile_needs_a_name_and_a_work_area() {
