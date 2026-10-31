@@ -55,6 +55,7 @@ enum ContextAction {
     EditNodes,
     TextToOutlines,
     AdjustImage,
+    VectorizeImage,
     ExportSvg,
     ExportDxf,
     ExportGcode,
@@ -86,6 +87,7 @@ impl ContextAction {
             ContextAction::EditNodes => "Edit nodes",
             ContextAction::TextToOutlines => "Text to outlines",
             ContextAction::AdjustImage => "Adjust image...",
+            ContextAction::VectorizeImage => "Vectorize image...",
             ContextAction::ExportSvg => "Export selection as SVG...",
             ContextAction::ExportDxf => "Export selection as DXF...",
             ContextAction::ExportGcode => "Export selection as G-code...",
@@ -117,6 +119,7 @@ impl ContextAction {
             ContextAction::EditNodes => Icon::Nodes,
             ContextAction::TextToOutlines => Icon::TextOutline,
             ContextAction::AdjustImage => Icon::Image,
+            ContextAction::VectorizeImage => Icon::Bezier,
             ContextAction::ExportSvg | ContextAction::ExportDxf | ContextAction::ExportGcode => {
                 Icon::Export
             }
@@ -161,6 +164,7 @@ fn object_context_actions(
     }
     if image_selected {
         actions.push(ContextAction::AdjustImage);
+        actions.push(ContextAction::VectorizeImage);
     }
     actions.extend([
         ContextAction::ExportSvg,
@@ -289,6 +293,8 @@ pub struct BeamWrightApp {
     smart_guides: Vec<(bool, f64)>,
     cuts_drag: Option<usize>,
     cuts_drag_target: Option<usize>,
+    material_test_open: bool,
+    material_test_options: crate::material_test::Options,
     bridge: Option<crate::bridge::LiveBridge>,
     live_server: crate::mcp::McpServer,
     preferences: crate::config::preferences::AppPreferences,
@@ -786,6 +792,8 @@ impl BeamWrightApp {
             smart_guides: Vec::new(),
             cuts_drag: None,
             cuts_drag_target: None,
+            material_test_open: false,
+            material_test_options: crate::material_test::Options::default(),
             bridge: crate::bridge::LiveBridge::start(
                 bridge_bind,
                 crate::bridge::configured_port(),
@@ -2079,6 +2087,10 @@ impl BeamWrightApp {
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Operations, "Operations"), |ui| {
+                    if icons::button(ui, Icon::GridArray, "Material test...").clicked() {
+                        self.material_test_open = true;
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Layers, "Cuts / Layers...").clicked() {
                         self.open_cuts();
                         ui.close();
@@ -4433,7 +4445,7 @@ impl BeamWrightApp {
                 ContextAction::Group => count >= 2,
                 ContextAction::EditNodes => count == 1,
                 ContextAction::TextToOutlines => text_selected,
-                ContextAction::AdjustImage => image_selected,
+                ContextAction::AdjustImage | ContextAction::VectorizeImage => image_selected,
                 _ => true,
             };
             if icons::button_enabled(ui, enabled, action.icon(), action.label()).clicked() {
@@ -4546,6 +4558,7 @@ impl BeamWrightApp {
             }
             ContextAction::TextToOutlines => self.apply_text_outlines(),
             ContextAction::AdjustImage => self.open_image_adjust(),
+            ContextAction::VectorizeImage => self.vectorize_selected_image(),
             ContextAction::ExportSvg => {
                 self.export_subset = true;
                 self.open_dialog(FileMode::ExportSvg);
@@ -4627,6 +4640,134 @@ impl BeamWrightApp {
                 );
             });
         self.help_shortcuts_open = open;
+    }
+
+    fn material_test_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.material_test_open;
+        let mut generate = false;
+        egui::Window::new("Material test")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "One outline cell per combination. Each cell gets its own speed and power.",
+                );
+                ui.separator();
+                egui::Grid::new("material_test_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Columns / rows");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.columns)
+                                    .range(1..=20),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.rows)
+                                    .range(1..=20),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Speed range (mm/min)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.speed_min)
+                                    .speed(10.0)
+                                    .range(1.0..=100_000.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.speed_max)
+                                    .speed(10.0)
+                                    .range(1.0..=100_000.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Power range (%)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.power_min)
+                                    .range(0.0..=100.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.power_max)
+                                    .range(0.0..=100.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Cell width / height (mm)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.cell_width_mm)
+                                    .speed(0.5)
+                                    .range(1.0..=500.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(
+                                    &mut self.material_test_options.cell_height_mm,
+                                )
+                                .speed(0.5)
+                                .range(1.0..=500.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Gap / margin (mm)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.gap_mm)
+                                    .speed(0.5)
+                                    .range(0.0..=100.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.material_test_options.margin_mm)
+                                    .speed(0.5)
+                                    .range(0.0..=100.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Passes");
+                        ui.add(
+                            egui::DragValue::new(&mut self.material_test_options.passes)
+                                .range(1..=100),
+                        );
+                        ui.end_row();
+                    });
+                ui.weak(format!(
+                    "Grid: {:.1} x {:.1} mm, {} cells",
+                    self.material_test_options.width_mm(),
+                    self.material_test_options.height_mm(),
+                    self.material_test_options.columns * self.material_test_options.rows
+                ));
+                if let Err(error) = self.material_test_options.validate() {
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Generate").clicked() {
+                        generate = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        open = false;
+                    }
+                });
+            });
+        if generate {
+            self.editor.record_action("Material test");
+            match crate::material_test::generate(
+                &mut self.editor.document,
+                &self.material_test_options,
+            ) {
+                Ok(cells) => {
+                    self.status = format!("Material test: {cells} cell(s) created");
+                    self.material_test_open = false;
+                }
+                Err(error) => self.status = format!("Material test failed: {error}"),
+            }
+        } else {
+            self.material_test_open = open;
+        }
     }
 
     fn open_cuts(&mut self) {
@@ -5216,6 +5357,68 @@ impl BeamWrightApp {
             "Work area set to {:.0} x {:.0} mm",
             self.machine_editor.work_width_mm, self.machine_editor.work_height_mm
         );
+    }
+
+    fn vectorize_selected_image(&mut self) {
+        let Some(id) = self.editor.selection.ids().first().cloned() else {
+            return;
+        };
+        let Some(object) = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let crate::document::Shape::Image(image) = &object.shape else {
+            return;
+        };
+        let Some((min, max)) = object.bounds() else {
+            return;
+        };
+        let bitmap = match crate::raster::process_object(std::path::Path::new(&image.path), image) {
+            Ok(bitmap) => bitmap,
+            Err(error) => {
+                self.status = format!("Cannot read the image: {error}");
+                return;
+            }
+        };
+        let contours = crate::vectorize::trace(&bitmap, max.x - min.x, max.y - min.y, 0.2);
+        if contours.is_empty() {
+            self.status = "The image has no burnable areas to vectorize".to_string();
+            return;
+        }
+        self.editor.record_action("Vectorize image");
+        let mut created = Vec::new();
+        for contour in &contours {
+            let mut object = crate::document::Object::new(
+                object.layer_id.clone(),
+                crate::document::Shape::Path(crate::vectorize::to_path(contour)),
+            );
+            object.name = "Vectorized contour".to_string();
+            object.transform = crate::geometry::Transform2::translate(min.x, min.y);
+            object.operation_id.clone_from(
+                &self
+                    .editor
+                    .document
+                    .objects
+                    .iter()
+                    .find(|candidate| candidate.id == id)
+                    .and_then(|candidate| candidate.operation_id.clone()),
+            );
+            object.style.stroke = Some("#000000".to_string());
+            object.style.fill = None;
+            let new_id = self.editor.document.add_object(object).id.clone();
+            created.push(new_id);
+        }
+        self.editor.selection.clear();
+        for new_id in &created {
+            self.editor.selection.add(new_id.clone());
+        }
+        self.status = format!("Vectorized into {} contour(s)", created.len());
     }
 
     fn open_image_adjust(&mut self) {
@@ -7787,6 +7990,9 @@ impl BeamWrightApp {
         }
         if self.cuts_open {
             self.cuts_window(ctx);
+        }
+        if self.material_test_open {
+            self.material_test_window(ctx);
         }
         if self.help_shortcuts_open {
             self.shortcuts_window(ctx);
