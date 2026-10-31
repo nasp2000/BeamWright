@@ -307,7 +307,10 @@ fn box_blur(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f
 }
 
 fn adjust(value: f32, settings: &ImageSettings) -> f32 {
-    let mut value = value + f32::from(settings.brightness) * 2.55;
+    let black = f32::from(settings.black_clip);
+    let white = f32::from(settings.white_clip);
+    let mut value = ((value - black) / (white - black) * 255.0).clamp(0.0, 255.0);
+    value += f32::from(settings.brightness) * 2.55;
     value = (value - 128.0) * settings.contrast + 128.0;
     value = 255.0 * (value.clamp(0.0, 255.0) / 255.0).powf(1.0 / settings.gamma);
     if settings.invert {

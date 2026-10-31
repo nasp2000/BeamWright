@@ -5735,6 +5735,18 @@ impl BeamWrightApp {
                                     .suffix(" px"),
                             );
                             ui.end_row();
+                            ui.label("Black / white clip");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut image.settings.black_clip)
+                                        .range(0..=254),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut image.settings.white_clip)
+                                        .range(1..=255),
+                                );
+                            });
+                            ui.end_row();
                             ui.label("Enhance amount");
                             ui.add(
                                 egui::DragValue::new(&mut image.settings.enhance_amount)

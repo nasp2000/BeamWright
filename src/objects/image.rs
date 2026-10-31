@@ -102,6 +102,16 @@ pub struct ImageSettings {
     /// Unsharp-mask amount; 0 disables enhancement.
     #[serde(default)]
     pub enhance_amount: f32,
+    /// Input values at or below this are treated as black.
+    #[serde(default)]
+    pub black_clip: u8,
+    /// Input values at or above this are treated as white.
+    #[serde(default = "default_white_clip")]
+    pub white_clip: u8,
+}
+
+fn default_white_clip() -> u8 {
+    255
 }
 
 fn default_halftone_angle() -> f64 {
@@ -126,6 +136,8 @@ impl Default for ImageSettings {
             halftone_angle_degrees: default_halftone_angle(),
             enhance_radius_px: 0,
             enhance_amount: 0.0,
+            black_clip: 0,
+            white_clip: 255,
         }
     }
 }
@@ -151,6 +163,9 @@ impl ImageSettings {
             || !(-360.0..=360.0).contains(&self.halftone_angle_degrees)
         {
             return Err("halftone angle must be between -360 and 360 degrees".to_string());
+        }
+        if self.black_clip >= self.white_clip {
+            return Err("black clipping must be below white clipping".to_string());
         }
         if self.enhance_radius_px > 32 {
             return Err("enhancement radius must be at most 32 pixels".to_string());
