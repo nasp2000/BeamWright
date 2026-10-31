@@ -305,6 +305,57 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "nest" => {
+                let spacing = number(arguments, "spacing").unwrap_or(1.0);
+                let margin = number(arguments, "margin").unwrap_or(0.0);
+                let rotation = arguments
+                    .get("rotation")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let apply = arguments
+                    .get("apply")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if let Some(ids) = arguments.get("ids").and_then(Value::as_array) {
+                    self.select_ids(ids)?;
+                } else {
+                    self.editor.selection.clear();
+                    for object in &self.editor.document.objects {
+                        if object.bounds().is_some() {
+                            self.editor.selection.add(object.id.clone());
+                        }
+                    }
+                }
+                let proposal = self
+                    .editor
+                    .nest_selection(spacing, margin, rotation)
+                    .map_err(BeamError::InvalidInput)?;
+                let placements: Vec<Value> = proposal
+                    .placements
+                    .iter()
+                    .map(|placement| {
+                        json!({
+                            "id": placement.object_id,
+                            "min": [placement.min.x, placement.min.y],
+                            "width": placement.width,
+                            "height": placement.height,
+                            "rotated": placement.rotated
+                        })
+                    })
+                    .collect();
+                let moved = if apply {
+                    self.editor.apply_nest(&proposal)
+                } else {
+                    0
+                };
+                Ok(json!({
+                    "placements": placements,
+                    "unplaced": proposal.unplaced,
+                    "utilization": proposal.utilization(),
+                    "moved": moved,
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "begin_node_edit" => {
                 let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
                 self.editor
@@ -707,6 +758,17 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "nest",
+            "Nest the selected parts (all objects when ids are omitted) into the work area.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "spacing": {"type": "number"},
+                "margin": {"type": "number"},
+                "rotation": {"type": "boolean"},
+                "apply": {"type": "boolean"}
+            }}),
+        ),
+        tool_with(
             "begin_node_edit",
             "Start editing the nodes of one path (converts primitives to paths).",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
@@ -986,6 +1048,30 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn nest_tool_proposes_and_applies() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 10.0, "y": 10.0, "width": 20.0, "height": 15.0}),
+        );
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"x": 50.0, "y": 50.0, "width": 10.0, "height": 20.0}),
+        );
+        let preview = call(&mut server, "nest", json!({"spacing": 1.0}));
+        assert_eq!(preview["result"]["placements"].as_array().unwrap().len(), 2);
+        assert_eq!(preview["result"]["moved"], 0);
+        let applied = call(&mut server, "nest", json!({"spacing": 1.0, "apply": true}));
+        assert_eq!(applied["result"]["moved"], 2);
+        for object in &server.editor.document.objects {
+            let (min, _) = object.bounds().unwrap();
+            assert!(min.x >= 0.0 && min.y >= 0.0);
+        }
     }
 
     #[test]

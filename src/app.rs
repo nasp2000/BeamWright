@@ -103,6 +103,12 @@ pub struct BeamWrightApp {
     offset_distance: f64,
     simplify_open: bool,
     simplify_tolerance: f64,
+    nest_open: bool,
+    nest_spacing: f64,
+    nest_margin: f64,
+    nest_rotation: bool,
+    nest_proposal: Option<crate::editor::NestProposal>,
+    nest_message: String,
     grid_array: (usize, usize, f64, f64),
     search_query: String,
     preview_open: bool,
@@ -311,6 +317,12 @@ impl BeamWrightApp {
             offset_distance: 1.0,
             simplify_open: false,
             simplify_tolerance: 0.2,
+            nest_open: false,
+            nest_spacing: 1.0,
+            nest_margin: 0.0,
+            nest_rotation: true,
+            nest_proposal: None,
+            nest_message: String::new(),
             grid_array: (3, 2, 20.0, 20.0),
             search_query: String::new(),
             preview_open: false,
@@ -905,6 +917,17 @@ impl BeamWrightApp {
                                 }
                             }
                         }
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !self.editor.selection.is_empty(),
+                            egui::Button::new("Nest selection..."),
+                        )
+                        .clicked()
+                    {
+                        self.open_nest();
                         ui.close();
                     }
                     ui.separator();
@@ -2084,10 +2107,18 @@ impl BeamWrightApp {
                 } else {
                     None
                 };
+                let nest_overlay = if self.nest_open {
+                    self.nest_proposal
+                        .as_ref()
+                        .map(|proposal| proposal.placements.as_slice())
+                } else {
+                    None
+                };
                 let overlays = crate::editor::renderer::CanvasOverlays {
                     toolpaths: toolpaths.as_deref(),
                     images: Some(&textures),
                     playback: playback_overlay,
+                    nest: nest_overlay,
                 };
                 paint_canvas(&painter, rect, &self.editor, theme, preview, &overlays);
 
@@ -2643,6 +2674,147 @@ impl BeamWrightApp {
             }
             Err(error) => self.status = format!("{} failed: {error}", op.label()),
         }
+    }
+
+    fn open_nest(&mut self) {
+        self.nest_open = true;
+        self.refresh_nest();
+    }
+
+    fn refresh_nest(&mut self) {
+        match self
+            .editor
+            .nest_selection(self.nest_spacing, self.nest_margin, self.nest_rotation)
+        {
+            Ok(proposal) => {
+                self.nest_message.clear();
+                self.nest_proposal = Some(proposal);
+            }
+            Err(error) => {
+                self.nest_message = error;
+                self.nest_proposal = None;
+            }
+        }
+    }
+
+    fn nest_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.nest_open;
+        let mut preview = false;
+        let mut apply = false;
+        egui::Window::new("Nest selection")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Work area: {:.0} x {:.0} mm",
+                    self.editor.document.width_mm, self.editor.document.height_mm
+                ));
+                ui.horizontal(|ui| {
+                    ui.label("Spacing");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut self.nest_spacing)
+                                .speed(0.5)
+                                .range(0.0..=100.0)
+                                .suffix(" mm"),
+                        )
+                        .changed()
+                    {
+                        preview = true;
+                    }
+                    ui.label("Margin");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut self.nest_margin)
+                                .speed(0.5)
+                                .range(0.0..=100.0)
+                                .suffix(" mm"),
+                        )
+                        .changed()
+                    {
+                        preview = true;
+                    }
+                    if ui
+                        .checkbox(&mut self.nest_rotation, "Allow 90 deg rotation")
+                        .changed()
+                    {
+                        preview = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Preview").clicked() {
+                        preview = true;
+                    }
+                    let can_apply = self
+                        .nest_proposal
+                        .as_ref()
+                        .is_some_and(|proposal| !proposal.placements.is_empty());
+                    if ui
+                        .add_enabled(can_apply, egui::Button::new("Apply"))
+                        .clicked()
+                    {
+                        apply = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.nest_open = false;
+                    }
+                });
+                if !self.nest_message.is_empty() {
+                    ui.colored_label(Color32::from_rgb(190, 60, 50), &self.nest_message);
+                }
+                if let Some(proposal) = &self.nest_proposal {
+                    ui.separator();
+                    ui.label(format!(
+                        "Placed {} of {} parts, {:.0} % of the available area",
+                        proposal.placements.len(),
+                        proposal.placements.len() + proposal.unplaced.len(),
+                        proposal.utilization() * 100.0
+                    ));
+                    for placement in &proposal.placements {
+                        let name = self
+                            .editor
+                            .document
+                            .object(&placement.object_id)
+                            .map_or("part", |object| object.name.as_str());
+                        ui.weak(format!(
+                            "{} -> ({:.1}, {:.1}) mm{}{}",
+                            name,
+                            placement.min.x,
+                            placement.min.y,
+                            if placement.rotated { ", rotated" } else { "" },
+                            " - preview on the canvas"
+                        ));
+                    }
+                    if !proposal.unplaced.is_empty() {
+                        ui.colored_label(
+                            Color32::from_rgb(180, 120, 0),
+                            format!("{} part(s) do not fit", proposal.unplaced.len()),
+                        );
+                        for id in &proposal.unplaced {
+                            if let Some(object) = self.editor.document.object(id) {
+                                ui.colored_label(Color32::from_rgb(180, 120, 0), &object.name);
+                            }
+                        }
+                    }
+                }
+            });
+        if preview {
+            self.refresh_nest();
+        }
+        if apply {
+            if let Some(proposal) = self.nest_proposal.clone() {
+                let moved = self.editor.apply_nest(&proposal);
+                self.status = format!("Nested {moved} part(s)");
+                self.nest_open = false;
+                self.nest_proposal = None;
+            }
+        }
+        if !self.nest_open {
+            self.nest_proposal = None;
+        }
+        self.nest_open = self.nest_open && open;
     }
 
     fn simplify_window(&mut self, ctx: &egui::Context) {
@@ -3554,6 +3726,9 @@ impl BeamWrightApp {
         }
         if self.simplify_open {
             self.simplify_window(ctx);
+        }
+        if self.nest_open {
+            self.nest_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);

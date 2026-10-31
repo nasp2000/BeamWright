@@ -91,6 +91,8 @@ pub struct CanvasOverlays<'a> {
     pub toolpaths: Option<&'a [crate::gcode::Toolpath]>,
     pub images: Option<&'a ImageTextures>,
     pub playback: Option<(&'a crate::gcode::Playback, f64)>,
+    /// Proposed nesting positions, before they are applied.
+    pub nest: Option<&'a [crate::editor::NestPlacement]>,
 }
 
 pub fn paint_canvas(
@@ -119,10 +121,46 @@ pub fn paint_canvas(
         paint_playback(painter, rect, editor, playback, progress);
     }
     paint_nodes(painter, rect, editor);
+    if let Some(placements) = overlays.nest {
+        paint_nest(painter, rect, editor, placements);
+    }
     if let Some(preview) = preview {
         paint_preview(painter, rect, editor, theme, preview);
     }
     paint_selection(painter, rect, editor, theme);
+}
+
+/// Draw the proposed nesting positions.
+fn paint_nest(
+    painter: &Painter,
+    rect: Rect,
+    editor: &EditorState,
+    placements: &[crate::editor::NestPlacement],
+) {
+    let color = Color32::from_rgb(230, 140, 20);
+    for placement in placements {
+        let min = screen_pos(rect, editor, placement.min);
+        let max = screen_pos(
+            rect,
+            editor,
+            Point2::new(
+                placement.min.x + placement.width,
+                placement.min.y + placement.height,
+            ),
+        );
+        let frame = Rect::from_two_pos(min, max);
+        painter.rect_filled(
+            frame,
+            0.0,
+            Color32::from_rgba_unmultiplied(230, 140, 20, 28),
+        );
+        painter.rect_stroke(
+            frame,
+            0.0,
+            Stroke::new(1.5, color),
+            egui::StrokeKind::Inside,
+        );
+    }
 }
 
 /// Draw the editable nodes and handles of the path under editing.
