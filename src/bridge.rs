@@ -68,6 +68,7 @@ fn bind(preferred: u16) -> Option<TcpListener> {
     None
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn accept_loop(listener: TcpListener, sender: Sender<BridgeRequest>) {
     for stream in listener.incoming().flatten() {
         let sender = sender.clone();
@@ -75,6 +76,7 @@ fn accept_loop(listener: TcpListener, sender: Sender<BridgeRequest>) {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn serve_client(stream: TcpStream, sender: Sender<BridgeRequest>) {
     let Ok(reader_stream) = stream.try_clone() else {
         return;
