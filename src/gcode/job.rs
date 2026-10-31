@@ -504,6 +504,7 @@ fn kerfed(points: &[Point2], kerf_mm: f64) -> Vec<Point2> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn append_contour(
     toolpath: &mut Toolpath,
     points: &[Point2],
