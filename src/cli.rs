@@ -45,10 +45,13 @@ pub enum Commands {
     Estimate { path: PathBuf },
     /// List layers in a project
     ListLayers { path: PathBuf },
+    /// Recover a project from its backup
+    Recover { path: PathBuf },
     /// Run the MCP server on stdin/stdout
     Mcp,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         None => Ok(()),
@@ -122,6 +125,16 @@ pub fn run(cli: Cli) -> Result<()> {
             for warning in report.warnings {
                 println!("Warning: {warning}");
             }
+            Ok(())
+        }
+        Some(Commands::Recover { path }) => {
+            let (document, note) = serialization::load_with_recovery(&path)?;
+            serialization::save_to_file(&document, &path)?;
+            println!(
+                "Recovered {} ({})",
+                path.display(),
+                note.unwrap_or_else(|| "project was already valid".to_string())
+            );
             Ok(())
         }
         Some(Commands::Mcp) => {

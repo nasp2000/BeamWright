@@ -273,3 +273,35 @@ fn cli_export_png_rejects_bad_dpi() {
     assert!(!output.exists());
     let _ = fs::remove_file(&project);
 }
+
+#[test]
+fn cli_recover_restores_the_backup() {
+    let path = temp_dir().join("bw_cli_recover.bwp");
+    let backup = beamwright::document::serialization::backup_path(&path);
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(&backup);
+    let document = beamwright::document::Document {
+        name: "Recovered".to_string(),
+        ..beamwright::document::Document::default()
+    };
+    beamwright::document::serialization::save_to_file(&document, &path).unwrap();
+    beamwright::document::serialization::save_to_file(&document, &path).unwrap();
+    fs::write(&path, "{broken").unwrap();
+    let cli = Cli::try_parse_from(["BeamWright", "recover", path.to_str().unwrap()]).unwrap();
+    run(cli).unwrap();
+    let reloaded = beamwright::document::serialization::load_from_file(&path).unwrap();
+    assert_eq!(reloaded.name, "Recovered");
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(&backup);
+}
+
+#[test]
+fn cli_recover_without_backup_fails() {
+    let path = temp_dir().join("bw_cli_recover_bad.bwp");
+    let backup = beamwright::document::serialization::backup_path(&path);
+    let _ = fs::remove_file(&backup);
+    fs::write(&path, "{broken").unwrap();
+    let cli = Cli::try_parse_from(["BeamWright", "recover", path.to_str().unwrap()]).unwrap();
+    assert!(run(cli).is_err());
+    let _ = fs::remove_file(&path);
+}

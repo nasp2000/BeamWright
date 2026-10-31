@@ -29,10 +29,26 @@ pub fn validate(doc: &Document) -> Result<()> {
     doc.validate().map_err(BeamError::InvalidInput)
 }
 
+/// Backup file used by [`save_to_file`], next to the project.
+pub fn backup_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("project.bwp"),
+        std::ffi::OsString::from,
+    );
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
 /// Save a document to `path` atomically (temp file + rename).
+///
+/// The previous file is copied to `<name>.bak` before it is replaced, so an
+/// overwritten project can always be recovered.
 pub fn save_to_file(doc: &Document, path: &Path) -> Result<()> {
     validate(doc)?;
     let json = to_json(doc)?;
+    if path.is_file() {
+        fs::copy(path, backup_path(path))?;
+    }
     let tmp = path.with_extension("bwp.tmp");
     fs::write(&tmp, json)?;
     // Replace atomically on the same filesystem. On Windows `rename` refuses to
@@ -57,6 +73,28 @@ pub fn save_to_file(doc: &Document, path: &Path) -> Result<()> {
 pub fn load_from_file(path: &Path) -> Result<Document> {
     let s = fs::read_to_string(path)?;
     from_json(&s)
+}
+
+/// Load a project, falling back to its backup when the main file is unreadable.
+///
+/// Returns the document and a human-readable note when recovery was used.
+pub fn load_with_recovery(path: &Path) -> Result<(Document, Option<String>)> {
+    match load_from_file(path) {
+        Ok(document) => Ok((document, None)),
+        Err(primary) => {
+            let backup = backup_path(path);
+            match load_from_file(&backup) {
+                Ok(document) => Ok((
+                    document,
+                    Some(format!(
+                        "recovered from {} after: {primary}",
+                        backup.display()
+                    )),
+                )),
+                Err(_) => Err(primary),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +164,55 @@ mod tests {
             back.object(&ids.1).unwrap().group_id.as_deref(),
             Some("group-1")
         );
+    }
+
+    #[test]
+    fn save_keeps_the_previous_version_as_backup() {
+        let path = std::env::temp_dir().join("bw_backup_roundtrip.bwp");
+        let backup = backup_path(&path);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        let mut first = sample();
+        first.name = "First".to_string();
+        save_to_file(&first, &path).unwrap();
+        assert!(!backup.exists());
+        let mut second = sample();
+        second.name = "Second".to_string();
+        save_to_file(&second, &path).unwrap();
+        assert!(backup.exists());
+        assert_eq!(load_from_file(&backup).unwrap().name, "First");
+        assert_eq!(load_from_file(&path).unwrap().name, "Second");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn recovery_uses_the_backup_when_the_project_is_corrupt() {
+        let path = std::env::temp_dir().join("bw_recovery.bwp");
+        let backup = backup_path(&path);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        let document = sample();
+        save_to_file(&document, &path).unwrap();
+        // Creating the backup requires a second save.
+        save_to_file(&document, &path).unwrap();
+        fs::write(&path, "{broken").unwrap();
+        let (recovered, note) = load_with_recovery(&path).unwrap();
+        assert_eq!(recovered.name, document.name);
+        assert!(note.unwrap().contains("recovered"));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn recovery_reports_the_original_error_without_a_backup() {
+        let path = std::env::temp_dir().join("bw_recovery_missing.bwp");
+        let backup = backup_path(&path);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        fs::write(&path, "{broken").unwrap();
+        assert!(load_with_recovery(&path).is_err());
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

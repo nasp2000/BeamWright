@@ -48,10 +48,13 @@ pub fn import_with_report(path: &Path) -> Result<ImportOutcome> {
             document: crate::import::raster::import_raster(path)?,
             warnings: Vec::new(),
         }),
-        "bwp" => Ok(ImportOutcome {
-            document: crate::document::serialization::load_from_file(path)?,
-            warnings: Vec::new(),
-        }),
+        "bwp" => {
+            let (document, note) = crate::document::serialization::load_with_recovery(path)?;
+            Ok(ImportOutcome {
+                document,
+                warnings: note.into_iter().collect(),
+            })
+        }
         other => Err(BeamError::Unsupported(format!(
             "cannot import '{other}' files; supported formats: .svg, .dxf, raster images and .bwp"
         ))),
@@ -99,6 +102,23 @@ mod tests {
         assert_eq!(outcome.document.objects.len(), 1);
         assert_eq!(outcome.warnings.len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn corrupt_project_recovers_from_its_backup() {
+        let path = temp_dir().join("bw_fmt_recovery.bwp");
+        let backup = crate::document::serialization::backup_path(&path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
+        let document = Document::default();
+        crate::document::serialization::save_to_file(&document, &path).unwrap();
+        crate::document::serialization::save_to_file(&document, &path).unwrap();
+        std::fs::write(&path, "{broken").unwrap();
+        let outcome = import_with_report(&path).unwrap();
+        assert_eq!(outcome.warnings.len(), 1);
+        assert!(outcome.warnings[0].contains("recovered"));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
     }
 
     #[test]
