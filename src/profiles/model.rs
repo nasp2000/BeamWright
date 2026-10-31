@@ -4,7 +4,212 @@ use uuid::Uuid;
 use crate::operations::{OperationParams, OperationType};
 
 /// Format version of the profile library file.
-pub const PROFILE_FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 adds optional metadata (category, tags, favourite and timestamps).
+/// Version 1 files load unchanged because every new field has a default.
+pub const PROFILE_FORMAT_VERSION: u32 = 2;
+
+/// Version written by earlier releases and still accepted when loading.
+pub const LEGACY_PROFILE_FORMAT_VERSION: u32 = 1;
+
+/// Initial material categories suggested by the interface.
+pub const DEFAULT_CATEGORIES: [&str; 12] = [
+    "Wood",
+    "Plywood",
+    "MDF",
+    "Acrylic",
+    "Paper",
+    "Cardboard",
+    "Leather",
+    "Fabric",
+    "Rubber",
+    "Glass",
+    "Coated metal",
+    "Other",
+];
+
+/// Fixed timestamp used by the profiles shipped with the application, so the
+/// built-in library is identical on every run.
+const BUILTIN_TIMESTAMP: &str = "2024-01-01T00:00:00Z";
+
+/// Metadata shared by every profile type (PLAN.md §11.3, §11.4, §11.7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileMeta {
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    /// RFC 3339 UTC creation time; empty for files written before metadata.
+    #[serde(default)]
+    pub created_at: String,
+    /// RFC 3339 UTC time of the last edit; empty when never edited.
+    #[serde(default)]
+    pub modified_at: String,
+}
+
+impl Default for ProfileMeta {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProfileMeta {
+    /// New metadata stamped with the current UTC time.
+    pub fn new() -> Self {
+        let now = now_utc();
+        Self {
+            category: String::new(),
+            tags: Vec::new(),
+            favorite: false,
+            created_at: now.clone(),
+            modified_at: now,
+        }
+    }
+
+    /// Metadata with an explicit category, for built-in profiles.
+    pub fn with_category(category: impl Into<String>) -> Self {
+        Self {
+            category: category.into(),
+            ..Self::builtin()
+        }
+    }
+
+    /// Metadata for a profile shipped with the application.
+    pub fn builtin() -> Self {
+        Self {
+            category: String::new(),
+            tags: Vec::new(),
+            favorite: false,
+            created_at: BUILTIN_TIMESTAMP.to_string(),
+            modified_at: BUILTIN_TIMESTAMP.to_string(),
+        }
+    }
+
+    /// Record the current time as the last modification.
+    pub fn touch(&mut self) {
+        self.modified_at = now_utc();
+    }
+
+    /// Tags as one comma-separated line for editing.
+    pub fn tag_text(&self) -> String {
+        self.tags.join(", ")
+    }
+
+    /// Replace the tags from a comma-separated line, trimming, dropping empty
+    /// entries and ignoring case-insensitive duplicates.
+    pub fn set_tag_text(&mut self, text: &str) {
+        let mut tags: Vec<String> = Vec::new();
+        for tag in text.split(',').map(str::trim).filter(|tag| !tag.is_empty()) {
+            if tags
+                .iter()
+                .all(|existing| !existing.eq_ignore_ascii_case(tag))
+            {
+                tags.push(tag.to_string());
+            }
+        }
+        self.tags = tags;
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(tag.trim()))
+    }
+
+    /// Whether the category or any tag contains `query` (already lowercase).
+    pub fn matches(&self, query: &str) -> bool {
+        self.category.to_lowercase().contains(query)
+            || self
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(query))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for tag in &self.tags {
+            if tag.trim().is_empty() {
+                return Err("profile tags must not be empty".to_string());
+            }
+            if tag.trim() != tag {
+                return Err(format!("profile tag '{tag}' has surrounding spaces"));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for tag in &self.tags {
+            if !seen.insert(tag.to_lowercase()) {
+                return Err(format!("duplicate profile tag: {tag}"));
+            }
+        }
+        for timestamp in [&self.created_at, &self.modified_at] {
+            if !timestamp.is_empty() && !is_utc_timestamp(timestamp) {
+                return Err(format!("invalid profile timestamp: {timestamp}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Format a Unix timestamp as `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn format_utc(seconds: u64) -> String {
+    let days = i64::try_from(seconds / 86_400).unwrap_or(i64::MAX);
+    let remainder = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = remainder / 3_600;
+    let minute = (remainder % 3_600) / 60;
+    let second = remainder % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Current time in the same format.
+pub fn now_utc() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    format_utc(seconds)
+}
+
+/// Convert days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = u32::try_from(day_of_year - (153 * month_prime + 2) / 5 + 1).unwrap_or(1);
+    let month = u32::try_from(if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    })
+    .unwrap_or(1);
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Whether `value` looks like `YYYY-MM-DDTHH:MM:SSZ`.
+fn is_utc_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 20 {
+        return false;
+    }
+    let digits = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+    let separators = [
+        (4, b'-'),
+        (7, b'-'),
+        (10, b'T'),
+        (13, b':'),
+        (16, b':'),
+        (19, b'Z'),
+    ];
+    digits.iter().all(|index| bytes[*index].is_ascii_digit())
+        && separators
+            .iter()
+            .all(|(index, expected)| bytes[*index] == *expected)
+}
 
 /// Reference material values. They are starting points, not tested recipes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +222,8 @@ pub struct MaterialProfile {
     pub notes: String,
     #[serde(default)]
     pub builtin: bool,
+    #[serde(flatten)]
+    pub meta: ProfileMeta,
 }
 
 impl MaterialProfile {
@@ -28,10 +235,12 @@ impl MaterialProfile {
             thickness_mm,
             notes: String::new(),
             builtin: false,
+            meta: ProfileMeta::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.meta.validate()?;
         if self.id.trim().is_empty() {
             return Err("material profile id must not be empty".to_string());
         }
@@ -59,6 +268,8 @@ pub struct OperationProfile {
     pub notes: String,
     #[serde(default)]
     pub builtin: bool,
+    #[serde(flatten)]
+    pub meta: ProfileMeta,
 }
 
 impl OperationProfile {
@@ -70,10 +281,12 @@ impl OperationProfile {
             params: OperationParams::default(),
             notes: String::new(),
             builtin: false,
+            meta: ProfileMeta::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.meta.validate()?;
         if self.id.trim().is_empty() {
             return Err("operation profile id must not be empty".to_string());
         }
@@ -106,6 +319,8 @@ pub struct ImageProfile {
     pub notes: String,
     #[serde(default)]
     pub builtin: bool,
+    #[serde(flatten)]
+    pub meta: ProfileMeta,
 }
 
 impl ImageProfile {
@@ -116,10 +331,12 @@ impl ImageProfile {
             settings: crate::objects::ImageSettings::default(),
             notes: String::new(),
             builtin: false,
+            meta: ProfileMeta::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.meta.validate()?;
         if self.id.trim().is_empty() {
             return Err("image profile id must not be empty".to_string());
         }
@@ -143,6 +360,8 @@ pub struct ProjectProfile {
     pub notes: String,
     #[serde(default)]
     pub builtin: bool,
+    #[serde(flatten)]
+    pub meta: ProfileMeta,
 }
 
 impl ProjectProfile {
@@ -156,10 +375,12 @@ impl ProjectProfile {
             snap_mm: 1.0,
             notes: String::new(),
             builtin: false,
+            meta: ProfileMeta::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.meta.validate()?;
         if self.id.trim().is_empty() {
             return Err("project profile id must not be empty".to_string());
         }
@@ -222,6 +443,7 @@ impl ProfileLibrary {
             thickness_mm: 3.0,
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Plywood"),
         });
         library.materials.push(MaterialProfile {
             id: "builtin-acrylic-3".to_string(),
@@ -230,6 +452,7 @@ impl ProfileLibrary {
             thickness_mm: 3.0,
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Acrylic"),
         });
         library.materials.push(MaterialProfile {
             id: "builtin-cardboard-2".to_string(),
@@ -238,6 +461,7 @@ impl ProfileLibrary {
             thickness_mm: 2.0,
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Cardboard"),
         });
         library.operations.push(OperationProfile {
             id: "builtin-cut".to_string(),
@@ -251,6 +475,7 @@ impl ProfileLibrary {
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Cutting"),
         });
         library.operations.push(OperationProfile {
             id: "builtin-engrave".to_string(),
@@ -264,6 +489,7 @@ impl ProfileLibrary {
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Engraving"),
         });
         library.images.push(ImageProfile {
             id: "builtin-photo".to_string(),
@@ -279,6 +505,7 @@ impl ProfileLibrary {
             },
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
+            meta: ProfileMeta::with_category("Photo"),
         });
         library.projects.push(ProjectProfile {
             id: "builtin-a3".to_string(),
@@ -289,12 +516,14 @@ impl ProfileLibrary {
             snap_mm: 1.0,
             notes: String::new(),
             builtin: true,
+            meta: ProfileMeta::with_category("Work area"),
         });
         library
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.format_version != PROFILE_FORMAT_VERSION {
+        if !(LEGACY_PROFILE_FORMAT_VERSION..=PROFILE_FORMAT_VERSION).contains(&self.format_version)
+        {
             return Err(format!(
                 "unsupported profile format version {} (expected {})",
                 self.format_version, PROFILE_FORMAT_VERSION
@@ -342,6 +571,90 @@ impl ProfileLibrary {
 
     pub fn project(&self, id: &str) -> Option<&ProjectProfile> {
         self.projects.iter().find(|profile| profile.id == id)
+    }
+
+    /// Metadata of any profile type, for editing category, tags or favourite.
+    pub fn meta_mut(&mut self, id: &str) -> Option<&mut ProfileMeta> {
+        if let Some(profile) = self.materials.iter_mut().find(|profile| profile.id == id) {
+            return Some(&mut profile.meta);
+        }
+        if let Some(profile) = self.operations.iter_mut().find(|profile| profile.id == id) {
+            return Some(&mut profile.meta);
+        }
+        if let Some(profile) = self.images.iter_mut().find(|profile| profile.id == id) {
+            return Some(&mut profile.meta);
+        }
+        self.projects
+            .iter_mut()
+            .find(|profile| profile.id == id)
+            .map(|profile| &mut profile.meta)
+    }
+
+    /// Whether any profile carries this identifier.
+    pub fn contains(&self, id: &str) -> bool {
+        self.material(id).is_some()
+            || self.operation(id).is_some()
+            || self.image(id).is_some()
+            || self.project(id).is_some()
+    }
+
+    /// Mark a profile as a favourite (or clear the mark).
+    pub fn set_favorite(&mut self, id: &str, favorite: bool) -> Result<(), String> {
+        let meta = self
+            .meta_mut(id)
+            .ok_or_else(|| format!("unknown profile: {id}"))?;
+        if meta.favorite != favorite {
+            meta.favorite = favorite;
+            meta.touch();
+        }
+        Ok(())
+    }
+
+    /// Identifiers of every profile marked as a favourite.
+    pub fn favorites(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        ids.extend(
+            self.materials
+                .iter()
+                .filter(|profile| profile.meta.favorite)
+                .map(|profile| profile.id.clone()),
+        );
+        ids.extend(
+            self.operations
+                .iter()
+                .filter(|profile| profile.meta.favorite)
+                .map(|profile| profile.id.clone()),
+        );
+        ids.extend(
+            self.images
+                .iter()
+                .filter(|profile| profile.meta.favorite)
+                .map(|profile| profile.id.clone()),
+        );
+        ids.extend(
+            self.projects
+                .iter()
+                .filter(|profile| profile.meta.favorite)
+                .map(|profile| profile.id.clone()),
+        );
+        ids
+    }
+
+    /// Distinct categories in use, sorted for display.
+    pub fn categories(&self) -> Vec<String> {
+        let mut categories: Vec<String> = self
+            .materials
+            .iter()
+            .map(|profile| &profile.meta.category)
+            .chain(self.operations.iter().map(|profile| &profile.meta.category))
+            .chain(self.images.iter().map(|profile| &profile.meta.category))
+            .chain(self.projects.iter().map(|profile| &profile.meta.category))
+            .filter(|category| !category.trim().is_empty())
+            .cloned()
+            .collect();
+        categories.sort_by_key(|category| category.to_lowercase());
+        categories.dedup();
+        categories
     }
 
     pub fn add_image(&mut self, mut profile: ImageProfile) -> &ImageProfile {
@@ -475,6 +788,7 @@ impl ProfileLibrary {
                 format!("{} {} {}", profile.name, profile.material, profile.notes)
                     .to_lowercase()
                     .contains(&query)
+                    || profile.meta.matches(&query)
             })
             .map(|profile| profile.name.clone())
             .collect();
@@ -485,6 +799,7 @@ impl ProfileLibrary {
                     format!("{} {}", profile.name, profile.notes)
                         .to_lowercase()
                         .contains(&query)
+                        || profile.meta.matches(&query)
                 })
                 .map(|profile| profile.name.clone()),
         );
@@ -516,6 +831,7 @@ mod tests {
             thickness_mm: 3.0,
             notes: String::new(),
             builtin: false,
+            meta: ProfileMeta::default(),
         });
         assert!(library.validate().is_err());
     }
@@ -600,6 +916,98 @@ mod tests {
         assert!(!library.project(&copy).unwrap().builtin);
         assert!(library.remove_image(&image_id).is_err());
         assert!(library.remove_project(&project_id).is_err());
+    }
+
+    #[test]
+    fn timestamps_format_known_instants() {
+        assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(format_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn new_profiles_are_stamped() {
+        let profile = MaterialProfile::new("Birch", "Birch", 3.0);
+        assert!(is_utc_timestamp(&profile.meta.created_at));
+        assert_eq!(profile.meta.created_at, profile.meta.modified_at);
+        assert!(is_utc_timestamp(&now_utc()));
+    }
+
+    #[test]
+    fn tags_are_parsed_and_deduplicated() {
+        let mut meta = ProfileMeta::default();
+        meta.set_tag_text(" wood, MDF , wood, , 3 mm ");
+        assert_eq!(meta.tags, vec!["wood", "MDF", "3 mm"]);
+        assert!(meta.has_tag("mdf"));
+        assert!(!meta.has_tag("paper"));
+        assert_eq!(meta.tag_text(), "wood, MDF, 3 mm");
+        assert!(meta.validate().is_ok());
+    }
+
+    #[test]
+    fn invalid_metadata_is_rejected() {
+        let spaced = ProfileMeta {
+            tags: vec!["ok".to_string(), " ok ".to_string()],
+            ..ProfileMeta::default()
+        };
+        assert!(spaced.validate().is_err());
+        let duplicated = ProfileMeta {
+            tags: vec!["ok".to_string(), "OK".to_string()],
+            ..ProfileMeta::default()
+        };
+        assert!(duplicated.validate().is_err());
+        let bad_time = ProfileMeta {
+            tags: vec!["ok".to_string()],
+            created_at: "yesterday".to_string(),
+            ..ProfileMeta::default()
+        };
+        assert!(bad_time.validate().is_err());
+    }
+
+    #[test]
+    fn favourites_are_stored_and_listed() {
+        let mut library = ProfileLibrary::with_builtins();
+        let material = library.materials[0].id.clone();
+        let operation = library.operations[0].id.clone();
+        library.set_favorite(&material, true).unwrap();
+        library.set_favorite(&operation, true).unwrap();
+        let favourites = library.favorites();
+        assert_eq!(favourites.len(), 2);
+        assert!(favourites.contains(&material));
+        assert!(favourites.contains(&operation));
+        library.set_favorite(&material, false).unwrap();
+        assert_eq!(library.favorites(), vec![operation]);
+        assert!(library.set_favorite("missing", true).is_err());
+    }
+
+    #[test]
+    fn categories_are_unique_and_sorted() {
+        let library = ProfileLibrary::with_builtins();
+        let categories = library.categories();
+        assert!(categories.contains(&"Plywood".to_string()));
+        assert!(categories.contains(&"Acrylic".to_string()));
+        let mut sorted = categories.clone();
+        sorted.sort_by_key(|category| category.to_lowercase());
+        assert_eq!(categories, sorted);
+        assert_eq!(
+            categories
+                .iter()
+                .filter(|category| *category == "Plywood")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn search_matches_tags_and_category() {
+        let mut library = ProfileLibrary::empty();
+        let mut profile = MaterialProfile::new("Board", "Pine", 4.0);
+        profile.meta.category = "Signage".to_string();
+        profile.meta.tags = vec!["stencil".to_string()];
+        library.add_material(profile);
+        assert_eq!(library.search("signage").len(), 1);
+        assert_eq!(library.search("stencil").len(), 1);
+        assert_eq!(library.search("missing").len(), 0);
     }
 
     #[test]

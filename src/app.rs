@@ -74,6 +74,11 @@ pub struct BeamWrightApp {
     selected_operation: Option<String>,
     profile_message: String,
     profile_io_path: String,
+    profile_favorites_only: bool,
+    profile_category_filter: String,
+    profile_sort_by_date: bool,
+    profile_tag_buffer: String,
+    profile_tag_owner: String,
     selected_image_profile: Option<String>,
     selected_project_profile: Option<String>,
     file_report: Option<FileReport>,
@@ -97,6 +102,129 @@ pub struct BeamWrightApp {
     playback_error: Option<String>,
     gcode_text: String,
     preview_snapshot: Option<Document>,
+}
+
+/// One row in a profile list.
+struct ProfileRow {
+    id: String,
+    name: String,
+    builtin: bool,
+    favorite: bool,
+    category: String,
+    modified_at: String,
+    tags: Vec<String>,
+}
+
+/// Search, filter and sort settings shared by the four profile lists.
+#[derive(Clone)]
+struct ProfileFilter {
+    query: String,
+    favorites_only: bool,
+    category: String,
+    sort_by_date: bool,
+}
+
+fn profile_rows<T>(
+    profiles: &[T],
+    parts: impl Fn(&T) -> (&str, &str, bool, &crate::profiles::ProfileMeta),
+    extra: impl Fn(&T) -> String,
+    filter: &ProfileFilter,
+) -> Vec<ProfileRow> {
+    let mut rows: Vec<ProfileRow> = profiles
+        .iter()
+        .filter_map(|profile| {
+            let (id, name, builtin, meta) = parts(profile);
+            let row = ProfileRow {
+                id: id.to_string(),
+                name: name.to_string(),
+                builtin,
+                favorite: meta.favorite,
+                category: meta.category.clone(),
+                modified_at: meta.modified_at.clone(),
+                tags: meta.tags.clone(),
+            };
+            let text = format!("{} {}", row.name, extra(profile)).to_lowercase();
+            let query_matches = filter.query.is_empty()
+                || text.contains(&filter.query)
+                || row.category.to_lowercase().contains(&filter.query)
+                || row
+                    .tags
+                    .iter()
+                    .any(|tag| tag.to_lowercase().contains(&filter.query));
+            (query_matches
+                && (!filter.favorites_only || row.favorite)
+                && (filter.category.is_empty() || row.category == filter.category))
+                .then_some(row)
+        })
+        .collect();
+    if filter.sort_by_date {
+        rows.sort_by(|left, right| right.modified_at.cmp(&left.modified_at));
+    } else {
+        rows.sort_by_key(|row| row.name.to_lowercase());
+    }
+    rows
+}
+
+/// Edit the category, tags and favourite mark of a profile.
+///
+/// `editable` is false for built-in profiles, whose other fields are read-only;
+/// marking a built-in as a favourite is still allowed.
+fn profile_meta_editor(
+    ui: &mut egui::Ui,
+    id: &str,
+    meta: &mut crate::profiles::ProfileMeta,
+    editable: bool,
+    tag_buffer: &mut String,
+    tag_owner: &mut String,
+) -> bool {
+    if tag_owner != id {
+        *tag_owner = id.to_string();
+        *tag_buffer = meta.tag_text();
+    }
+    let mut changed = ui.checkbox(&mut meta.favorite, "Favourite").changed();
+    ui.add_enabled_ui(editable, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Category");
+            changed |= ui.text_edit_singleline(&mut meta.category).changed();
+            egui::ComboBox::from_id_salt(format!("category_suggest_{id}"))
+                .selected_text("Suggest")
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for category in crate::profiles::DEFAULT_CATEGORIES {
+                        if ui
+                            .selectable_label(meta.category == category, category)
+                            .clicked()
+                        {
+                            meta.category = category.to_string();
+                            changed = true;
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Tags");
+            if ui.text_edit_singleline(tag_buffer).changed() {
+                meta.set_tag_text(tag_buffer);
+                changed = true;
+            }
+            ui.weak("comma separated");
+        });
+    });
+    let created = if meta.created_at.is_empty() {
+        "unknown".to_string()
+    } else {
+        meta.created_at.clone()
+    };
+    let modified = if meta.modified_at.is_empty() {
+        "unknown".to_string()
+    } else {
+        meta.modified_at.clone()
+    };
+    ui.weak(format!("Created {created} - modified {modified}"));
+    if changed && editable {
+        meta.touch();
+    }
+    changed
 }
 
 struct ImagePreview {
@@ -149,6 +277,11 @@ impl BeamWrightApp {
             selected_material: None,
             selected_operation: None,
             profile_message: String::new(),
+            profile_favorites_only: false,
+            profile_category_filter: String::new(),
+            profile_sort_by_date: false,
+            profile_tag_buffer: String::new(),
+            profile_tag_owner: String::new(),
             profile_io_path: crate::profiles::default_path()
                 .to_string_lossy()
                 .to_string(),
@@ -2402,33 +2535,59 @@ impl BeamWrightApp {
                     ui.text_edit_singleline(&mut self.profile_search);
                 });
                 let query = self.profile_search.trim().to_lowercase();
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.profile_favorites_only, "Favourites only");
+                    ui.label("Category");
+                    let selected = if self.profile_category_filter.is_empty() {
+                        "All".to_string()
+                    } else {
+                        self.profile_category_filter.clone()
+                    };
+                    egui::ComboBox::from_id_salt("profile_category_filter")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.profile_category_filter,
+                                String::new(),
+                                "All",
+                            );
+                            for category in self.profiles.categories() {
+                                ui.selectable_value(
+                                    &mut self.profile_category_filter,
+                                    category.clone(),
+                                    category,
+                                );
+                            }
+                        });
+                    ui.checkbox(&mut self.profile_sort_by_date, "Newest first");
+                });
+                let filter = ProfileFilter {
+                    query,
+                    favorites_only: self.profile_favorites_only,
+                    category: self.profile_category_filter.clone(),
+                    sort_by_date: self.profile_sort_by_date,
+                };
                 ui.separator();
                 ui.heading("Materials");
-                let materials: Vec<_> = self
-                    .profiles
-                    .materials
-                    .iter()
-                    .filter(|profile| {
-                        query.is_empty()
-                            || format!("{} {} {}", profile.name, profile.material, profile.notes)
-                                .to_lowercase()
-                                .contains(&query)
-                    })
-                    .map(|profile| {
-                        (
-                            profile.id.clone(),
-                            profile.name.clone(),
-                            profile.builtin,
-                        )
-                    })
-                    .collect();
-                for (id, name, builtin) in &materials {
+                let materials = profile_rows(
+                    &self.profiles.materials,
+                    |profile| (&profile.id, &profile.name, profile.builtin, &profile.meta),
+                    |profile| format!("{} {}", profile.material, profile.notes),
+                    &filter,
+                );
+                for row in &materials {
                     ui.horizontal(|ui| {
-                        let selected = self.selected_material.as_deref() == Some(id.as_str());
-                        if ui.selectable_label(selected, name).clicked() {
-                            self.selected_material = Some(id.clone());
+                        let selected = self.selected_material.as_deref() == Some(row.id.as_str());
+                        if ui.selectable_label(selected, &row.name).clicked() {
+                            self.selected_material = Some(row.id.clone());
                         }
-                        if *builtin {
+                        if row.favorite {
+                            ui.weak("\u{2605}");
+                        }
+                        if !row.category.is_empty() {
+                            ui.weak(row.category.as_str());
+                        }
+                        if row.builtin {
                             ui.weak("built-in");
                         }
                     });
@@ -2505,6 +2664,14 @@ impl BeamWrightApp {
                                 changed |= ui.text_edit_singleline(&mut profile.notes).changed();
                             });
                         });
+                        changed |= profile_meta_editor(
+                            ui,
+                            &id,
+                            &mut profile.meta,
+                            editable,
+                            &mut self.profile_tag_buffer,
+                            &mut self.profile_tag_owner,
+                        );
                         if !editable {
                             ui.weak("Built-in profile: duplicate it to edit.");
                         }
@@ -2512,25 +2679,25 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 ui.heading("Operation profiles");
-                let operations: Vec<_> = self
-                    .profiles
-                    .operations
-                    .iter()
-                    .filter(|profile| {
-                        query.is_empty()
-                            || format!("{} {}", profile.name, profile.notes)
-                                .to_lowercase()
-                                .contains(&query)
-                    })
-                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
-                    .collect();
-                for (id, name, builtin) in &operations {
+                let operations = profile_rows(
+                    &self.profiles.operations,
+                    |profile| (&profile.id, &profile.name, profile.builtin, &profile.meta),
+                    |profile| profile.notes.clone(),
+                    &filter,
+                );
+                for row in &operations {
                     ui.horizontal(|ui| {
-                        let selected = self.selected_operation.as_deref() == Some(id.as_str());
-                        if ui.selectable_label(selected, name).clicked() {
-                            self.selected_operation = Some(id.clone());
+                        let selected = self.selected_operation.as_deref() == Some(row.id.as_str());
+                        if ui.selectable_label(selected, &row.name).clicked() {
+                            self.selected_operation = Some(row.id.clone());
                         }
-                        if *builtin {
+                        if row.favorite {
+                            ui.weak("\u{2605}");
+                        }
+                        if !row.category.is_empty() {
+                            ui.weak(row.category.as_str());
+                        }
+                        if row.builtin {
                             ui.weak("built-in");
                         }
                     });
@@ -2650,6 +2817,14 @@ impl BeamWrightApp {
                                     .changed();
                             });
                         });
+                        changed |= profile_meta_editor(
+                            ui,
+                            &id,
+                            &mut profile.meta,
+                            editable,
+                            &mut self.profile_tag_buffer,
+                            &mut self.profile_tag_owner,
+                        );
                         if !editable {
                             ui.weak("Built-in profile: duplicate it to edit.");
                         }
@@ -2669,25 +2844,26 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 ui.heading("Image profiles");
-                let image_profiles: Vec<_> = self
-                    .profiles
-                    .images
-                    .iter()
-                    .filter(|profile| {
-                        query.is_empty()
-                            || format!("{} {}", profile.name, profile.notes)
-                                .to_lowercase()
-                                .contains(&query)
-                    })
-                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
-                    .collect();
-                for (id, name, builtin) in &image_profiles {
+                let image_profiles = profile_rows(
+                    &self.profiles.images,
+                    |profile| (&profile.id, &profile.name, profile.builtin, &profile.meta),
+                    |profile| profile.notes.clone(),
+                    &filter,
+                );
+                for row in &image_profiles {
                     ui.horizontal(|ui| {
-                        let selected = self.selected_image_profile.as_deref() == Some(id.as_str());
-                        if ui.selectable_label(selected, name).clicked() {
-                            self.selected_image_profile = Some(id.clone());
+                        let selected =
+                            self.selected_image_profile.as_deref() == Some(row.id.as_str());
+                        if ui.selectable_label(selected, &row.name).clicked() {
+                            self.selected_image_profile = Some(row.id.clone());
                         }
-                        if *builtin {
+                        if row.favorite {
+                            ui.weak("\u{2605}");
+                        }
+                        if !row.category.is_empty() {
+                            ui.weak(row.category.as_str());
+                        }
+                        if row.builtin {
                             ui.weak("built-in");
                         }
                     });
@@ -2801,6 +2977,14 @@ impl BeamWrightApp {
                                 )
                                 .changed();
                         });
+                        changed |= profile_meta_editor(
+                            ui,
+                            &id,
+                            &mut profile.meta,
+                            editable,
+                            &mut self.profile_tag_buffer,
+                            &mut self.profile_tag_owner,
+                        );
                         if !editable {
                             ui.weak("Built-in profile: duplicate it to edit.");
                         }
@@ -2820,20 +3004,26 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 ui.heading("Project profiles");
-                let project_profiles: Vec<_> = self
-                    .profiles
-                    .projects
-                    .iter()
-                    .map(|profile| (profile.id.clone(), profile.name.clone(), profile.builtin))
-                    .collect();
-                for (id, name, builtin) in &project_profiles {
+                let project_profiles = profile_rows(
+                    &self.profiles.projects,
+                    |profile| (&profile.id, &profile.name, profile.builtin, &profile.meta),
+                    |profile| profile.notes.clone(),
+                    &filter,
+                );
+                for row in &project_profiles {
                     ui.horizontal(|ui| {
                         let selected =
-                            self.selected_project_profile.as_deref() == Some(id.as_str());
-                        if ui.selectable_label(selected, name).clicked() {
-                            self.selected_project_profile = Some(id.clone());
+                            self.selected_project_profile.as_deref() == Some(row.id.as_str());
+                        if ui.selectable_label(selected, &row.name).clicked() {
+                            self.selected_project_profile = Some(row.id.clone());
                         }
-                        if *builtin {
+                        if row.favorite {
+                            ui.weak("\u{2605}");
+                        }
+                        if !row.category.is_empty() {
+                            ui.weak(row.category.as_str());
+                        }
+                        if row.builtin {
                             ui.weak("built-in");
                         }
                     });
@@ -2933,6 +3123,14 @@ impl BeamWrightApp {
                                     .changed();
                             });
                         });
+                        changed |= profile_meta_editor(
+                            ui,
+                            &id,
+                            &mut profile.meta,
+                            editable,
+                            &mut self.profile_tag_buffer,
+                            &mut self.profile_tag_owner,
+                        );
                         if !editable {
                             ui.weak("Built-in profile: duplicate it to edit.");
                         }

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::errors::{BeamError, Result};
-use crate::profiles::model::{PROFILE_FORMAT_VERSION, ProfileLibrary};
+use crate::profiles::model::ProfileLibrary;
 
 /// File name used inside the application data directory.
 pub const LIBRARY_FILE: &str = "profiles.json";
@@ -21,12 +21,6 @@ pub fn load_or_default(path: &Path) -> Result<ProfileLibrary> {
     library
         .validate()
         .map_err(|error| BeamError::InvalidInput(format!("invalid profile library: {error}")))?;
-    if library.format_version != PROFILE_FORMAT_VERSION {
-        return Err(BeamError::InvalidInput(format!(
-            "unsupported profile format version {}",
-            library.format_version
-        )));
-    }
     Ok(library)
 }
 
@@ -158,6 +152,45 @@ mod tests {
     }
 
     #[test]
+    fn metadata_survives_save_and_load() {
+        let path = temp_path("bw_profiles_meta.json");
+        let _ = std::fs::remove_file(&path);
+        let mut library = ProfileLibrary::empty();
+        let mut profile = MaterialProfile::new("Tagged", "MDF", 3.0);
+        profile.meta.category = "Signage".to_string();
+        profile.meta.tags = vec!["outdoor".to_string(), "test".to_string()];
+        profile.meta.favorite = true;
+        let id = profile.id.clone();
+        library.add_material(profile);
+        save(&library, &path).unwrap();
+        let loaded = load_or_default(&path).unwrap();
+        let meta = loaded.material(&id).unwrap().meta.clone();
+        assert_eq!(meta.category, "Signage");
+        assert_eq!(meta.tags, vec!["outdoor", "test"]);
+        assert!(meta.favorite);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn version_one_library_still_loads() {
+        let path = temp_path("bw_profiles_v1.json");
+        let text = r#"{
+            "format_version": 1,
+            "materials": [{
+                "id": "old", "name": "Old", "material": "Wood",
+                "thickness_mm": 3.0, "notes": "", "builtin": false
+            }],
+            "operations": []
+        }"#;
+        std::fs::write(&path, text).unwrap();
+        let library = load_or_default(&path).unwrap();
+        assert_eq!(library.materials.len(), 1);
+        assert_eq!(library.materials[0].meta.tags.len(), 0);
+        assert_eq!(library.materials[0].meta.created_at, "");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn save_rejects_invalid_library() {
         let path = temp_path("bw_profiles_bad.json");
         let mut library = ProfileLibrary::empty();
@@ -168,6 +201,7 @@ mod tests {
             thickness_mm: 3.0,
             notes: String::new(),
             builtin: false,
+            meta: crate::profiles::model::ProfileMeta::default(),
         });
         assert!(save(&library, &path).is_err());
         let _ = std::fs::remove_file(&path);
