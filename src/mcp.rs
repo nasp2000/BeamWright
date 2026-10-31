@@ -305,6 +305,74 @@ impl McpServer {
                     "objects": self.editor.document.objects.len()
                 }))
             }
+            "begin_node_edit" => {
+                let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
+                self.editor
+                    .begin_node_edit(&id)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(self.node_state())
+            }
+            "end_node_edit" => {
+                self.editor.end_node_edit();
+                Ok(json!({"editing": false}))
+            }
+            "list_nodes" => Ok(self.node_state()),
+            "move_node" => {
+                let index = index_argument(arguments, "index")?;
+                let x = number(arguments, "x").ok_or_else(|| missing("x"))?;
+                let y = number(arguments, "y").ok_or_else(|| missing("y"))?;
+                self.editor.node_selection.clear();
+                self.editor.node_selection.push(index);
+                if !self.editor.set_selected_node_position(Point2::new(x, y)) {
+                    return Err(BeamError::InvalidInput(format!("cannot move node {index}")));
+                }
+                Ok(self.node_state())
+            }
+            "insert_node" => {
+                let segment = index_argument(arguments, "segment")?;
+                let t = number(arguments, "t").unwrap_or(0.5);
+                let index = self.editor.insert_node_at(segment, t).ok_or_else(|| {
+                    BeamError::InvalidInput(format!("cannot insert into segment {segment}"))
+                })?;
+                Ok(json!({
+                    "node": index,
+                    "nodes": self.editor.node_points().len()
+                }))
+            }
+            "delete_node" => {
+                let index = index_argument(arguments, "index")?;
+                self.editor.node_selection.clear();
+                self.editor.node_selection.push(index);
+                let removed = self.editor.delete_selected_nodes();
+                Ok(json!({
+                    "removed": removed,
+                    "nodes": self.editor.node_points().len(),
+                    "editing": self.editor.is_editing_nodes()
+                }))
+            }
+            "convert_node" => {
+                let index = index_argument(arguments, "index")?;
+                let smooth = arguments
+                    .get("smooth")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                self.editor.node_selection.clear();
+                self.editor.node_selection.push(index);
+                let converted = self.editor.convert_selected_nodes(smooth);
+                Ok(json!({
+                    "converted": converted,
+                    "nodes": self.editor.node_points().len()
+                }))
+            }
+            "simplify_path" => {
+                let tolerance =
+                    number(arguments, "tolerance").ok_or_else(|| missing("tolerance"))?;
+                let nodes = self
+                    .editor
+                    .simplify_selected_path(tolerance)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({"nodes": nodes}))
+            }
             "outline_stroke" => {
                 self.select_scope(arguments)?;
                 let count = self
@@ -420,6 +488,31 @@ impl McpServer {
     }
 
     /// Select the objects named by `ids`, or every object when it is absent.
+    /// Node editing state as JSON for the tools above.
+    fn node_state(&self) -> Value {
+        let points = self.editor.node_points();
+        let handles = self.editor.node_handles();
+        let nodes: Vec<Value> = points
+            .iter()
+            .enumerate()
+            .map(|(index, point)| {
+                let (handle_in, handle_out) = handles.get(index).copied().unwrap_or((None, None));
+                json!({
+                    "index": index,
+                    "point": [point.x, point.y],
+                    "handle_in": handle_in.map(|handle| [handle.x, handle.y]),
+                    "handle_out": handle_out.map(|handle| [handle.x, handle.y]),
+                    "selected": self.editor.node_is_selected(index)
+                })
+            })
+            .collect();
+        json!({
+            "editing": self.editor.is_editing_nodes(),
+            "object": self.editor.node_object,
+            "nodes": nodes
+        })
+    }
+
     fn select_scope(&mut self, arguments: &Value) -> Result<()> {
         if let Some(ids) = arguments.get("ids").and_then(Value::as_array) {
             return self.select_ids(ids);
@@ -614,6 +707,53 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["distance"]}),
         ),
         tool_with(
+            "begin_node_edit",
+            "Start editing the nodes of one path (converts primitives to paths).",
+            json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+        ),
+        tool("end_node_edit", "Stop node editing."),
+        tool(
+            "list_nodes",
+            "List the edited path's nodes with points, handles and selection.",
+        ),
+        tool_with(
+            "move_node",
+            "Move one node to an absolute position in millimetres.",
+            json!({"type": "object", "properties": {
+                "index": {"type": "integer"},
+                "x": {"type": "number"},
+                "y": {"type": "number"}
+            }, "required": ["index", "x", "y"]}),
+        ),
+        tool_with(
+            "insert_node",
+            "Insert a node on a segment at parameter t (0..1).",
+            json!({"type": "object", "properties": {
+                "segment": {"type": "integer"},
+                "t": {"type": "number"}
+            }, "required": ["segment"]}),
+        ),
+        tool_with(
+            "delete_node",
+            "Delete one node of the edited path.",
+            json!({"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"]}),
+        ),
+        tool_with(
+            "convert_node",
+            "Convert one node to a smooth curve (default) or a corner.",
+            json!({"type": "object", "properties": {
+                "index": {"type": "integer"},
+                "smooth": {"type": "boolean"}
+            }, "required": ["index"]}),
+        ),
+        tool_with(
+            "simplify_path",
+            "Simplify the edited path within a tolerance in millimetres.",
+            json!({"type": "object", "properties": {
+                "tolerance": {"type": "number"}
+            }, "required": ["tolerance"]}),
+        ),
+        tool_with(
             "outline_stroke",
             "Replace strokes by their outline contours (all objects when ids are omitted).",
             json!({"type": "object", "properties": {
@@ -723,6 +863,14 @@ fn path_argument(arguments: &Value, key: &str) -> Option<PathBuf> {
 
 fn required_path(arguments: &Value, key: &str) -> Result<PathBuf> {
     path_argument(arguments, key).ok_or_else(|| missing(key))
+}
+
+fn index_argument(arguments: &Value, key: &str) -> Result<usize> {
+    let value = arguments
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| missing(key))?;
+    usize::try_from(value).map_err(|_| BeamError::InvalidInput(format!("{key} is too large")))
 }
 
 fn parse_boolean_op(value: &str) -> Result<crate::geometry::BooleanOp> {
@@ -838,6 +986,43 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn node_editing_tools() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let started = call(&mut server, "begin_node_edit", json!({"id": id}));
+        assert_eq!(started["result"]["editing"], true);
+        assert_eq!(started["result"]["nodes"].as_array().unwrap().len(), 4);
+        let moved = call(
+            &mut server,
+            "move_node",
+            json!({"index": 0, "x": -2.0, "y": -2.0}),
+        );
+        assert_eq!(moved["result"]["nodes"][0]["point"][0], -2.0);
+        let inserted = call(&mut server, "insert_node", json!({"segment": 0, "t": 0.5}));
+        assert_eq!(inserted["result"]["nodes"], 5);
+        let converted = call(
+            &mut server,
+            "convert_node",
+            json!({"index": 1, "smooth": true}),
+        );
+        assert_eq!(converted["result"]["converted"], 1);
+        let deleted = call(&mut server, "delete_node", json!({"index": 1}));
+        assert_eq!(deleted["result"]["removed"], 1);
+        assert_eq!(deleted["result"]["nodes"], 4);
+        let list = call(&mut server, "list_nodes", json!({}));
+        assert_eq!(list["result"]["editing"], true);
+        call(&mut server, "end_node_edit", json!({}));
+        assert!(!server.editor.is_editing_nodes());
     }
 
     #[test]

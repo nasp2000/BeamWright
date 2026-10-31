@@ -59,6 +59,10 @@ pub struct EditorState {
     pub snap_centers: bool,
     /// Pull radius in screen pixels; converted to millimetres by the zoom.
     pub snap_tolerance_px: f64,
+    /// Path object whose nodes are being edited.
+    pub node_object: Option<String>,
+    /// Indices of the selected nodes in that path.
+    pub node_selection: Vec<usize>,
 }
 
 impl EditorState {
@@ -82,6 +86,8 @@ impl EditorState {
             snap_endpoints: false,
             snap_centers: false,
             snap_tolerance_px: 8.0,
+            node_object: None,
+            node_selection: Vec::new(),
         }
     }
 
@@ -311,7 +317,7 @@ impl EditorState {
     }
 
     /// Selected object indices, in document order.
-    fn selected_indices(&self) -> Vec<usize> {
+    pub(crate) fn selected_indices(&self) -> Vec<usize> {
         self.document
             .objects
             .iter()
@@ -321,7 +327,7 @@ impl EditorState {
             .collect()
     }
 
-    fn ensure_editable(&self, index: usize) -> std::result::Result<(), String> {
+    pub(crate) fn ensure_editable(&self, index: usize) -> std::result::Result<(), String> {
         let object = &self.document.objects[index];
         if object.locked {
             return Err(format!("'{}' is locked", object.name));
