@@ -19,6 +19,7 @@ use crate::editor::{EditorState, Tool};
 use crate::geometry::Point2;
 use crate::report::FileReport;
 use crate::ui::file_dialog::{DialogResult, FileDialog, FileMode};
+use crate::ui::icons::{self, Icon};
 
 /// Result produced by a background task.
 #[derive(Debug)]
@@ -1325,48 +1326,48 @@ impl BeamWrightApp {
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("New").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::File, "File"), |ui| {
+                    if icons::button(ui, Icon::New, "New").clicked() {
                         self.request(PendingAction::New);
                         ui.close();
                     }
-                    if ui.button("Open...").clicked() {
+                    if icons::button(ui, Icon::Open, "Open...").clicked() {
                         self.request(PendingAction::Open);
                         ui.close();
                     }
-                    if ui.button("Save").clicked() {
+                    if icons::button(ui, Icon::Save, "Save").clicked() {
                         self.save();
                         ui.close();
                     }
-                    if ui.button("Save as...").clicked() {
+                    if icons::button(ui, Icon::Save, "Save as...").clicked() {
                         self.open_dialog(FileMode::SaveProject);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Import SVG or DXF...").clicked() {
+                    if icons::button(ui, Icon::Import, "Import SVG or DXF...").clicked() {
                         self.open_dialog(FileMode::ImportFile);
                         ui.close();
                     }
-                    if ui.button("Export SVG...").clicked() {
+                    if icons::button(ui, Icon::Export, "Export SVG...").clicked() {
                         self.open_dialog(FileMode::ExportSvg);
                         ui.close();
                     }
-                    if ui.button("Export DXF...").clicked() {
+                    if icons::button(ui, Icon::Export, "Export DXF...").clicked() {
                         self.open_dialog(FileMode::ExportDxf);
                         ui.close();
                     }
-                    if ui.button("Export PNG...").clicked() {
+                    if icons::button(ui, Icon::Export, "Export PNG...").clicked() {
                         self.open_dialog(FileMode::ExportPng);
                         ui.close();
                     }
-                    if ui.button("Export G-code...").clicked() {
+                    if icons::button(ui, Icon::Export, "Export G-code...").clicked() {
                         self.open_dialog(FileMode::ExportGcode);
                         ui.close();
                     }
-                    ui.menu_button("Export selection", |ui| {
+                    ui.menu_button(icons::menu_label(ui, Icon::Export, "Export selection"), |ui| {
                         let enabled = !self.editor.selection.is_empty();
                         if ui
-                            .add_enabled(enabled, egui::Button::new("As SVG..."))
+                            .add_enabled(enabled, icons::widget(ui, Icon::Export, "As SVG..."))
                             .clicked()
                         {
                             self.export_subset = true;
@@ -1374,7 +1375,7 @@ impl BeamWrightApp {
                             ui.close();
                         }
                         if ui
-                            .add_enabled(enabled, egui::Button::new("As DXF..."))
+                            .add_enabled(enabled, icons::widget(ui, Icon::Export, "As DXF..."))
                             .clicked()
                         {
                             self.export_subset = true;
@@ -1382,7 +1383,7 @@ impl BeamWrightApp {
                             ui.close();
                         }
                         if ui
-                            .add_enabled(enabled, egui::Button::new("As G-code..."))
+                            .add_enabled(enabled, icons::widget(ui, Icon::Export, "As G-code..."))
                             .clicked()
                         {
                             self.export_subset = true;
@@ -1391,7 +1392,7 @@ impl BeamWrightApp {
                         }
                     });
                     ui.separator();
-                    if ui.button("Document properties...").clicked() {
+                    if icons::button(ui, Icon::Page, "Document properties...").clicked() {
                         self.doc_properties_open = true;
                         ui.close();
                     }
@@ -1401,29 +1402,29 @@ impl BeamWrightApp {
                                 && self.editor.document.objects.iter().any(|object| {
                                     matches!(object.shape, crate::document::Shape::Image(_))
                                 }),
-                            egui::Button::new("Collect images..."),
+                            icons::widget(ui, Icon::Image, "Collect images..."),
                         )
                         .clicked()
                     {
                         self.collect_images();
                         ui.close();
                     }
-                    if ui.button("Recover project...").clicked() {
+                    if icons::button(ui, Icon::Recover, "Recover project...").clicked() {
                         self.recover_next = true;
                         self.open_dialog(FileMode::OpenProject);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Exit").clicked() {
+                    if icons::button(ui, Icon::Exit, "Exit").clicked() {
                         self.request(PendingAction::Quit);
                         ui.close();
                     }
                 });
-                ui.menu_button("Edit", |ui| {
+                ui.menu_button(icons::menu_label(ui, Icon::Edit, "Edit"), |ui| {
                     if ui
                         .add_enabled(
                             self.editor.history.can_undo(),
-                            egui::Button::new(self.undo_label()),
+                            icons::widget(ui, Icon::Undo, self.undo_label()),
                         )
                         .clicked()
                     {
@@ -1433,7 +1434,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.history.can_redo(),
-                            egui::Button::new(self.redo_label()),
+                            icons::widget(ui, Icon::Redo, self.redo_label()),
                         )
                         .clicked()
                     {
@@ -1441,14 +1442,14 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Select all").clicked() {
+                    if icons::button(ui, Icon::SelectAll, "Select all").clicked() {
                         self.editor.select_all();
                         ui.close();
                     }
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Cut"),
+                            icons::widget(ui, Icon::Cut, "Cut"),
                         )
                         .clicked()
                     {
@@ -1458,7 +1459,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Copy"),
+                            icons::widget(ui, Icon::Copy, "Copy"),
                         )
                         .clicked()
                     {
@@ -1466,7 +1467,7 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(!self.clipboard.is_empty(), egui::Button::new("Paste"))
+                        .add_enabled(!self.clipboard.is_empty(), icons::widget(ui, Icon::Paste, "Paste"))
                         .clicked()
                     {
                         self.paste();
@@ -1475,7 +1476,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Duplicate"),
+                            icons::widget(ui, Icon::Duplicate, "Duplicate"),
                         )
                         .clicked()
                     {
@@ -1485,14 +1486,14 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Delete"),
+                            icons::widget(ui, Icon::Delete, "Delete"),
                         )
                         .clicked()
                     {
                         self.editor.delete_selection();
                         ui.close();
                     }
-                    if ui.button("Invert selection").clicked() {
+                    if icons::button(ui, Icon::Invert, "Invert selection").clicked() {
                         let count = self.editor.invert_selection();
                         self.status = format!("Selected {count} object(s)");
                         ui.close();
@@ -1501,7 +1502,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Lock"),
+                            icons::widget(ui, Icon::Lock, "Lock"),
                         )
                         .clicked()
                     {
@@ -1512,7 +1513,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Unlock"),
+                            icons::widget(ui, Icon::Unlock, "Unlock"),
                         )
                         .clicked()
                     {
@@ -1521,13 +1522,13 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Preferences...").clicked() {
+                    if icons::button(ui, Icon::Preferences, "Preferences...").clicked() {
                         self.preferences_open = true;
                         ui.close();
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(self.editor.selection.len() >= 2, egui::Button::new("Group"))
+                        .add_enabled(self.editor.selection.len() >= 2, icons::widget(ui, Icon::Group, "Group"))
                         .clicked()
                     {
                         self.editor.group_selection();
@@ -1536,7 +1537,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Ungroup"),
+                            icons::widget(ui, Icon::Ungroup, "Ungroup"),
                         )
                         .clicked()
                     {
@@ -1544,33 +1545,33 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
-                ui.menu_button("Draw", |ui| {
-                    for (tool, label) in [
-                        (Tool::Select, "Selection"),
-                        (Tool::Line, "Line"),
-                        (Tool::Rect, "Rectangle"),
-                        (Tool::Ellipse, "Ellipse"),
-                        (Tool::Polygon, "Polygon"),
-                        (Tool::Star, "Star"),
-                        (Tool::Text, "Text"),
-                        (Tool::Measure, "Measure"),
-                        (Tool::Bezier, "Bézier"),
-                        (Tool::Pencil, "Freehand"),
+                ui.menu_button(icons::menu_label(ui, Icon::Draw, "Draw"), |ui| {
+                    for (tool, icon, label) in [
+                        (Tool::Select, Icon::Select, "Selection"),
+                        (Tool::Line, Icon::Line, "Line"),
+                        (Tool::Rect, Icon::Rectangle, "Rectangle"),
+                        (Tool::Ellipse, Icon::Ellipse, "Ellipse"),
+                        (Tool::Polygon, Icon::Polygon, "Polygon"),
+                        (Tool::Star, Icon::Star, "Star"),
+                        (Tool::Text, Icon::Text, "Text"),
+                        (Tool::Measure, Icon::Measure, "Measure"),
+                        (Tool::Bezier, Icon::Bezier, "Bézier"),
+                        (Tool::Pencil, Icon::Freehand, "Freehand"),
                     ] {
-                        if ui.selectable_label(self.editor.tool == tool, label).clicked() {
+                        if icons::selectable(ui, self.editor.tool == tool, icon, label).clicked() {
                             self.editor.tool = tool;
                             ui.close();
                         }
                     }
                     ui.separator();
-                    if ui.button("Insert image...").clicked() {
+                    if icons::button(ui, Icon::Image, "Insert image...").clicked() {
                         self.open_dialog(FileMode::ImportFile);
                         ui.close();
                     }
                     if ui
                         .add_enabled(
                             self.editor.selection.len() == 1,
-                            egui::Button::new("Edit nodes"),
+                            icons::widget(ui, Icon::Nodes, "Edit nodes"),
                         )
                         .clicked()
                     {
@@ -1587,7 +1588,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Trim segments"),
+                            icons::widget(ui, Icon::Trim, "Trim segments"),
                         )
                         .clicked()
                     {
@@ -1597,7 +1598,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Join paths"),
+                            icons::widget(ui, Icon::Join, "Join paths"),
                         )
                         .clicked()
                     {
@@ -1605,8 +1606,8 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
-                ui.menu_button("Operations", |ui| {
-                    if ui.button("New operation").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::Operations, "Operations"), |ui| {
+                    if icons::button(ui, Icon::Plus, "New operation").clicked() {
                         let id = self.editor.add_operation(
                             format!(
                                 "Operation {}",
@@ -1617,15 +1618,15 @@ impl BeamWrightApp {
                         self.active_operation = Some(id);
                         ui.close();
                     }
-                    if ui.button("Compare operations...").clicked() {
+                    if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
                         self.operations_compare_open = true;
                         ui.close();
                     }
-                    if ui.button("Preview and G-code...").clicked() {
+                    if icons::button(ui, Icon::Play, "Preview and G-code...").clicked() {
                         self.open_preview();
                         ui.close();
                     }
-                    if ui.button("Estimate duration").clicked() {
+                    if icons::button(ui, Icon::Clock, "Estimate duration").clicked() {
                         match crate::gcode::render_job(
                             &self.editor.document,
                             &crate::gcode::JobOptions::default(),
@@ -1643,7 +1644,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Apply profile"),
+                            icons::widget(ui, Icon::Check, "Apply profile"),
                         )
                         .clicked()
                     {
@@ -1653,7 +1654,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.active_operation.is_some(),
-                            egui::Button::new("Duplicate operation"),
+                            icons::widget(ui, Icon::Duplicate, "Duplicate operation"),
                         )
                         .clicked()
                     {
@@ -1665,7 +1666,7 @@ impl BeamWrightApp {
                         }
                         ui.close();
                     }
-                    if ui.button("Assign operation to layer").clicked() {
+                    if icons::button(ui, Icon::Layers, "Assign operation to layer").clicked() {
                         if let Some(operation) = self.active_operation.clone() {
                             let layer = self.editor.active_layer_id.clone();
                             let changed = self
@@ -1677,24 +1678,24 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
-                ui.menu_button("Materials and profiles", |ui| {
-                    if ui.button("Open library...").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::Materials, "Materials and profiles"), |ui| {
+                    if icons::button(ui, Icon::Book, "Open library...").clicked() {
                         self.profiles_open = true;
                         ui.close();
                     }
-                    if ui.button("Import profiles...").clicked() {
+                    if icons::button(ui, Icon::Import, "Import profiles...").clicked() {
                         self.profiles_open = true;
                         ui.close();
                     }
-                    if ui.button("Export profiles...").clicked() {
+                    if icons::button(ui, Icon::Export, "Export profiles...").clicked() {
                         self.profiles_open = true;
                         ui.close();
                     }
                 });
-                ui.menu_button("Arrange", |ui| {
+                ui.menu_button(icons::menu_label(ui, Icon::Arrange, "Arrange"), |ui| {
                     let enabled = !self.editor.selection.is_empty();
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Bring to front"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::ToFront, "Bring to front"))
                         .clicked()
                     {
                         let count = self.editor.bring_selection_to_front();
@@ -1702,7 +1703,7 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Send to back"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::ToBack, "Send to back"))
                         .clicked()
                     {
                         let count = self.editor.send_selection_to_back();
@@ -1710,7 +1711,7 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Centre on page"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::Center, "Centre on page"))
                         .clicked()
                     {
                         self.editor.center_selection_on_page();
@@ -1719,7 +1720,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Distribute on page horizontally"),
+                            icons::widget(ui, Icon::DistributeH, "Distribute on page horizontally"),
                         )
                         .clicked()
                     {
@@ -1729,7 +1730,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Distribute on page vertically"),
+                            icons::widget(ui, Icon::DistributeV, "Distribute on page vertically"),
                         )
                         .clicked()
                     {
@@ -1738,14 +1739,14 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Rotate 90° left"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::RotateLeft, "Rotate 90° left"))
                         .clicked()
                     {
                         self.editor.rotate_selection(std::f64::consts::FRAC_PI_2);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Rotate 90° right"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::RotateRight, "Rotate 90° right"))
                         .clicked()
                     {
                         self.editor.rotate_selection(-std::f64::consts::FRAC_PI_2);
@@ -1753,14 +1754,14 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Flip horizontal"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::FlipH, "Flip horizontal"))
                         .clicked()
                     {
                         self.editor.flip_selection(true);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Flip vertical"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::FlipV, "Flip vertical"))
                         .clicked()
                     {
                         self.editor.flip_selection(false);
@@ -1768,14 +1769,14 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Scale up 10 %"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::ScaleUp, "Scale up 10 %"))
                         .clicked()
                     {
                         self.editor.scale_selection(1.1, 1.1);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Scale down 10 %"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::ScaleDown, "Scale down 10 %"))
                         .clicked()
                     {
                         self.editor.scale_selection(1.0 / 1.1, 1.0 / 1.1);
@@ -1785,7 +1786,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() == 1,
-                            egui::Button::new("Text to outlines"),
+                            icons::widget(ui, Icon::TextOutline, "Text to outlines"),
                         )
                         .clicked()
                     {
@@ -1795,25 +1796,31 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() == 2,
-                            egui::Button::new("Fit text to path"),
+                            icons::widget(ui, Icon::TextOnPath, "Fit text to path"),
                         )
                         .clicked()
                     {
                         self.apply_text_on_path();
                         ui.close();
                     }
-                    ui.menu_button("Transform around", |ui| {
+                    ui.menu_button(icons::menu_label(ui, Icon::TransformCenter, "Transform around"), |ui| {
                         use crate::editor::state::TransformCenter;
                         for (mode, label) in [
                             (TransformCenter::Selection, "Selection centre"),
                             (TransformCenter::Page, "Page centre"),
                             (TransformCenter::Object, "Each object's centre"),
                         ] {
-                            ui.selectable_value(&mut self.editor.transform_center, mode, label);
+                            icons::selectable_value(
+                                ui,
+                                &mut self.editor.transform_center,
+                                mode,
+                                Icon::TransformCenter,
+                                label,
+                            );
                         }
                     });
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Reset transforms"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::Recover, "Reset transforms"))
                         .clicked()
                     {
                         let count = self.editor.reset_transforms();
@@ -1821,7 +1828,7 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Skew..."))
+                        .add_enabled(enabled, icons::widget(ui, Icon::Skew, "Skew..."))
                         .clicked()
                     {
                         self.skew_open = true;
@@ -1829,7 +1836,7 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Grid array..."))
+                        .add_enabled(enabled, icons::widget(ui, Icon::GridArray, "Grid array..."))
                         .clicked()
                     {
                         self.grid_array_open = true;
@@ -1839,7 +1846,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Join paths"),
+                            icons::widget(ui, Icon::Join, "Join paths"),
                         )
                         .clicked()
                     {
@@ -1847,7 +1854,7 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Close paths"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::ClosePath, "Close paths"))
                         .clicked()
                     {
                         self.apply_close_paths();
@@ -1855,18 +1862,18 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if self.editor.is_editing_nodes() {
-                        if ui.button("Exit node editing").clicked() {
+                        if icons::button(ui, Icon::Nodes, "Exit node editing").clicked() {
                             self.editor.end_node_edit();
                             ui.close();
                         }
-                        if ui.button("Simplify path...").clicked() {
+                        if icons::button(ui, Icon::Simplify, "Simplify path...").clicked() {
                             self.simplify_open = true;
                             ui.close();
                         }
                     } else if ui
                         .add_enabled(
                             self.editor.selection.len() == 1,
-                            egui::Button::new("Edit nodes"),
+                            icons::widget(ui, Icon::Nodes, "Edit nodes"),
                         )
                         .clicked()
                     {
@@ -1886,7 +1893,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Repeat..."),
+                            icons::widget(ui, Icon::Repeat, "Repeat..."),
                         )
                         .clicked()
                     {
@@ -1897,7 +1904,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Nest selection..."),
+                            icons::widget(ui, Icon::Nest, "Nest selection..."),
                         )
                         .clicked()
                     {
@@ -1905,21 +1912,21 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Find duplicates...").clicked() {
+                    if icons::button(ui, Icon::FindDuplicates, "Find duplicates...").clicked() {
                         self.report_duplicates();
                         ui.close();
                     }
-                    if ui.button("Find intersections...").clicked() {
+                    if icons::button(ui, Icon::Intersections, "Find intersections...").clicked() {
                         self.report_intersections();
                         ui.close();
                     }
                     ui.separator();
                     let can_combine = self.editor.selection.len() == 2;
-                    ui.menu_button("Boolean", |ui| {
+                    ui.menu_button(icons::menu_label(ui, Icon::Boolean, "Boolean"), |ui| {
                         use crate::geometry::BooleanOp;
                         for op in BooleanOp::all() {
                             if ui
-                                .add_enabled(can_combine, egui::Button::new(op.label()))
+                                .add_enabled(can_combine, icons::widget(ui, Icon::Boolean, op.label()))
                                 .clicked()
                             {
                                 self.apply_boolean(op);
@@ -1928,7 +1935,7 @@ impl BeamWrightApp {
                         }
                     });
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Outline stroke"))
+                        .add_enabled(enabled, icons::widget(ui, Icon::OutlineStroke, "Outline stroke"))
                         .clicked()
                     {
                         self.apply_outline_stroke();
@@ -1937,7 +1944,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Trim segments"),
+                            icons::widget(ui, Icon::Trim, "Trim segments"),
                         )
                         .clicked()
                     {
@@ -1947,7 +1954,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 2,
-                            egui::Button::new("Delete overlapping segments"),
+                            icons::widget(ui, Icon::Trim, "Delete overlapping segments"),
                         )
                         .clicked()
                     {
@@ -1955,25 +1962,28 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(enabled, egui::Button::new("Offset..."))
+                        .add_enabled(enabled, icons::widget(ui, Icon::Offset, "Offset..."))
                         .clicked()
                     {
                         self.offset_open = true;
                         ui.close();
                     }
                 });
-                ui.menu_button("Align", |ui| {
+                ui.menu_button(icons::menu_label(ui, Icon::Align, "Align"), |ui| {
                     use crate::editor::alignment::AlignMode;
                     let enabled = !self.editor.selection.is_empty();
-                    for (mode, label) in [
-                        (AlignMode::Left, "Align left"),
-                        (AlignMode::CenterH, "Align centre horizontally"),
-                        (AlignMode::Right, "Align right"),
-                        (AlignMode::Top, "Align top"),
-                        (AlignMode::CenterV, "Align centre vertically"),
-                        (AlignMode::Bottom, "Align bottom"),
+                    for (mode, icon, label) in [
+                        (AlignMode::Left, Icon::AlignLeft, "Align left"),
+                        (AlignMode::CenterH, Icon::AlignCenterH, "Align centre horizontally"),
+                        (AlignMode::Right, Icon::AlignRight, "Align right"),
+                        (AlignMode::Top, Icon::AlignTop, "Align top"),
+                        (AlignMode::CenterV, Icon::AlignCenterV, "Align centre vertically"),
+                        (AlignMode::Bottom, Icon::AlignBottom, "Align bottom"),
                     ] {
-                        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        if ui
+                            .add_enabled(enabled, icons::widget(ui, icon, label))
+                            .clicked()
+                        {
                             self.editor.align_selection(mode);
                             ui.close();
                         }
@@ -1982,7 +1992,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 3,
-                            egui::Button::new("Distribute horizontally"),
+                            icons::widget(ui, Icon::DistributeH, "Distribute horizontally"),
                         )
                         .clicked()
                     {
@@ -1992,7 +2002,7 @@ impl BeamWrightApp {
                     if ui
                         .add_enabled(
                             self.editor.selection.len() >= 3,
-                            egui::Button::new("Distribute vertically"),
+                            icons::widget(ui, Icon::DistributeV, "Distribute vertically"),
                         )
                         .clicked()
                     {
@@ -2000,29 +2010,29 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
-                ui.menu_button("Profiles", |ui| {
-                    if ui.button("Materials and operations...").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::Book, "Profiles"), |ui| {
+                    if icons::button(ui, Icon::Materials, "Materials and operations...").clicked() {
                         self.profiles_open = true;
                         ui.close();
                     }
                 });
-                ui.menu_button("View", |ui| {
-                    if ui.button("Zoom in").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::View, "View"), |ui| {
+                    if icons::button(ui, Icon::ZoomIn, "Zoom in").clicked() {
                         self.editor.zoom_in();
                         ui.close();
                     }
-                    if ui.button("Zoom out").clicked() {
+                    if icons::button(ui, Icon::ZoomOut, "Zoom out").clicked() {
                         self.editor.zoom_out();
                         ui.close();
                     }
-                    if ui.button("Fit page").clicked() {
+                    if icons::button(ui, Icon::ZoomFit, "Fit page").clicked() {
                         self.needs_fit = true;
                         ui.close();
                     }
                     if ui
                         .add_enabled(
                             !self.editor.selection.is_empty(),
-                            egui::Button::new("Zoom to selection"),
+                            icons::widget(ui, Icon::ZoomSelection, "Zoom to selection"),
                         )
                         .clicked()
                     {
@@ -2030,22 +2040,22 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    ui.checkbox(&mut self.editor.canvas.grid_visible, "Show grid");
-                    ui.checkbox(&mut self.editor.show_rulers, "Show rulers");
-                    ui.checkbox(&mut self.editor.guides_visible, "Show guides");
-                    ui.checkbox(&mut self.editor.snap_guides, "Snap to guides");
-                    if ui.button("Guides...").clicked() {
+                    icons::checkbox(ui, &mut self.editor.canvas.grid_visible, Icon::Grid, "Show grid");
+                    icons::checkbox(ui, &mut self.editor.show_rulers, Icon::Rulers, "Show rulers");
+                    icons::checkbox(ui, &mut self.editor.guides_visible, Icon::Guides, "Show guides");
+                    icons::checkbox(ui, &mut self.editor.snap_guides, Icon::Snap, "Snap to guides");
+                    if icons::button(ui, Icon::Guides, "Guides...").clicked() {
                         self.guides_open = true;
                         ui.close();
                     }
-                    ui.menu_button("Snapping", |ui| {
-                        ui.checkbox(&mut self.editor.snap_enabled, "Grid");
-                        ui.checkbox(&mut self.editor.snap_nodes, "Nodes");
-                        ui.checkbox(&mut self.editor.snap_endpoints, "Endpoints");
-                        ui.checkbox(&mut self.editor.snap_centers, "Centres");
-                        ui.checkbox(&mut self.editor.snap_midpoints, "Midpoints");
-                        ui.checkbox(&mut self.editor.snap_intersections, "Intersections");
-                        ui.checkbox(&mut self.editor.snap_limits, "Object limits");
+                    ui.menu_button(icons::menu_label(ui, Icon::Snap, "Snapping"), |ui| {
+                        icons::checkbox(ui, &mut self.editor.snap_enabled, Icon::Grid, "Grid");
+                        icons::checkbox(ui, &mut self.editor.snap_nodes, Icon::Nodes, "Nodes");
+                        icons::checkbox(ui, &mut self.editor.snap_endpoints, Icon::Nodes, "Endpoints");
+                        icons::checkbox(ui, &mut self.editor.snap_centers, Icon::SnapCenter, "Centres");
+                        icons::checkbox(ui, &mut self.editor.snap_midpoints, Icon::SnapMidpoint, "Midpoints");
+                        icons::checkbox(ui, &mut self.editor.snap_intersections, Icon::Intersections, "Intersections");
+                        icons::checkbox(ui, &mut self.editor.snap_limits, Icon::SnapLimits, "Object limits");
                         ui.add(
                             egui::DragValue::new(&mut self.editor.snap_step_mm)
                                 .speed(0.1)
@@ -2053,26 +2063,26 @@ impl BeamWrightApp {
                                 .suffix(" mm grid"),
                         );
                     });
-                    ui.checkbox(&mut self.preview_toolpaths, "Show toolpaths");
-                    ui.checkbox(&mut self.show_layers_panel, "Layers panel (F9)");
-                    ui.checkbox(&mut self.show_properties_panel, "Properties panel (F10)");
-                    if ui.button("Compare operations...").clicked() {
+                    icons::checkbox(ui, &mut self.preview_toolpaths, Icon::Toolpaths, "Show toolpaths");
+                    icons::checkbox(ui, &mut self.show_layers_panel, Icon::Panels, "Layers panel (F9)");
+                    icons::checkbox(ui, &mut self.show_properties_panel, Icon::Panels, "Properties panel (F10)");
+                    if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
                         self.operations_compare_open = true;
                         ui.close();
                     }
-                    if ui.button("Preview and G-code...").clicked() {
+                    if icons::button(ui, Icon::Play, "Preview and G-code...").clicked() {
                         self.open_preview();
                         ui.close();
                     }
-                    ui.checkbox(&mut self.dark_mode, "Dark mode");
+                    icons::checkbox(ui, &mut self.dark_mode, Icon::DarkMode, "Dark mode");
                     ui.separator();
-                    if ui.button("Preferences...").clicked() {
+                    if icons::button(ui, Icon::Preferences, "Preferences...").clicked() {
                         self.preferences_open = true;
                         ui.close();
                     }
                 });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About BeamWright").clicked() {
+                ui.menu_button(icons::menu_label(ui, Icon::Help, "Help"), |ui| {
+                    if icons::button(ui, Icon::Info, "About BeamWright").clicked() {
                         self.about_open = true;
                         ui.close();
                     }
