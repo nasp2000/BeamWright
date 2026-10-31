@@ -4064,7 +4064,7 @@ impl BeamWrightApp {
                 }
                 let ctx = ui.ctx().clone();
                 self.tool_strip(&ctx, rect);
-                let over_toolbar = ctx.is_pointer_over_area();
+                let over_toolbar = ctx.is_pointer_over_egui();
                 let modal = self.dialog.is_some()
                     || self.confirm.is_some()
                     || self.about_open
@@ -7947,10 +7947,8 @@ impl eframe::App for BeamWrightApp {
             .collect();
         crate::textfont::ensure_loaded(&ctx, &document_fonts);
         ui.ctx().set_visuals(crate::theme::visuals(self.dark_mode));
-        ui.ctx().style_mut(|style| {
-            style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-            style.spacing.button_padding = egui::vec2(8.0, 5.0);
-        });
+        ui.style_mut().spacing.item_spacing = egui::vec2(8.0, 6.0);
+        ui.style_mut().spacing.button_padding = egui::vec2(8.0, 5.0);
         self.shortcuts(ui);
         self.menu_bar(ui);
         self.toolbar(ui);
