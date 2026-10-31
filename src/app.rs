@@ -871,6 +871,7 @@ impl BeamWrightApp {
         let mut open = self.profile_confirm_open;
         let mut apply = false;
         egui::Window::new(format!("Apply '{}'", profile.name))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -3979,6 +3980,7 @@ impl BeamWrightApp {
         };
         let mut cancel = false;
         egui::Window::new("Working")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
@@ -5700,6 +5702,7 @@ impl BeamWrightApp {
             let mut open_draft = false;
             let mut discard = false;
             egui::Window::new("Recover unsaved work")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -5745,6 +5748,7 @@ impl BeamWrightApp {
             let mut replace = false;
             let mut cancel = false;
             egui::Window::new("Replace file?")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -5770,6 +5774,7 @@ impl BeamWrightApp {
             let mut action = None;
             let mut cancel = false;
             egui::Window::new("Unsaved changes")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -5836,6 +5841,7 @@ impl BeamWrightApp {
         if self.about_open {
             let mut open = true;
             egui::Window::new("About BeamWright")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut open)
