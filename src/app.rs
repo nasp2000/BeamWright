@@ -82,6 +82,8 @@ pub struct BeamWrightApp {
     preferences_path: PathBuf,
     preferences_open: bool,
     polygon_sides: usize,
+    grid_array_open: bool,
+    grid_array: (usize, usize, f64, f64),
 }
 
 struct ImagePreview {
@@ -143,6 +145,8 @@ impl BeamWrightApp {
             preferences_path,
             preferences_open: false,
             polygon_sides: 6,
+            grid_array_open: false,
+            grid_array: (3, 2, 20.0, 20.0),
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -633,6 +637,14 @@ impl BeamWrightApp {
                         .clicked()
                     {
                         self.editor.scale_selection(1.0 / 1.1, 1.0 / 1.1);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Grid array..."))
+                        .clicked()
+                    {
+                        self.grid_array_open = true;
                         ui.close();
                     }
                 });
@@ -1783,6 +1795,56 @@ impl BeamWrightApp {
         }
     }
 
+    fn grid_array_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.grid_array_open;
+        egui::Window::new("Grid array")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let (columns, rows, dx, dy) = &mut self.grid_array;
+                ui.horizontal(|ui| {
+                    ui.label("Columns");
+                    ui.add(egui::DragValue::new(columns).speed(1.0).range(1..=100));
+                    ui.label("Rows");
+                    ui.add(egui::DragValue::new(rows).speed(1.0).range(1..=100));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Spacing X");
+                    ui.add(
+                        egui::DragValue::new(dx)
+                            .speed(0.5)
+                            .range(-10000.0..=10000.0)
+                            .suffix(" mm"),
+                    );
+                    ui.label("Y");
+                    ui.add(
+                        egui::DragValue::new(dy)
+                            .speed(0.5)
+                            .range(-10000.0..=10000.0)
+                            .suffix(" mm"),
+                    );
+                });
+                ui.label(format!(
+                    "Creates {} copies of the {} selected object(s).",
+                    columns.saturating_mul(*rows).saturating_sub(1),
+                    self.editor.selection.len()
+                ));
+                if ui
+                    .add_enabled(
+                        !self.editor.selection.is_empty(),
+                        egui::Button::new("Create array"),
+                    )
+                    .clicked()
+                {
+                    let created = self.editor.duplicate_grid(*columns, *rows, *dx, *dy);
+                    self.status = format!("Created {created} copies");
+                    self.grid_array_open = false;
+                }
+            });
+        self.grid_array_open = open && self.grid_array_open;
+    }
+
     fn preferences_window(&mut self, ctx: &egui::Context) {
         let mut open = self.preferences_open;
         let mut changed = false;
@@ -2483,6 +2545,9 @@ impl BeamWrightApp {
         }
         if self.preferences_open {
             self.preferences_window(ctx);
+        }
+        if self.grid_array_open {
+            self.grid_array_window(ctx);
         }
         if self.about_open {
             let mut open = true;

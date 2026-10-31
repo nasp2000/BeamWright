@@ -579,6 +579,48 @@ impl EditorState {
         }
     }
 
+    /// Duplicate the selection in a rectangular grid.
+    ///
+    /// Returns the number of new objects. The original objects stay in place;
+    /// the copies become the selection.
+    pub fn duplicate_grid(&mut self, columns: usize, rows: usize, dx: f64, dy: f64) -> usize {
+        if self.selection.is_empty()
+            || !(1..=100).contains(&columns)
+            || !(1..=100).contains(&rows)
+            || !dx.is_finite()
+            || !dy.is_finite()
+        {
+            return 0;
+        }
+        self.record();
+        let originals: Vec<Object> = self
+            .selection
+            .ids()
+            .iter()
+            .filter_map(|id| self.document.object(id).cloned())
+            .collect();
+        self.selection.clear();
+        let mut created = 0;
+        for row in 0..rows {
+            for column in 0..columns {
+                if row == 0 && column == 0 {
+                    continue;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                let offset = (column as f64 * dx, row as f64 * dy);
+                for original in &originals {
+                    let mut copy = original.clone();
+                    copy.id = uuid::Uuid::new_v4().to_string();
+                    copy.translate(offset.0, offset.1);
+                    self.selection.add(copy.id.clone());
+                    self.document.add_object(copy);
+                    created += 1;
+                }
+            }
+        }
+        created
+    }
+
     pub fn nudge_selection(&mut self, dx: f64, dy: f64) {
         if self.selection.is_empty() {
             return;
@@ -1282,6 +1324,44 @@ mod tests {
         let id = editor.add_polyline(&points, true).unwrap();
         let path = editor.document.object(&id).unwrap().world_path();
         assert!(path.closed);
+    }
+
+    #[test]
+    fn grid_duplication_places_copies_on_the_grid() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        assert_eq!(editor.duplicate_grid(2, 3, 20.0, 15.0), 5);
+        assert_eq!(editor.document.objects.len(), 6);
+        assert_eq!(editor.selection.len(), 5);
+        let mut xs: Vec<f64> = editor
+            .document
+            .objects
+            .iter()
+            .map(|object| object.bounds().unwrap().0.x)
+            .collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        xs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        assert_eq!(xs, vec![0.0, 20.0]);
+    }
+
+    #[test]
+    fn grid_duplication_rejects_invalid_counts() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        assert_eq!(editor.duplicate_grid(0, 2, 10.0, 10.0), 0);
+        assert_eq!(editor.duplicate_grid(2, 0, 10.0, 10.0), 0);
+        assert_eq!(editor.duplicate_grid(101, 1, 10.0, 10.0), 0);
+        assert_eq!(editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn grid_duplication_is_undoable() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        editor.duplicate_grid(2, 2, 20.0, 20.0);
+        assert_eq!(editor.document.objects.len(), 4);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 1);
     }
 
     #[test]
