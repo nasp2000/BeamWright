@@ -30,16 +30,14 @@ impl GCodeWriter {
         let _ = write!(out, "G21{newline}");
         let _ = write!(out, "G90{newline}");
         let _ = write!(out, "G17{newline}");
-        let _ = write!(
-            out,
-            "{}{newline}",
-            self.options
-                .dialect
-                .laser_command(self.options.laser_mode == LaserMode::ConstantPower)
-        );
+        let initial_command = self
+            .options
+            .dialect
+            .laser_command(self.options.laser_mode == LaserMode::ConstantPower);
+        let _ = write!(out, "{initial_command}{newline}");
         let precision = self.options.decimals as usize;
         let mut air_on = false;
-        let mut constant_power = self.options.dialect.laser_command(true);
+        let mut laser_command = initial_command;
         for (index, toolpath) in toolpaths.iter().enumerate() {
             if toolpath.air_assist && !air_on {
                 let _ = write!(out, "M8{newline}");
@@ -49,11 +47,13 @@ impl GCodeWriter {
                 air_on = false;
             }
             if self.options.dialect.supports_dynamic_power() {
-                let wanted = toolpath.constant_power;
-                let command = self.options.dialect.laser_command(wanted);
-                if command != constant_power {
+                let command = self
+                    .options
+                    .dialect
+                    .laser_command(toolpath.constant_power);
+                if command != laser_command {
                     let _ = write!(out, "{command}{newline}");
-                    constant_power = command;
+                    laser_command = command;
                 }
             }
             if self.options.include_comments {
