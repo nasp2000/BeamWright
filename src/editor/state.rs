@@ -591,6 +591,21 @@ impl EditorState {
         Ok(ids)
     }
 
+    /// Create a path from editable nodes (the pen tool's output).
+    pub fn add_bezier_nodes(
+        &mut self,
+        nodes: &[crate::geometry::path::Node],
+        closed: bool,
+    ) -> Option<String> {
+        if nodes.len() < 2 {
+            return None;
+        }
+        self.add_shape(
+            Shape::Path(Path::from_nodes(nodes, closed)),
+            Transform2::identity(),
+        )
+    }
+
     /// Insert a text object whose anchor is `at`, selected and ready to edit.
     pub fn add_text(&mut self, at: Point2) -> Option<String> {
         let text = crate::objects::TextObject {
@@ -4537,6 +4552,38 @@ mod tests {
         assert!(editor.fit_text_to_path(&text, &text).is_err());
         assert!(editor.fit_text_to_path(&text, "missing").is_err());
         assert!(editor.fit_text_to_path("missing", &rect).is_err());
+    }
+
+    #[test]
+    fn bezier_nodes_become_a_path() {
+        use crate::geometry::path::Node;
+
+        let mut editor = editor();
+        let nodes = [
+            Node {
+                point: Point2::new(0.0, 0.0),
+                handle_in: None,
+                handle_out: Some(Point2::new(3.0, 3.0)),
+            },
+            Node {
+                point: Point2::new(10.0, 0.0),
+                handle_in: Some(Point2::new(7.0, 3.0)),
+                handle_out: None,
+            },
+        ];
+        let id = editor.add_bezier_nodes(&nodes, false).unwrap();
+        let path = editor.document.object(&id).unwrap().world_path();
+        assert!(!path.closed);
+        assert!(matches!(
+            path.segments[0],
+            crate::geometry::path::Segment::Cubic(_)
+        ));
+        assert!(editor.add_bezier_nodes(&nodes[..1], false).is_none());
+
+        let closed = editor
+            .add_bezier_nodes(&[nodes[0], nodes[1]], true)
+            .unwrap();
+        assert!(editor.document.object(&closed).unwrap().world_path().closed);
     }
 
     #[test]

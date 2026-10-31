@@ -137,6 +137,8 @@ pub struct BeamWrightApp {
     zoom_to_selection_request: bool,
     export_subset: bool,
     recover_next: bool,
+    pen_nodes: Vec<crate::geometry::path::Node>,
+    pen_drag_start: Option<Point2>,
 }
 
 /// Scale around a point, for direct property edits.
@@ -389,6 +391,8 @@ impl BeamWrightApp {
             zoom_to_selection_request: false,
             export_subset: false,
             recover_next: false,
+            pen_nodes: Vec::new(),
+            pen_drag_start: None,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -741,6 +745,7 @@ impl BeamWrightApp {
             preview,
             toggle_layers,
             toggle_properties,
+            enter,
         ) = ctx.input_mut(|input| {
             (
                 input.consume_key(Modifiers::CTRL, Key::N),
@@ -777,6 +782,7 @@ impl BeamWrightApp {
                 input.consume_key(Modifiers::CTRL, Key::P),
                 input.consume_key(Modifiers::NONE, Key::F9),
                 input.consume_key(Modifiers::NONE, Key::F10),
+                input.consume_key(Modifiers::NONE, Key::Enter),
             )
         });
         if new_doc {
@@ -834,6 +840,10 @@ impl BeamWrightApp {
         }
         if escape {
             self.drag = None;
+            if self.editor.tool == Tool::Bezier {
+                self.pen_nodes.clear();
+                self.pen_drag_start = None;
+            }
             if self.editor.is_editing_nodes() {
                 self.editor.end_node_edit();
             }
@@ -865,6 +875,9 @@ impl BeamWrightApp {
         }
         if toggle_properties {
             self.show_properties_panel = !self.show_properties_panel;
+        }
+        if enter && self.editor.tool == Tool::Bezier {
+            self.finish_pen(false);
         }
         if fit {
             self.needs_fit = true;
@@ -1134,6 +1147,7 @@ impl BeamWrightApp {
                         (Tool::Star, "Star"),
                         (Tool::Text, "Text"),
                         (Tool::Measure, "Measure"),
+                        (Tool::Bezier, "Bézier"),
                         (Tool::Pencil, "Freehand"),
                     ] {
                         if ui.selectable_label(self.editor.tool == tool, label).clicked() {
@@ -1616,6 +1630,7 @@ impl BeamWrightApp {
                     Tool::Star,
                     Tool::Text,
                     Tool::Measure,
+                    Tool::Bezier,
                     Tool::Pencil,
                     Tool::Pan,
                 ] {
@@ -2810,6 +2825,51 @@ impl BeamWrightApp {
                         .pan(f64::from(delta.x), f64::from(delta.y));
                 }
 
+                if self.editor.tool != Tool::Bezier && !self.pen_nodes.is_empty() {
+                    self.pen_nodes.clear();
+                    self.pen_drag_start = None;
+                }
+                if self.editor.tool == Tool::Bezier && !modal {
+                    if primary_pressed {
+                        if let Some(pos) = pointer.filter(|pos| rect.contains(*pos)) {
+                            let point = self.doc_point(rect, pos);
+                            let tolerance = 8.0 / self.editor.canvas.zoom.max(0.01);
+                            if self.pen_nodes.len() >= 2
+                                && self.pen_nodes[0].point.distance(point) <= tolerance
+                            {
+                                self.finish_pen(true);
+                            } else {
+                                self.pen_drag_start = Some(point);
+                            }
+                        }
+                    } else if primary_released {
+                        if let Some(start) = self.pen_drag_start.take() {
+                            if let Some(pos) = pointer.filter(|pos| rect.contains(*pos)) {
+                                let point = self.doc_point(rect, pos);
+                                let (handle_in, handle_out) = if start.distance(point) > 0.5 {
+                                    (
+                                        Some(Point2::new(
+                                            2.0 * start.x - point.x,
+                                            2.0 * start.y - point.y,
+                                        )),
+                                        Some(point),
+                                    )
+                                } else {
+                                    (None, None)
+                                };
+                                self.pen_nodes.push(crate::geometry::path::Node {
+                                    point: start,
+                                    handle_in,
+                                    handle_out,
+                                });
+                                self.status =
+                                    "Pen: click to add nodes, Enter to finish, Esc to cancel"
+                                        .to_string();
+                            }
+                        }
+                    }
+                }
+
                 if primary_pressed && pointer_in_canvas {
                     response.request_focus();
                     if let Some(pos) = pointer {
@@ -2822,6 +2882,7 @@ impl BeamWrightApp {
                         } else {
                             match self.editor.tool {
                                 Tool::Select => self.begin_select(point, shift),
+                                Tool::Bezier => {}
                                 Tool::Rect
                                 | Tool::Ellipse
                                 | Tool::Line
@@ -2905,6 +2966,13 @@ impl BeamWrightApp {
                         Some(PreviewShape::Polyline(points.clone()))
                     }
                     _ => None,
+                };
+                let preview = if self.editor.tool == Tool::Bezier && self.pen_nodes.len() >= 2 {
+                    Some(PreviewShape::Polyline(
+                        self.pen_nodes.iter().map(|node| node.point).collect(),
+                    ))
+                } else {
+                    preview
                 };
                 let theme = Theme {
                     dark: self.dark_mode,
@@ -3509,6 +3577,23 @@ impl BeamWrightApp {
             self.status = format!("{} outline intersection(s)", hits.len());
         }
         self.show_report(report);
+    }
+
+    fn finish_pen(&mut self, closed: bool) {
+        if self.pen_nodes.len() >= 2
+            && self
+                .editor
+                .add_bezier_nodes(&self.pen_nodes, closed)
+                .is_some()
+        {
+            self.status = if closed {
+                "Closed Bézier path created".to_string()
+            } else {
+                "Bézier path created".to_string()
+            };
+        }
+        self.pen_nodes.clear();
+        self.pen_drag_start = None;
     }
 
     fn apply_text_on_path(&mut self) {

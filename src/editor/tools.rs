@@ -9,6 +9,7 @@ pub enum Tool {
     Star,
     Text,
     Measure,
+    Bezier,
     Pencil,
     Pan,
 }
@@ -24,6 +25,7 @@ impl Tool {
             Tool::Star => "Star",
             Tool::Text => "Text",
             Tool::Measure => "Measure",
+            Tool::Bezier => "Bézier",
             Tool::Pencil => "Pencil",
             Tool::Pan => "Pan",
         }
@@ -44,6 +46,7 @@ mod tests {
         assert_eq!(Tool::Star.label(), "Star");
         assert_eq!(Tool::Text.label(), "Text");
         assert_eq!(Tool::Measure.label(), "Measure");
+        assert_eq!(Tool::Bezier.label(), "Bézier");
         assert_eq!(Tool::Pencil.label(), "Pencil");
         assert_eq!(Tool::Pan.label(), "Pan");
     }
