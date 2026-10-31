@@ -4216,6 +4216,7 @@ impl BeamWrightApp {
                     playback: playback_overlay,
                     nest: nest_overlay,
                     show_order: self.preview_open && self.preview_order,
+                    guides: Some(self.smart_guides.as_slice()),
                 };
                 paint_canvas(&painter, rect, &self.editor, theme, preview, &overlays);
 
@@ -4537,6 +4538,7 @@ impl BeamWrightApp {
             .show(ctx, |ui| {
                 ui.label("One row per cut. Output controls the job, Show controls the preview, Air emits M8/M9.");
                 ui.separator();
+                let mut row_centers: Vec<(usize, f32)> = Vec::new();
                 egui::ScrollArea::vertical()
                     .max_height(240.0)
                     .show(ui, |ui| {
@@ -4550,7 +4552,14 @@ impl BeamWrightApp {
                                 }
                                 ui.end_row();
                                 for (index, operation) in operations.iter_mut().enumerate() {
-                                    ui.label(format!("{:02}", index + 1));
+                                    let number = ui.add(
+                                        egui::Label::new(format!("{:02}", index + 1))
+                                            .sense(egui::Sense::drag()),
+                                    );
+                                    row_centers.push((index, number.rect.center().y));
+                                    if number.drag_started() {
+                                        self.cuts_drag = Some(index);
+                                    }
                                     ui.horizontal(|ui| {
                                         let rgb = parse_hex_color(&operation.params.color)
                                             .unwrap_or((0, 0, 0));
@@ -4593,6 +4602,29 @@ impl BeamWrightApp {
                                 }
                             });
                     });
+                if self.cuts_drag.is_some() {
+                    if let Some(pos) =
+                        ui.ctx().input(|input| input.pointer.interact_pos())
+                    {
+                        self.cuts_drag_target = row_centers
+                            .iter()
+                            .min_by(|left, right| {
+                                (left.1 - pos.y).abs().total_cmp(&(right.1 - pos.y).abs())
+                            })
+                            .map(|(index, _)| *index);
+                    }
+                }
+                if ui.ctx().input(|input| input.pointer.any_released()) {
+                    if let (Some(from), Some(to)) =
+                        (self.cuts_drag.take(), self.cuts_drag_target.take())
+                    {
+                        if from != to {
+                            let operation = operations.remove(from);
+                            let target = to.min(operations.len());
+                            operations.insert(target, operation);
+                        }
+                    }
+                }
                 ui.separator();
                 if let Some(id) = self.active_operation.clone() {
                     if let Some(index) = operations
@@ -5367,6 +5399,77 @@ impl BeamWrightApp {
         }
     }
 
+    fn alignment_snap(&self, dx: f64, dy: f64) -> (f64, f64, Vec<(bool, f64)>) {
+        let Some((min, max)) = self.editor.selected_bounds() else {
+            return (dx, dy, Vec::new());
+        };
+        let tolerance = 6.0 / self.editor.canvas.zoom.max(0.01);
+        let selected: std::collections::HashSet<&str> = self
+            .editor
+            .selection
+            .ids()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let mut verticals = Vec::new();
+        let mut horizontals = Vec::new();
+        for object in &self.editor.document.objects {
+            if selected.contains(object.id.as_str()) || !object.visible || object.locked {
+                continue;
+            }
+            let Some((other_min, other_max)) = object.bounds() else {
+                continue;
+            };
+            verticals.extend([
+                other_min.x,
+                f64::midpoint(other_min.x, other_max.x),
+                other_max.x,
+            ]);
+            horizontals.extend([
+                other_min.y,
+                f64::midpoint(other_min.y, other_max.y),
+                other_max.y,
+            ]);
+        }
+        let current_x = [min.x + dx, f64::midpoint(min.x, max.x) + dx, max.x + dx];
+        let current_y = [min.y + dy, f64::midpoint(min.y, max.y) + dy, max.y + dy];
+        let mut guides = Vec::new();
+        let mut snap = |lines: [f64; 3], candidates: &[f64], guides: &mut Vec<f64>| -> f64 {
+            let mut best: Option<(f64, f64)> = None;
+            for line in lines {
+                for candidate in candidates {
+                    let difference = candidate - line;
+                    if difference.abs() <= tolerance {
+                        if best.is_none_or(|(best, _)| difference.abs() < best.abs()) {
+                            best = Some((difference, *candidate));
+                        }
+                    }
+                }
+            }
+            match best {
+                Some((difference, coordinate)) => {
+                    guides.push(coordinate);
+                    difference
+                }
+                None => 0.0,
+            }
+        };
+        let adjust_x = snap(current_x, &verticals, &mut guides);
+        let adjust_y = snap(current_y, &horizontals, &mut guides);
+        guides.sort_by(|left, right| left.total_cmp(right));
+        guides.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+        let mut result = Vec::new();
+        for guide in guides {
+            if verticals.iter().any(|value| (value - guide).abs() < 1e-9) {
+                result.push((true, guide));
+            }
+            if horizontals.iter().any(|value| (value - guide).abs() < 1e-9) {
+                result.push((false, guide));
+            }
+        }
+        (dx + adjust_x, dy + adjust_y, result)
+    }
+
     fn selection_doc_centre(&self) -> Option<Point2> {
         self.editor
             .selected_bounds()
@@ -5493,6 +5596,7 @@ impl BeamWrightApp {
 
     fn update_drag(&mut self, rect: Rect, pos: Pos2) {
         let point = self.doc_point(rect, pos);
+        self.smart_guides.clear();
         let Some(drag) = &mut self.drag else {
             return;
         };
@@ -5500,6 +5604,8 @@ impl BeamWrightApp {
             DragState::Move { last, recorded } => {
                 let dx = point.x - last.x;
                 let dy = point.y - last.y;
+                let (dx, dy, guides) = self.alignment_snap(dx, dy);
+                self.smart_guides = guides;
                 if dx.abs() > 1e-9 || dy.abs() > 1e-9 {
                     if !*recorded {
                         self.editor.record_action("Move");
@@ -5574,7 +5680,11 @@ impl BeamWrightApp {
                     *recorded = true;
                 }
                 match *kind {
-                    HandleKind::Move => self.editor.move_selection(dx, dy),
+                    HandleKind::Move => {
+                        let (dx, dy, guides) = self.alignment_snap(dx, dy);
+                        self.smart_guides = guides;
+                        self.editor.move_selection(dx, dy);
+                    }
                     HandleKind::Rotate => {
                         let before = (last.y - centre.y).atan2(last.x - centre.x);
                         let now = (point.y - centre.y).atan2(point.x - centre.x);

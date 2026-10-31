@@ -95,6 +95,8 @@ pub struct CanvasOverlays<'a> {
     pub nest: Option<&'a [crate::editor::NestPlacement]>,
     /// Label each toolpath with its position in the job.
     pub show_order: bool,
+    /// Smart alignment guides: `(vertical, coordinate)` in document millimetres.
+    pub guides: Option<&'a [(bool, f64)]>,
 }
 
 pub fn paint_canvas(
@@ -124,6 +126,9 @@ pub fn paint_canvas(
         paint_playback(painter, rect, editor, playback, progress);
     }
     paint_nodes(painter, rect, editor);
+    if let Some(guides) = overlays.guides {
+        paint_smart_guides(painter, rect, editor, guides);
+    }
     if let Some(placements) = overlays.nest {
         paint_nest(painter, rect, editor, placements);
     }
@@ -719,6 +724,25 @@ fn paint_selection(painter: &Painter, rect: Rect, editor: &EditorState, theme: T
                 editor,
                 &object.world_path(),
                 Stroke::new(1.0, color),
+            );
+        }
+    }
+}
+
+fn paint_smart_guides(painter: &Painter, rect: Rect, editor: &EditorState, guides: &[(bool, f64)]) {
+    let stroke = Stroke::new(1.0, Color32::from_rgb(235, 90, 190));
+    for (vertical, position) in guides {
+        if *vertical {
+            let x = screen_pos(rect, editor, Point2::new(*position, 0.0)).x;
+            painter.line_segment(
+                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                stroke,
+            );
+        } else {
+            let y = screen_pos(rect, editor, Point2::new(0.0, *position)).y;
+            painter.line_segment(
+                [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                stroke,
             );
         }
     }
