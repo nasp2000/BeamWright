@@ -737,6 +737,92 @@ impl EditorState {
         )
     }
 
+    /// Duplicate a layer with all of its objects.
+    ///
+    /// The copy gets a new layer id, fresh object ids and the next layer order,
+    /// so it stays independent from the original.
+    pub fn duplicate_layer(&mut self, layer_id: &str) -> Option<String> {
+        let layer = self.document.layer(layer_id)?.clone();
+        let objects: Vec<Object> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| object.layer_id == layer_id)
+            .cloned()
+            .collect();
+        self.record_action("Duplicate layer");
+        let mut copy = layer;
+        copy.id = uuid::Uuid::new_v4().to_string();
+        copy.name = format!("{} copy", copy.name);
+        copy.order = self
+            .document
+            .layers
+            .iter()
+            .map(|layer| layer.order)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let new_id = copy.id.clone();
+        self.document.layers.push(copy);
+        for mut object in objects {
+            object.id = uuid::Uuid::new_v4().to_string();
+            object.layer_id.clone_from(&new_id);
+            object.group_id = None;
+            self.document.add_object(object);
+        }
+        Some(new_id)
+    }
+
+    /// Select every object of a layer.
+    pub fn select_layer_objects(&mut self, layer_id: &str) -> usize {
+        let ids: Vec<String> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| object.layer_id == layer_id)
+            .map(|object| object.id.clone())
+            .collect();
+        self.selection.clear();
+        for id in &ids {
+            self.selection.add(id.clone());
+        }
+        ids.len()
+    }
+
+    /// Select every object whose stroke or fill is `color`.
+    pub fn select_by_color(&mut self, color: &str) -> usize {
+        let Some(normalized) = crate::color::normalize_hex_color(color) else {
+            return 0;
+        };
+        let ids: Vec<String> = self
+            .document
+            .objects
+            .iter()
+            .filter(|object| {
+                [&object.style.stroke, &object.style.fill]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|value| crate::color::normalize_hex_color(value))
+                    .any(|value| value == normalized)
+            })
+            .map(|object| object.id.clone())
+            .collect();
+        self.selection.clear();
+        for id in &ids {
+            self.selection.add(id.clone());
+        }
+        ids.len()
+    }
+
+    /// Group every object of a layer into one group.
+    pub fn group_layer_objects(&mut self, layer_id: &str) -> usize {
+        let count = self.select_layer_objects(layer_id);
+        if count < 2 || !self.group_selection() {
+            return 0;
+        }
+        count
+    }
+
     /// Add a horizontal or vertical guide at a document position.
     pub fn add_guide(&mut self, horizontal: bool, position: f64) -> Option<String> {
         if !position.is_finite() {
@@ -3432,6 +3518,62 @@ mod tests {
         assert_eq!(editor.selection.len(), 2);
         assert!(editor.ungroup_selection());
         assert!(editor.group_members(&first).is_none());
+    }
+
+    #[test]
+    fn layers_can_be_duplicated_with_their_objects() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0));
+        let layer = editor.document.layers[0].id.clone();
+        let copy = editor.duplicate_layer(&layer).unwrap();
+        assert_ne!(copy, layer);
+        assert_eq!(editor.document.layers.len(), 2);
+        assert_eq!(editor.document.objects.len(), 2);
+        assert_eq!(
+            editor
+                .document
+                .objects
+                .iter()
+                .filter(|object| object.layer_id == copy)
+                .count(),
+            1
+        );
+        assert!(editor.undo().is_some());
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.duplicate_layer("missing").is_none());
+    }
+
+    #[test]
+    fn layer_objects_can_be_selected_and_grouped() {
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        editor.add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0));
+        let layer = editor.document.layers[0].id.clone();
+        let other = editor.document.add_layer("Other").id.clone();
+        editor.selection.clear();
+        assert_eq!(editor.select_layer_objects(&layer), 2);
+        assert_eq!(editor.select_layer_objects(&other), 0);
+        assert_eq!(editor.group_layer_objects(&layer), 2);
+        assert!(editor.document.objects[0].group_id.is_some());
+        assert_eq!(editor.group_layer_objects(&other), 0);
+    }
+
+    #[test]
+    fn objects_are_selected_by_colour() {
+        use crate::document::Style;
+
+        let mut editor = editor();
+        editor.add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0));
+        editor.add_rectangle(Point2::new(10.0, 0.0), Point2::new(14.0, 4.0));
+        editor.document.objects[0].style = Style {
+            stroke: Some("#ff0000".to_string()),
+            fill: None,
+            stroke_width_mm: 0.2,
+        };
+        editor.selection.clear();
+        assert_eq!(editor.select_by_color("#FF0000"), 1);
+        assert!(editor.selection.contains(&editor.document.objects[0].id));
+        assert_eq!(editor.select_by_color("not-a-colour"), 0);
     }
 
     #[test]

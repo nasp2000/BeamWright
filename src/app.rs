@@ -2182,6 +2182,22 @@ impl BeamWrightApp {
                         }
                     }
                 });
+                ui.horizontal(|ui| {
+                    let layer = self.editor.active_layer_id.clone();
+                    if ui.button("Duplicate layer").clicked() {
+                        if let Some(copy) = self.editor.duplicate_layer(&layer) {
+                            self.editor.active_layer_id = copy;
+                        }
+                    }
+                    if ui.button("Select layer objects").clicked() {
+                        let count = self.editor.select_layer_objects(&layer);
+                        self.status = format!("Selected {count} layer object(s)");
+                    }
+                    if ui.button("Group layer").clicked() {
+                        let count = self.editor.group_layer_objects(&layer);
+                        self.status = format!("Grouped {count} layer object(s)");
+                    }
+                });
                 ui.separator();
                 let layers: Vec<_> = self
                     .editor
@@ -2701,6 +2717,7 @@ impl BeamWrightApp {
 
     fn object_properties(&mut self, ui: &mut Ui, id: &str) {
         let mut relink_request = false;
+        let mut select_same_color: Option<String> = None;
         let layers: Vec<(String, String)> = self
             .editor
             .document
@@ -3050,6 +3067,21 @@ impl BeamWrightApp {
                 edit_color(ui, &mut object.style.fill);
                 ui.end_row();
             });
+        ui.horizontal(|ui| {
+            if let Some(color) = object.style.stroke.clone() {
+                if ui.button("Select same stroke").clicked() {
+                    select_same_color = Some(color);
+                }
+            }
+            if let Some(color) = object.style.fill.clone() {
+                if ui.button("Select same fill").clicked() {
+                    select_same_color = Some(color);
+                }
+            }
+        });
+        if let Some(color) = select_same_color {
+            self.editor.select_by_color(&color);
+        }
         if relink_request {
             self.relink_target = Some(id.to_string());
             self.open_dialog(FileMode::RelinkImage);
