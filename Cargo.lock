@@ -513,6 +513,7 @@ name = "beamwright"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "arboard",
  "clap",
  "eframe",
  "egui",

@@ -979,30 +979,63 @@ impl BeamWrightApp {
             let directory = if start.is_dir() {
                 start.clone()
             } else {
-                start.parent().map_or_else(|| start.clone(), std::path::Path::to_path_buf)
+                start
+                    .parent()
+                    .map_or_else(|| start.clone(), std::path::Path::to_path_buf)
             };
             builder = builder.set_directory(directory);
         }
         match mode {
-            FileMode::OpenProject => builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"]),
-            FileMode::ImportFile => builder = builder.add_filter("Drawing or image", &["svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"]),
-            FileMode::RelinkImage => builder = builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"]),
+            FileMode::OpenProject => {
+                builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"])
+            }
+            FileMode::ImportFile => {
+                builder = builder.add_filter(
+                    "Drawing or image",
+                    &["svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"],
+                )
+            }
+            FileMode::RelinkImage => {
+                builder = builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"])
+            }
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
             FileMode::ExportPng => builder = builder.add_filter("PNG", &["png"]),
-            FileMode::ExportGcode => builder = builder.add_filter("G-code", &["nc", "gcode", "gco", "gc", "ngc", "tap", "cnc", "mpf", "txt"]),
-            FileMode::ExportProfiles | FileMode::ExportMachines => builder = builder.add_filter("JSON", &["json"]),
-            FileMode::ImportProfiles | FileMode::ImportMachines => builder = builder.add_filter("JSON", &["json"]),
+            FileMode::ExportGcode => {
+                builder = builder.add_filter(
+                    "G-code",
+                    &[
+                        "nc", "gcode", "gco", "gc", "ngc", "tap", "cnc", "mpf", "txt",
+                    ],
+                )
+            }
+            FileMode::ExportProfiles
+            | FileMode::ExportMachines
+            | FileMode::ImportProfiles
+            | FileMode::ImportMachines => builder = builder.add_filter("JSON", &["json"]),
             FileMode::SaveProject => builder = builder.add_filter("BeamWright", &["bwp"]),
         }
         let chosen = match mode {
-            FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage | FileMode::ImportProfiles | FileMode::ImportMachines => builder.pick_file(),
+            FileMode::OpenProject
+            | FileMode::ImportFile
+            | FileMode::RelinkImage
+            | FileMode::ImportProfiles
+            | FileMode::ImportMachines => builder.pick_file(),
             _ => builder.save_file(),
         };
         let Some(path) = chosen else {
             return;
         };
-        if path.exists() && !matches!(mode, FileMode::OpenProject | FileMode::ImportFile | FileMode::RelinkImage | FileMode::ImportProfiles | FileMode::ImportMachines) {
+        if path.exists()
+            && !matches!(
+                mode,
+                FileMode::OpenProject
+                    | FileMode::ImportFile
+                    | FileMode::RelinkImage
+                    | FileMode::ImportProfiles
+                    | FileMode::ImportMachines
+            )
+        {
             self.pending_file = Some((mode, path));
         } else {
             self.handle_file(mode, &path);
@@ -1724,7 +1757,7 @@ impl BeamWrightApp {
             self.copy();
         }
         if paste {
-            self.paste();
+            self.paste_from_clipboard();
         }
         if duplicate {
             self.editor.duplicate_selection();
@@ -6400,6 +6433,78 @@ impl BeamWrightApp {
     fn copy(&mut self) {
         self.clipboard = self.editor.copy_selection();
         self.status = format!("Copied {} object(s)", self.clipboard.len());
+    }
+
+    fn paste_from_clipboard(&mut self) {
+        if self.paste_external() {
+            return;
+        }
+        self.paste();
+    }
+
+    fn paste_external(&mut self) -> bool {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return false;
+        };
+        if let Ok(image) = clipboard.get_image() {
+            let path =
+                std::env::temp_dir().join(format!("bw-clipboard-{}.png", uuid::Uuid::new_v4()));
+            let Some(buffer) = image::RgbaImage::from_raw(
+                image.width as u32,
+                image.height as u32,
+                image.bytes.into_owned(),
+            ) else {
+                return false;
+            };
+            if buffer.save(&path).is_err() {
+                return false;
+            }
+            if let Ok(document) = crate::import::raster::import_raster(&path) {
+                self.merge_imported(document, "Paste image");
+                self.status = "Pasted image from the clipboard".to_string();
+                return true;
+            }
+            return false;
+        }
+        if let Ok(text) = clipboard.get_text() {
+            let trimmed = text.trim_start();
+            if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+                if let Ok(document) = crate::import::svg::import_svg(&text) {
+                    self.merge_imported(document, "Paste SVG");
+                    self.status = "Pasted SVG from the clipboard".to_string();
+                    return true;
+                }
+            }
+            if self.clipboard.is_empty() && !text.trim().is_empty() {
+                let at = self.cursor_doc.unwrap_or_else(Point2::origin);
+                if let Some(id) = self.editor.add_text(at) {
+                    if let Some(object) = self
+                        .editor
+                        .document
+                        .objects
+                        .iter_mut()
+                        .find(|object| object.id == id)
+                    {
+                        if let Shape::Text(text_object) = &mut object.shape {
+                            text_object.content = text;
+                        }
+                    }
+                    self.status = "Pasted text from the clipboard".to_string();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn merge_imported(&mut self, document: Document, action: &str) {
+        self.editor.record_action(action);
+        let layer = self.editor.active_layer_id.clone();
+        for mut object in document.objects {
+            object.layer_id.clone_from(&layer);
+            object.operation_id = None;
+            self.editor.document.add_object(object);
+        }
     }
 
     fn paste(&mut self) {
