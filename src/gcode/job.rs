@@ -750,6 +750,39 @@ pub fn estimate_seconds(toolpaths: &[Toolpath], travel_speed_mm_min: f64) -> f64
     seconds
 }
 
+/// Merge consecutive cut moves that continue in the same direction.
+///
+/// This is a post-processor: it shortens the file without changing the path.
+pub fn merge_collinear(toolpaths: &mut [Toolpath]) {
+    use crate::gcode::toolpath::MoveKind;
+    for toolpath in toolpaths.iter_mut() {
+        let mut merged: Vec<crate::gcode::toolpath::Move> =
+            Vec::with_capacity(toolpath.moves.len());
+        for movement in toolpath.moves.drain(..) {
+            if movement.kind == MoveKind::Cut && merged.len() >= 2 {
+                let last = &merged[merged.len() - 1];
+                let before = &merged[merged.len() - 2];
+                if before.kind == MoveKind::Cut && last.kind == MoveKind::Cut {
+                    let first_x = last.x - before.x;
+                    let first_y = last.y - before.y;
+                    let second_x = movement.x - last.x;
+                    let second_y = movement.y - last.y;
+                    let cross = first_x * second_y - first_y * second_x;
+                    let dot = first_x * second_x + first_y * second_y;
+                    if cross.abs() < 1e-9 && dot > 0.0 {
+                        if let Some(last) = merged.last_mut() {
+                            *last = movement;
+                        }
+                        continue;
+                    }
+                }
+            }
+            merged.push(movement);
+        }
+        toolpath.moves = merged;
+    }
+}
+
 /// Move every toolpath so the job starts at (0, 0).
 pub fn shift_to_origin(toolpaths: &mut [Toolpath]) {
     let mut min_x = f64::INFINITY;
@@ -815,6 +848,7 @@ pub fn render_job_cancellable(
     if options.offset_to_origin {
         shift_to_origin(&mut toolpaths);
     }
+    merge_collinear(&mut toolpaths);
     validate_bounds(document, &toolpaths)?;
     for (index, toolpath) in toolpaths.iter().enumerate() {
         if index % 64 == 0 && cancel() {
