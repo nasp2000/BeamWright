@@ -52,6 +52,15 @@ pub struct DrawingPrefs {
     /// Snap drawing to object centres.
     #[serde(default)]
     pub snap_centers: bool,
+    /// Snap drawing to segment midpoints.
+    #[serde(default)]
+    pub snap_midpoints: bool,
+    /// Snap drawing to crossings between object outlines.
+    #[serde(default)]
+    pub snap_intersections: bool,
+    /// Snap drawing to object bounding-box corners and edges.
+    #[serde(default)]
+    pub snap_limits: bool,
 }
 
 impl Default for DrawingPrefs {
@@ -65,6 +74,9 @@ impl Default for DrawingPrefs {
             snap_nodes: false,
             snap_endpoints: false,
             snap_centers: false,
+            snap_midpoints: false,
+            snap_intersections: false,
+            snap_limits: false,
         }
     }
 }

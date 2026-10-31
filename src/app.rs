@@ -270,6 +270,9 @@ impl BeamWrightApp {
         editor.snap_nodes = preferences.drawing.snap_nodes;
         editor.snap_endpoints = preferences.drawing.snap_endpoints;
         editor.snap_centers = preferences.drawing.snap_centers;
+        editor.snap_midpoints = preferences.drawing.snap_midpoints;
+        editor.snap_intersections = preferences.drawing.snap_intersections;
+        editor.snap_limits = preferences.drawing.snap_limits;
         let dark_mode = preferences.general.theme == "dark";
         let mut app = Self {
             editor,
@@ -1052,6 +1055,9 @@ impl BeamWrightApp {
                         ui.checkbox(&mut self.editor.snap_nodes, "Nodes");
                         ui.checkbox(&mut self.editor.snap_endpoints, "Endpoints");
                         ui.checkbox(&mut self.editor.snap_centers, "Centres");
+                        ui.checkbox(&mut self.editor.snap_midpoints, "Midpoints");
+                        ui.checkbox(&mut self.editor.snap_intersections, "Intersections");
+                        ui.checkbox(&mut self.editor.snap_limits, "Object limits");
                         ui.add(
                             egui::DragValue::new(&mut self.editor.snap_step_mm)
                                 .speed(0.1)
@@ -2980,6 +2986,24 @@ impl BeamWrightApp {
                         "Snap to object centres",
                     )
                     .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_midpoints,
+                        "Snap to segment midpoints",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_intersections,
+                        "Snap to outline intersections",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_limits,
+                        "Snap to object bounds",
+                    )
+                    .changed();
                 ui.separator();
                 ui.heading("Appearance");
                 let mut dark = self.preferences.general.theme == "dark";
@@ -2995,6 +3019,9 @@ impl BeamWrightApp {
                     self.editor.snap_nodes = self.preferences.drawing.snap_nodes;
                     self.editor.snap_endpoints = self.preferences.drawing.snap_endpoints;
                     self.editor.snap_centers = self.preferences.drawing.snap_centers;
+                    self.editor.snap_midpoints = self.preferences.drawing.snap_midpoints;
+                    self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
+                    self.editor.snap_limits = self.preferences.drawing.snap_limits;
                     self.dark_mode = self.preferences.general.theme == "dark";
                     match self.preferences.save(&self.preferences_path) {
                         Ok(()) => self.status = "Preferences saved".to_string(),

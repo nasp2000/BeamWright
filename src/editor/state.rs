@@ -57,6 +57,12 @@ pub struct EditorState {
     pub snap_endpoints: bool,
     /// Snap drawing to object bounding-box centres.
     pub snap_centers: bool,
+    /// Snap drawing to the midpoint of every segment.
+    pub snap_midpoints: bool,
+    /// Snap drawing to crossings between other objects' outlines.
+    pub snap_intersections: bool,
+    /// Snap drawing to the corners and edge midpoints of object bounds.
+    pub snap_limits: bool,
     /// Pull radius in screen pixels; converted to millimetres by the zoom.
     pub snap_tolerance_px: f64,
     /// Path object whose nodes are being edited.
@@ -85,6 +91,9 @@ impl EditorState {
             snap_nodes: false,
             snap_endpoints: false,
             snap_centers: false,
+            snap_midpoints: false,
+            snap_intersections: false,
+            snap_limits: false,
             snap_tolerance_px: 8.0,
             node_object: None,
             node_selection: Vec::new(),
@@ -128,7 +137,13 @@ impl EditorState {
 
     /// Nearest enabled snap target within the pull radius, if any.
     pub fn object_snap(&self, point: Point2) -> Option<Point2> {
-        if !(self.snap_nodes || self.snap_endpoints || self.snap_centers) {
+        if !(self.snap_nodes
+            || self.snap_endpoints
+            || self.snap_centers
+            || self.snap_midpoints
+            || self.snap_intersections
+            || self.snap_limits)
+        {
             return None;
         }
         let zoom = if self.canvas.zoom > 0.0 {
@@ -174,16 +189,117 @@ impl EditorState {
                     consider(end);
                 }
             }
-            if self.snap_centers {
+            if self.snap_midpoints {
+                for segment in &path.segments {
+                    consider(match *segment {
+                        Segment::Line { from, to } => {
+                            Point2::new(f64::midpoint(from.x, to.x), f64::midpoint(from.y, to.y))
+                        }
+                        Segment::Cubic(cubic) => cubic.eval(0.5),
+                    });
+                }
+            }
+            if self.snap_centers || self.snap_limits {
                 if let Some((min, max)) = object.bounds() {
-                    consider(Point2::new(
-                        f64::midpoint(min.x, max.x),
-                        f64::midpoint(min.y, max.y),
-                    ));
+                    if self.snap_centers {
+                        consider(Point2::new(
+                            f64::midpoint(min.x, max.x),
+                            f64::midpoint(min.y, max.y),
+                        ));
+                    }
+                    if self.snap_limits {
+                        for corner in [
+                            Point2::new(min.x, min.y),
+                            Point2::new(max.x, min.y),
+                            Point2::new(max.x, max.y),
+                            Point2::new(min.x, max.y),
+                        ] {
+                            consider(corner);
+                        }
+                        for edge in [
+                            Point2::new(f64::midpoint(min.x, max.x), min.y),
+                            Point2::new(max.x, f64::midpoint(min.y, max.y)),
+                            Point2::new(f64::midpoint(min.x, max.x), max.y),
+                            Point2::new(min.x, f64::midpoint(min.y, max.y)),
+                        ] {
+                            consider(edge);
+                        }
+                    }
                 }
             }
         }
+        if self.snap_intersections {
+            for candidate in self.intersections_near(point, tolerance) {
+                consider(candidate);
+            }
+        }
         best.map(|(_, candidate)| candidate)
+    }
+
+    /// Crossings between different objects' segments near `point`.
+    ///
+    /// Only segments that pass close to the pointer can contain a crossing near
+    /// it, so the search stays local instead of testing every pair.
+    fn intersections_near(&self, point: Point2, tolerance: f64) -> Vec<Point2> {
+        use crate::geometry::intersection::{Segment as Line, segment_crossing_point};
+
+        let mut segments: Vec<Line> = Vec::new();
+        let near = |line: &Line| {
+            crate::geometry::intersection::point_segment_distance(
+                point.x, point.y, line.x1, line.y1, line.x2, line.y2,
+            ) <= tolerance * 4.0
+        };
+        for object in &self.document.objects {
+            if !object.visible {
+                continue;
+            }
+            for segment in object.world_path().segments {
+                // Curves are approximated by their two halves, which is enough
+                // to find a crossing near the pointer.
+                let lines: Vec<Line> = match segment {
+                    Segment::Line { from, to } => vec![Line {
+                        x1: from.x,
+                        y1: from.y,
+                        x2: to.x,
+                        y2: to.y,
+                    }],
+                    Segment::Cubic(cubic) => {
+                        let middle = cubic.eval(0.5);
+                        vec![
+                            Line {
+                                x1: cubic.p0.x,
+                                y1: cubic.p0.y,
+                                x2: middle.x,
+                                y2: middle.y,
+                            },
+                            Line {
+                                x1: middle.x,
+                                y1: middle.y,
+                                x2: cubic.p3.x,
+                                y2: cubic.p3.y,
+                            },
+                        ]
+                    }
+                };
+                segments.extend(lines.into_iter().filter(near));
+            }
+        }
+        let mut points = Vec::new();
+        for (index, first) in segments.iter().enumerate() {
+            for second in segments.iter().skip(index + 1) {
+                if let Some((x, y)) = segment_crossing_point(first, second) {
+                    let candidate = Point2::new(x, y);
+                    if candidate.distance(point) <= tolerance
+                        && points
+                            .iter()
+                            .all(|existing: &Point2| existing.distance(candidate) > 1e-6)
+                    {
+                        points.push(candidate);
+                    }
+                }
+            }
+        }
+        points
     }
 
     pub fn add_rectangle(&mut self, start: Point2, end: Point2) -> Option<String> {
@@ -3149,7 +3265,46 @@ mod tests {
         assert!(!editor.snap_nodes);
         assert!(!editor.snap_endpoints);
         assert!(!editor.snap_centers);
+        assert!(!editor.snap_midpoints);
+        assert!(!editor.snap_intersections);
+        assert!(!editor.snap_limits);
         assert_eq!(editor.object_snap(Point2::new(1.0, 1.0)), None);
+    }
+
+    #[test]
+    fn midpoint_snapping_uses_the_segment_centre() {
+        let mut editor = editor();
+        editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        editor.snap_midpoints = true;
+        assert_eq!(editor.snap(Point2::new(5.4, 0.3)), Point2::new(5.0, 0.0));
+    }
+
+    #[test]
+    fn limit_snapping_uses_bounds_corners_and_edges() {
+        let mut editor = editor();
+        editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(10.0, 20.0))
+            .unwrap();
+        editor.snap_limits = true;
+        assert_eq!(editor.snap(Point2::new(0.3, 19.6)), Point2::new(0.0, 20.0));
+        assert_eq!(editor.snap(Point2::new(5.4, 20.3)), Point2::new(5.0, 20.0));
+    }
+
+    #[test]
+    fn intersection_snapping_finds_crossings() {
+        let mut editor = editor();
+        editor
+            .add_line(Point2::new(0.0, 0.0), Point2::new(10.0, 10.0))
+            .unwrap();
+        editor
+            .add_line(Point2::new(0.0, 10.0), Point2::new(10.0, 0.0))
+            .unwrap();
+        editor.snap_intersections = true;
+        editor.snap_tolerance_px = 3.0;
+        assert_eq!(editor.snap(Point2::new(5.3, 4.7)), Point2::new(5.0, 5.0));
+        assert_eq!(editor.snap(Point2::new(2.0, 8.0)), Point2::new(2.0, 8.0));
     }
 
     #[test]

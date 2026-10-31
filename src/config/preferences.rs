@@ -134,6 +134,7 @@ mod tests {
         preferences.drawing.snap_enabled = true;
         preferences.drawing.snap_nodes = true;
         preferences.drawing.snap_centers = true;
+        preferences.drawing.snap_intersections = true;
         preferences.general.theme = "dark".to_string();
         preferences.save(&path).unwrap();
         let loaded = AppPreferences::load_or_default(&path).unwrap();
@@ -142,6 +143,8 @@ mod tests {
         assert!(loaded.drawing.snap_nodes);
         assert!(!loaded.drawing.snap_endpoints);
         assert!(loaded.drawing.snap_centers);
+        assert!(loaded.drawing.snap_intersections);
+        assert!(!loaded.drawing.snap_midpoints);
         assert_eq!(loaded.general.theme, "dark");
         assert!(!path.with_extension("json.tmp").exists());
         let _ = std::fs::remove_file(&path);
