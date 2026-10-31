@@ -103,6 +103,10 @@ pub enum Icon {
     FindDuplicates,
     Intersections,
     Boolean,
+    BooleanUnion,
+    BooleanIntersection,
+    BooleanDifference,
+    BooleanExclusion,
     OutlineStroke,
     Offset,
     // Align.
@@ -215,6 +219,10 @@ impl Icon {
         Icon::FindDuplicates,
         Icon::Intersections,
         Icon::Boolean,
+        Icon::BooleanUnion,
+        Icon::BooleanIntersection,
+        Icon::BooleanDifference,
+        Icon::BooleanExclusion,
         Icon::OutlineStroke,
         Icon::Offset,
         Icon::AlignLeft,
@@ -311,6 +319,14 @@ enum Prim {
         cut_cx: f32,
         cut_cy: f32,
         cut_r: f32,
+    },
+    /// Overlap of two equal circles.
+    Lens {
+        cx1: f32,
+        cy1: f32,
+        cx2: f32,
+        cy2: f32,
+        r: f32,
     },
 }
 
@@ -887,6 +903,50 @@ fn prims(icon: Icon) -> Vec<Prim> {
             disc(8.0, 8.0, 1.6),
         ],
         Icon::Boolean => vec![ring(6.2, 8.0, 4.3, 1.4), ring(9.8, 8.0, 4.3, 1.4)],
+        Icon::BooleanUnion => vec![disc(6.2, 8.0, 4.3), disc(9.8, 8.0, 4.3)],
+        Icon::BooleanIntersection => vec![
+            ring(6.2, 8.0, 4.3, 1.4),
+            ring(9.8, 8.0, 4.3, 1.4),
+            Prim::Lens {
+                cx1: 6.2,
+                cy1: 8.0,
+                cx2: 9.8,
+                cy2: 8.0,
+                r: 4.3,
+            },
+        ],
+        Icon::BooleanDifference => vec![
+            ring(6.2, 8.0, 4.3, 1.4),
+            ring(9.8, 8.0, 4.3, 1.4),
+            Prim::Crescent {
+                cx: 6.2,
+                cy: 8.0,
+                r: 4.3,
+                cut_cx: 9.8,
+                cut_cy: 8.0,
+                cut_r: 4.3,
+            },
+        ],
+        Icon::BooleanExclusion => vec![
+            ring(6.2, 8.0, 4.3, 1.4),
+            ring(9.8, 8.0, 4.3, 1.4),
+            Prim::Crescent {
+                cx: 6.2,
+                cy: 8.0,
+                r: 4.3,
+                cut_cx: 9.8,
+                cut_cy: 8.0,
+                cut_r: 4.3,
+            },
+            Prim::Crescent {
+                cx: 9.8,
+                cy: 8.0,
+                r: 4.3,
+                cut_cx: 6.2,
+                cut_cy: 8.0,
+                cut_r: 4.3,
+            },
+        ],
         Icon::OutlineStroke => vec![frame(1.8, 8.6, 14.2, 11.4, 0.9)],
         Icon::Offset => vec![
             frame(2.0, 2.0, 14.0, 14.0, 1.1),
@@ -1079,6 +1139,13 @@ fn inside(prim: &Prim, x: f32, y: f32) -> bool {
             let inside_cut = (x - cut_cx).hypot(y - cut_cy) <= cut_r;
             inside_outer && !inside_cut
         }
+        Prim::Lens {
+            cx1,
+            cy1,
+            cx2,
+            cy2,
+            r,
+        } => (x - cx1).hypot(y - cy1) <= r && (x - cx2).hypot(y - cy2) <= r,
     }
 }
 
@@ -1153,24 +1220,194 @@ pub fn image_at(ctx: &Context, icon: Icon, size: f32) -> Image<'static> {
     Image::new(egui::load::SizedTexture::from_handle(&handle)).fit_to_exact_size(Vec2::splat(size))
 }
 
+/// One-line description shown when hovering an entry.
+pub fn tooltip(label: &str) -> Option<&'static str> {
+    let text = match label {
+        "New" => "Start an empty project",
+        "Open..." => "Open a .bwp project or an .svg drawing",
+        "Save" => "Save the project, keeping a backup of the previous version",
+        "Save as..." => "Save the project under another name",
+        "Import SVG or DXF..." => "Import an SVG, DXF or raster image",
+        "Export SVG..." => "Export the document as SVG",
+        "Export DXF..." => "Export the document as DXF",
+        "Export PNG..." => "Export a raster preview of the document",
+        "Export G-code..." => "Generate and save the laser job",
+        "Export selection" => "Export only the selected objects",
+        "As SVG..." => "Export the selection as SVG",
+        "As DXF..." => "Export the selection as DXF",
+        "As G-code..." => "Export the selection as a laser job",
+        "Document properties..." => "Edit the name, work area and unit",
+        "Collect images..." => "Copy referenced images into the project folder",
+        "Recover project..." => "Open the backup of a project",
+        "Machine profiles..." => "Create and apply saved work areas",
+        "Exit" => "Close BeamWright",
+        "Select all" => "Select every visible, unlocked object (Ctrl+A)",
+        "Cut" => "Cut the selection to the internal clipboard (Ctrl+X)",
+        "Copy" => "Copy the selection to the internal clipboard (Ctrl+C)",
+        "Paste" => "Paste the clipboard into the document (Ctrl+V)",
+        "Duplicate" => "Duplicate the selected objects (Ctrl+D)",
+        "Delete" => "Delete the selected objects (Del or Backspace)",
+        "Invert selection" => "Select everything that is not selected",
+        "Lock" => "Prevent the selected objects from being edited",
+        "Unlock" => "Allow the selected objects to be edited",
+        "Preferences..." => "Edit the application preferences",
+        "Group" => "Group the selected objects (Ctrl+G)",
+        "Ungroup" => "Dissolve the selected group (Ctrl+Shift+G)",
+        "Selection" => "Select and move objects (V)",
+        "Line" => "Draw a line; Shift snaps to 45 degrees (L)",
+        "Rectangle" => "Draw a rectangle; Shift for a square (R)",
+        "Ellipse" => "Draw an ellipse; Shift for a circle (E)",
+        "Polygon" => "Draw a regular polygon (P)",
+        "Star" => "Draw a star with adjustable tips (S)",
+        "Text" => "Insert editable text (T)",
+        "Measure" => "Measure a distance and angle",
+        "Bézier" => "Draw a Bezier path node by node",
+        "Freehand" => "Draw a freehand path (B)",
+        "Pan" => "Pan the canvas",
+        "Insert image..." => "Place a raster image in the document",
+        "Edit nodes" => "Edit the nodes of one path",
+        "Trim segments" => "Trim the selected segments at their intersections",
+        "Join paths" => "Join open paths into one path",
+        "New operation" => "Create a cut operation",
+        "Compare operations..." => "Compare the parameters of several operations",
+        "Preview and G-code..." => "Show the job, preview and playback",
+        "Estimate duration" => "Estimate the job duration without writing a file",
+        "Apply profile" => "Apply a saved operation profile",
+        "Duplicate operation" => "Copy the active operation",
+        "Assign operation to layer" => "Assign the active operation to the layer objects",
+        "Open library..." => "Open the materials and operations library",
+        "Import profiles..." => "Import a profile library from a .json file",
+        "Export profiles..." => "Save the profile library to a .json file",
+        "Materials and operations..." => "Open the materials and operations library",
+        "Bring to front" => "Move the selection to the front",
+        "Send to back" => "Move the selection to the back",
+        "Centre on page" => "Centre the selection on the work area",
+        "Distribute on page horizontally" => "Spread the selection across the page",
+        "Distribute on page vertically" => "Spread the selection down the page",
+        "Rotate 90° left" => "Rotate the selection a quarter turn left",
+        "Rotate 90° right" => "Rotate the selection a quarter turn right",
+        "Flip horizontal" => "Mirror the selection left to right",
+        "Flip vertical" => "Mirror the selection top to bottom",
+        "Scale up 10 %" => "Grow the selection by ten percent",
+        "Scale down 10 %" => "Shrink the selection by ten percent",
+        "Text to outlines" => "Convert text into editable path contours",
+        "Fit text to path" => "Lay the text along the selected path",
+        "Transform around" => "Choose the centre used by transforms",
+        "Selection centre" => "Transform around the selection centre",
+        "Page centre" => "Transform around the page centre",
+        "Each object's centre" => "Transform each object around its own centre",
+        "Reset transforms" => "Restore the original transforms",
+        "Skew..." => "Shear the selection by an angle",
+        "Grid array..." => "Copy the selection in rows and columns",
+        "Close paths" => "Close open paths",
+        "Exit node editing" => "Leave node editing",
+        "Simplify path..." => "Remove nodes within a tolerance",
+        "Repeat..." => "Repeat the selection in a line or around a circle",
+        "Nest selection..." => "Arrange copies inside the work area",
+        "Find duplicates..." => "Report identical objects",
+        "Find intersections..." => "Report intersecting objects",
+        "Outline stroke" => "Turn strokes into outlines",
+        "Delete overlapping segments" => "Remove duplicated path segments",
+        "Offset..." => "Expand or contract the selection",
+        "Distribute horizontally" => "Space the objects evenly across",
+        "Distribute vertically" => "Space the objects evenly down",
+        "Align left" => "Align the left edges",
+        "Align centre horizontally" => "Align the horizontal centres",
+        "Align right" => "Align the right edges",
+        "Align top" => "Align the top edges",
+        "Align centre vertically" => "Align the vertical centres",
+        "Align bottom" => "Align the bottom edges",
+        "Show selection" => "Hide or show the selection frame and handles",
+        "Show rulers" => "Show the millimetre rulers",
+        "Show guides" => "Show the document guides",
+        "Show toolpaths" => "Draw the planned toolpaths on the canvas",
+        "Show grid" => "Show the drawing grid",
+        "Snap to guides" => "Snap drawing to visible guides",
+        "Snap to grid" => "Snap drawing to the grid",
+        "Guides..." => "Add and remove horizontal and vertical guides",
+        "Zoom in" => "Zoom in",
+        "Zoom out" => "Zoom out",
+        "Fit page" => "Fit the page in the window",
+        "Fit" => "Fit the page in the window",
+        "Zoom to selection" => "Zoom to the selected objects",
+        "Dark mode" => "Switch between dark and light themes",
+        "Layers panel (F9)" => "Show or hide the layers panel",
+        "Properties panel (F10)" => "Show or hide the properties panel",
+        "About BeamWright" => "Version, scope and licence",
+        "Cuts / Layers..." => "Edit cuts, speeds, power and output",
+        "Exact size" => "Draw with an exact width and height",
+        "Grid" => "Snap or show the grid",
+        "Snap" => "Enable snapping",
+        "Toolpaths" => "Show the planned toolpaths",
+        "Open" => "Open a project",
+        "Union" => "Merge the two selected objects",
+        "Difference" => "Subtract the second object from the first",
+        "Intersection" => "Keep only the overlapping area",
+        "Xor" => "Keep the areas that do not overlap",
+        "Grid array" => "Copy the selection in a grid",
+        "Circular array" => "Copy the selection around a circle",
+        "Offset" => "Offset the selection by the radius",
+        "Adjust image..." => "Adjust the preparation of the selected image",
+        "Nodes" => "Snap to path nodes",
+        "Endpoints" => "Snap to the ends of open paths",
+        "Centres" => "Snap to object centres",
+        "Midpoints" => "Snap to segment midpoints",
+        "Intersections" => "Snap to outline crossings",
+        "Object limits" => "Snap to object bounds",
+        "Appearance" => "Theme and fonts",
+        _ => {
+            if label.starts_with("Undo") {
+                "Undo the last action (Ctrl+Z)"
+            } else if label.starts_with("Redo") {
+                "Redo the last undone action (Ctrl+Y)"
+            } else {
+                return None;
+            }
+        }
+    };
+    Some(text)
+}
+
+fn with_tooltip(response: Response, label: &str) -> Response {
+    match tooltip(label) {
+        Some(text) => response.on_hover_text(text),
+        None => response,
+    }
+}
+
+/// Button with a leading icon and its hover description.
+pub struct IconWidget {
+    button: egui::Button<'static>,
+    label: String,
+}
+
+impl egui::Widget for IconWidget {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let label = self.label;
+        let response = ui.add(self.button);
+        with_tooltip(response, &label)
+    }
+}
+
 /// A button with a leading icon, keeping the standard button behaviour.
 ///
 /// The icon follows the button text colour, so it dims with a disabled button
-/// and matches the highlight of a selected row.
-pub fn widget(ui: &Ui, icon: Icon, text: impl Into<WidgetText>) -> egui::Button<'static> {
+/// and matches the highlight of a selected row. Hovering shows the description
+/// from [`tooltip`] when one exists.
+pub fn widget(ui: &Ui, icon: Icon, text: impl Into<WidgetText>) -> IconWidget {
     widget_at(ui, icon, text, ICON_SIZE)
 }
 
 /// Like [`widget`], with an explicit icon size for the toolbar.
-pub fn widget_at(
-    ui: &Ui,
-    icon: Icon,
-    text: impl Into<WidgetText>,
-    size: f32,
-) -> egui::Button<'static> {
-    egui::Button::new((image_at(ui.ctx(), icon, size), text))
-        .gap(6.0)
-        .image_tint_follows_text_color(true)
+pub fn widget_at(ui: &Ui, icon: Icon, text: impl Into<WidgetText>, size: f32) -> IconWidget {
+    let text = text.into();
+    let label = text.text().to_owned();
+    IconWidget {
+        button: egui::Button::new((image_at(ui.ctx(), icon, size), text))
+            .gap(6.0)
+            .image_tint_follows_text_color(true),
+        label,
+    }
 }
 
 /// Icon and label for a menu title, tinted like the surrounding text.
@@ -1214,10 +1451,13 @@ pub fn selectable_at(
     text: impl Into<WidgetText>,
     size: f32,
 ) -> Response {
-    ui.add(
-        egui::Button::selectable(selected, (image_at(ui.ctx(), icon, size), text))
+    let text = text.into();
+    let label = text.text().to_owned();
+    ui.add(IconWidget {
+        button: egui::Button::selectable(selected, (image_at(ui.ctx(), icon, size), text))
             .image_tint_follows_text_color(true),
-    )
+        label,
+    })
 }
 
 /// Add a selectable row bound to `current`, mirroring [`Ui::selectable_value`].
@@ -1281,8 +1521,10 @@ pub fn checkbox_at(
     text: impl Into<WidgetText>,
     size: f32,
 ) -> Response {
+    let text = text.into();
+    let label = text.text().to_owned();
     let image = image_at(ui.ctx(), icon, size).tint(ui.visuals().text_color());
-    ui.checkbox(checked, (image, text))
+    with_tooltip(ui.checkbox(checked, (image, text)), &label)
 }
 
 #[cfg(test)]

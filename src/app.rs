@@ -431,6 +431,15 @@ fn tool_help(tool: Tool) -> &'static str {
 }
 
 /// Icon shown by each tool in the toolbar and Draw menu.
+fn boolean_icon(op: crate::geometry::BooleanOp) -> Icon {
+    match op {
+        crate::geometry::BooleanOp::Union => Icon::BooleanUnion,
+        crate::geometry::BooleanOp::Difference => Icon::BooleanDifference,
+        crate::geometry::BooleanOp::Intersection => Icon::BooleanIntersection,
+        crate::geometry::BooleanOp::Xor => Icon::BooleanExclusion,
+    }
+}
+
 fn tool_icon(tool: Tool) -> Icon {
     match tool {
         Tool::Select => Icon::Select,
@@ -1391,7 +1400,15 @@ impl BeamWrightApp {
 
     fn shortcuts(&mut self, ui: &Ui) {
         let ctx = ui.ctx();
-        if ctx.text_edit_focused() || self.dialog.is_some() || self.confirm.is_some() {
+        if ctx.text_edit_focused()
+            || self.dialog.is_some()
+            || self.confirm.is_some()
+            || self.preferences_open
+            || self.machine_wizard_open
+            || self.machines_open
+            || self.cuts_open
+            || self.image_adjust.is_some()
+        {
             return;
         }
         let (
@@ -2233,7 +2250,7 @@ impl BeamWrightApp {
                         use crate::geometry::BooleanOp;
                         for op in BooleanOp::all() {
                             if ui
-                                .add_enabled(can_combine, icons::widget(ui, Icon::Boolean, op.label()))
+                                .add_enabled(can_combine, icons::widget(ui, boolean_icon(op), op.label()))
                                 .clicked()
                             {
                                 self.apply_boolean(op);
@@ -2476,7 +2493,7 @@ impl BeamWrightApp {
                             if icons::icon_button_enabled(
                                 ui,
                                 two_selected,
-                                Icon::Boolean,
+                                boolean_icon(op),
                                 22.0,
                                 op.label(),
                             )
