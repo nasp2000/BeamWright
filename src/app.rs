@@ -1038,6 +1038,16 @@ impl BeamWrightApp {
                     }
                     ui.separator();
                     if ui
+                        .add_enabled(
+                            self.editor.selection.len() == 1,
+                            egui::Button::new("Text to outlines"),
+                        )
+                        .clicked()
+                    {
+                        self.apply_text_outlines();
+                        ui.close();
+                    }
+                    if ui
                         .add_enabled(enabled, egui::Button::new("Reset transforms"))
                         .clicked()
                     {
@@ -3181,6 +3191,18 @@ impl BeamWrightApp {
             self.status = format!("{} outline intersection(s)", hits.len());
         }
         self.show_report(report);
+    }
+
+    fn apply_text_outlines(&mut self) {
+        let Some(id) = self.editor.selection.ids().first().cloned() else {
+            return;
+        };
+        match self.editor.convert_text_to_outlines(&id) {
+            Ok(outlines) => {
+                self.status = format!("Converted text to {} outline(s)", outlines.len());
+            }
+            Err(error) => self.status = format!("Text conversion failed: {error}"),
+        }
     }
 
     fn apply_trim(&mut self) {

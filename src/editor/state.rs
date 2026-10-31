@@ -483,6 +483,52 @@ impl EditorState {
         )
     }
 
+    /// Replace a text object with vector outlines produced by the bundled font.
+    ///
+    /// Each closed contour becomes its own path object (holes included) in the
+    /// document, so the result no longer depends on any font being installed.
+    /// Returns the new object identifiers. The conversion is undoable.
+    pub fn convert_text_to_outlines(
+        &mut self,
+        object_id: &str,
+    ) -> std::result::Result<Vec<String>, String> {
+        let index = self
+            .document
+            .objects
+            .iter()
+            .position(|object| object.id == object_id)
+            .ok_or_else(|| format!("unknown object: {object_id}"))?;
+        self.ensure_editable(index)?;
+        let object = self.document.objects[index].clone();
+        let Shape::Text(text) = &object.shape else {
+            return Err(format!("'{}' is not text", object.name));
+        };
+        let paths = crate::objects::text_to_paths(text)?;
+        if paths.is_empty() {
+            return Err("the text has no printable characters".to_string());
+        }
+        self.record();
+        let mut style = object.style.clone();
+        if style.fill.is_none() && style.stroke.is_none() {
+            style.fill = Some("#000000".to_string());
+        }
+        self.document.objects.remove(index);
+        self.selection.clear();
+        let mut ids = Vec::with_capacity(paths.len());
+        for (position, path) in paths.into_iter().enumerate() {
+            let path = path.transform(&object.transform);
+            let mut outline =
+                Object::new(object.layer_id.clone(), Shape::Path(path)).with_style(style.clone());
+            outline.name = format!("{} outline {}", object.name, position + 1);
+            outline.operation_id.clone_from(&object.operation_id);
+            let id = outline.id.clone();
+            ids.push(id.clone());
+            self.selection.add(id);
+            self.document.objects.insert(index + position, outline);
+        }
+        Ok(ids)
+    }
+
     /// Insert a text object whose anchor is `at`, selected and ready to edit.
     pub fn add_text(&mut self, at: Point2) -> Option<String> {
         let text = crate::objects::TextObject {
@@ -4166,6 +4212,73 @@ mod tests {
         );
         assert!(editor.undo());
         assert_eq!(editor.document.objects.len(), 2);
+    }
+
+    #[test]
+    fn text_converts_to_outline_paths() {
+        let mut editor = editor();
+        let id = editor.add_text(Point2::new(10.0, 20.0)).unwrap();
+        if let Some(crate::document::Object {
+            shape: Shape::Text(text),
+            ..
+        }) = editor.document.object_mut(&id)
+        {
+            text.content = "AB".to_string();
+            text.size = 10.0;
+        }
+        let outlines = editor.convert_text_to_outlines(&id).unwrap();
+        assert!(outlines.len() >= 2);
+        assert!(editor.document.object(&id).is_none());
+        assert_eq!(editor.document.objects.len(), outlines.len());
+        assert_eq!(editor.selection.len(), outlines.len());
+        for outline in &editor.document.objects {
+            assert!(matches!(&outline.shape, Shape::Path(path) if path.closed));
+            let (min, max) = outline.bounds().unwrap();
+            assert!(max.x > min.x && max.y > min.y);
+        }
+        let min = editor
+            .document
+            .objects
+            .iter()
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| min.x)
+            .fold(f64::INFINITY, f64::min);
+        assert!((9.0..=11.0).contains(&min));
+        assert!(editor.undo());
+        assert!(editor.document.object(&id).is_some());
+    }
+
+    #[test]
+    fn text_outlines_follow_the_object_transform() {
+        let mut editor = editor();
+        let id = editor.add_text(Point2::new(0.0, 0.0)).unwrap();
+        if let Some(object) = editor.document.object_mut(&id) {
+            object.transform = Transform2::translate(30.0, 40.0);
+            if let Shape::Text(text) = &mut object.shape {
+                text.content = "I".to_string();
+            }
+        }
+        let outlines = editor.convert_text_to_outlines(&id).unwrap();
+        let min = futures_min_x(&editor, &outlines);
+        assert!((30.0..32.0).contains(&min));
+    }
+
+    fn futures_min_x(editor: &EditorState, ids: &[String]) -> f64 {
+        ids.iter()
+            .filter_map(|id| editor.document.object(id))
+            .filter_map(crate::document::Object::bounds)
+            .map(|(min, _)| min.x)
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    #[test]
+    fn text_conversion_rejects_other_shapes() {
+        let mut editor = editor();
+        let rect = editor
+            .add_rectangle(Point2::new(0.0, 0.0), Point2::new(4.0, 4.0))
+            .unwrap();
+        assert!(editor.convert_text_to_outlines(&rect).is_err());
+        assert!(editor.convert_text_to_outlines("missing").is_err());
     }
 
     #[test]

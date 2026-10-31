@@ -140,6 +140,30 @@ impl McpServer {
                 )?;
                 Ok(json!({"id": id, "objects": self.editor.document.objects.len()}))
             }
+            "add_text" => {
+                let x = number(arguments, "x").unwrap_or(0.0);
+                let y = number(arguments, "y").unwrap_or(0.0);
+                self.editor.selection.clear();
+                let id = self
+                    .editor
+                    .add_text(Point2::new(x, y))
+                    .ok_or_else(|| BeamError::InvalidInput("cannot add text".to_string()))?;
+                if let Some(content) = string(arguments, "content") {
+                    if let Some(object) = self.editor.document.object_mut(&id) {
+                        if let Shape::Text(text) = &mut object.shape {
+                            text.content = content;
+                        }
+                    }
+                }
+                if let Some(size) = number(arguments, "size") {
+                    if let Some(object) = self.editor.document.object_mut(&id) {
+                        if let Shape::Text(text) = &mut object.shape {
+                            text.size = size.max(0.1);
+                        }
+                    }
+                }
+                Ok(json!({"id": id, "objects": self.editor.document.objects.len()}))
+            }
             "add_line" => {
                 let x1 = number(arguments, "x1").ok_or_else(|| missing("x1"))?;
                 let y1 = number(arguments, "y1").ok_or_else(|| missing("y1"))?;
@@ -597,6 +621,17 @@ impl McpServer {
                 let aligned = self.editor.align_selected_node_handles();
                 Ok(json!({"aligned": aligned}))
             }
+            "text_to_outlines" => {
+                let id = string(arguments, "id").ok_or_else(|| missing("id"))?;
+                let outlines = self
+                    .editor
+                    .convert_text_to_outlines(&id)
+                    .map_err(BeamError::InvalidInput)?;
+                Ok(json!({
+                    "outlines": outlines.len(),
+                    "objects": self.editor.document.objects.len()
+                }))
+            }
             "outline_stroke" => {
                 self.select_scope(arguments)?;
                 let count = self
@@ -869,6 +904,16 @@ fn tool_definitions() -> Vec<Value> {
             }, "required": ["radius"]}),
         ),
         tool_with(
+            "add_text",
+            "Add a text object at a point, optionally with content and size.",
+            json!({"type": "object", "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "content": {"type": "string"},
+                "size": {"type": "number"}
+            }}),
+        ),
+        tool_with(
             "add_line",
             "Add a line in millimetres.",
             json!({"type": "object", "properties": {
@@ -1096,6 +1141,11 @@ fn tool_definitions() -> Vec<Value> {
             "align_handles",
             "Align one node's two handles into a straight line.",
             json!({"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"]}),
+        ),
+        tool_with(
+            "text_to_outlines",
+            "Replace a text object with vector outlines from the bundled font.",
+            json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
         ),
         tool_with(
             "outline_stroke",
@@ -1330,6 +1380,24 @@ mod tests {
         let offset = call(&mut server, "offset", json!({"distance": 1.0, "ids": [id]}));
         assert_eq!(offset["result"]["offset"], 1);
         assert_eq!(server.editor.document.objects.len(), 1);
+    }
+
+    #[test]
+    fn text_outline_tool() {
+        let mut server = McpServer::new();
+        let id = call(
+            &mut server,
+            "add_text",
+            json!({"x": 10.0, "y": 20.0, "content": "AB", "size": 10.0}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let outlines = call(&mut server, "text_to_outlines", json!({"id": id}));
+        assert!(outlines["result"]["outlines"].as_u64().unwrap() >= 2);
+        assert!(server.editor.document.object(&id).is_none());
+        let missing = call(&mut server, "text_to_outlines", json!({"id": "missing"}));
+        assert!(missing.get("error").is_some());
     }
 
     #[test]
