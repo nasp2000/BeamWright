@@ -224,6 +224,9 @@ pub struct MaterialProfile {
     pub builtin: bool,
     #[serde(flatten)]
     pub meta: ProfileMeta,
+    /// Operation profiles recommended for this material.
+    #[serde(default)]
+    pub recommended_operations: Vec<String>,
 }
 
 impl MaterialProfile {
@@ -236,11 +239,20 @@ impl MaterialProfile {
             notes: String::new(),
             builtin: false,
             meta: ProfileMeta::new(),
+            recommended_operations: Vec::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
         self.meta.validate()?;
+        for (index, operation) in self.recommended_operations.iter().enumerate() {
+            if operation.trim().is_empty() {
+                return Err("recommended operation ids must not be empty".to_string());
+            }
+            if self.recommended_operations[..index].contains(operation) {
+                return Err(format!("duplicate recommended operation: {operation}"));
+            }
+        }
         if self.id.trim().is_empty() {
             return Err("material profile id must not be empty".to_string());
         }
@@ -444,6 +456,7 @@ impl ProfileLibrary {
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
             meta: ProfileMeta::with_category("Plywood"),
+            recommended_operations: Vec::new(),
         });
         library.materials.push(MaterialProfile {
             id: "builtin-acrylic-3".to_string(),
@@ -453,6 +466,7 @@ impl ProfileLibrary {
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
             meta: ProfileMeta::with_category("Acrylic"),
+            recommended_operations: Vec::new(),
         });
         library.materials.push(MaterialProfile {
             id: "builtin-cardboard-2".to_string(),
@@ -462,6 +476,7 @@ impl ProfileLibrary {
             notes: "Reference values only; test on your own material.".to_string(),
             builtin: true,
             meta: ProfileMeta::with_category("Cardboard"),
+            recommended_operations: Vec::new(),
         });
         library.operations.push(OperationProfile {
             id: "builtin-cut".to_string(),
@@ -835,6 +850,7 @@ mod tests {
             notes: String::new(),
             builtin: false,
             meta: ProfileMeta::default(),
+            recommended_operations: Vec::new(),
         });
         assert!(library.validate().is_err());
     }
@@ -1011,6 +1027,28 @@ mod tests {
         assert_eq!(library.search("signage").len(), 1);
         assert_eq!(library.search("stencil").len(), 1);
         assert_eq!(library.search("missing").len(), 0);
+    }
+
+    #[test]
+    fn recommended_operations_round_trip_and_validate() {
+        let mut profile = MaterialProfile::new("Birch", "Birch", 3.0);
+        assert_eq!(profile.recommended_operations.len(), 0);
+        profile.recommended_operations = vec!["builtin-cut".to_string()];
+        assert!(profile.validate().is_ok());
+        let json = serde_json::to_string(&profile).unwrap();
+        let loaded: MaterialProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.recommended_operations, vec!["builtin-cut"]);
+
+        profile.recommended_operations = vec![String::new()];
+        assert!(profile.validate().is_err());
+        profile.recommended_operations = vec!["a".to_string(), "a".to_string()];
+        assert!(profile.validate().is_err());
+
+        let legacy: MaterialProfile = serde_json::from_str(
+            r#"{"id":"x","name":"Old","material":"Wood","thickness_mm":3.0,"notes":"","builtin":false}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.recommended_operations.len(), 0);
     }
 
     #[test]

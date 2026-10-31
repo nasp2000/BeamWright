@@ -202,6 +202,7 @@ mod tests {
             notes: String::new(),
             builtin: false,
             meta: crate::profiles::model::ProfileMeta::default(),
+            recommended_operations: Vec::new(),
         });
         assert!(save(&library, &path).is_err());
         let _ = std::fs::remove_file(&path);

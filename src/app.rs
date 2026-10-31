@@ -4704,6 +4704,12 @@ impl BeamWrightApp {
                         }
                     }
                 });
+                let operation_choices: Vec<(String, String)> = self
+                    .profiles
+                    .operations
+                    .iter()
+                    .map(|operation| (operation.id.clone(), operation.name.clone()))
+                    .collect();
                 if let Some(id) = self.selected_material.clone() {
                     if let Some(profile) = self
                         .profiles
@@ -4737,6 +4743,27 @@ impl BeamWrightApp {
                                 ui.label("Notes");
                                 changed |= ui.text_edit_singleline(&mut profile.notes).changed();
                             });
+                            ui.separator();
+                            ui.label("Recommended operations");
+                            for (operation_id, operation_name) in &operation_choices {
+                                let mut checked = profile
+                                    .recommended_operations
+                                    .iter()
+                                    .any(|recommended| recommended == operation_id);
+                                if ui.checkbox(&mut checked, operation_name).changed() {
+                                    if checked {
+                                        profile
+                                            .recommended_operations
+                                            .push(operation_id.clone());
+                                    } else {
+                                        profile.recommended_operations.retain(|recommended| {
+                                            recommended != operation_id
+                                        });
+                                    }
+                                    changed = true;
+                                }
+                            }
+                            ui.weak("Missing operation profiles are ignored.");
                         });
                         changed |= profile_meta_editor(
                             ui,
