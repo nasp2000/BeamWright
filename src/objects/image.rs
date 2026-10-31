@@ -85,6 +85,15 @@ pub struct ImageSettings {
     /// Mirror the picture top to bottom before processing.
     #[serde(default)]
     pub flip_vertical: bool,
+    /// Rotation of the halftone screen, in degrees.
+    #[serde(default = "default_halftone_angle")]
+    pub halftone_angle_degrees: f64,
+    /// Unsharp-mask radius in pixels; 0 disables enhancement.
+    #[serde(default)]
+    pub enhance_radius_px: u32,
+    /// Unsharp-mask amount; 0 disables enhancement.
+    #[serde(default)]
+    pub enhance_amount: f32,
 }
 
 impl Default for ImageSettings {
@@ -102,6 +111,9 @@ impl Default for ImageSettings {
             target_height_px: 0,
             flip_horizontal: false,
             flip_vertical: false,
+            halftone_angle_degrees: default_halftone_angle(),
+            enhance_radius_px: 0,
+            enhance_amount: 0.0,
         }
     }
 }
@@ -122,6 +134,17 @@ impl ImageSettings {
         }
         if ![0.0, 90.0, 180.0, 270.0].contains(&self.rotation_degrees) {
             return Err("image rotation must be 0, 90, 180 or 270 degrees".to_string());
+        }
+        if !self.halftone_angle_degrees.is_finite()
+            || !(-360.0..=360.0).contains(&self.halftone_angle_degrees)
+        {
+            return Err("halftone angle must be between -360 and 360 degrees".to_string());
+        }
+        if self.enhance_radius_px > 32 {
+            return Err("enhancement radius must be at most 32 pixels".to_string());
+        }
+        if !self.enhance_amount.is_finite() || !(0.0..=5.0).contains(&self.enhance_amount) {
+            return Err("enhancement amount must be between 0 and 5".to_string());
         }
         let has_width = self.target_width_px > 0;
         let has_height = self.target_height_px > 0;

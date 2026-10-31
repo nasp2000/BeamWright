@@ -54,6 +54,7 @@ enum ContextAction {
     Unlock,
     EditNodes,
     TextToOutlines,
+    AdjustImage,
     ExportSvg,
     ExportDxf,
     ExportGcode,
@@ -84,6 +85,7 @@ impl ContextAction {
             ContextAction::Unlock => "Unlock",
             ContextAction::EditNodes => "Edit nodes",
             ContextAction::TextToOutlines => "Text to outlines",
+            ContextAction::AdjustImage => "Adjust image...",
             ContextAction::ExportSvg => "Export selection as SVG...",
             ContextAction::ExportDxf => "Export selection as DXF...",
             ContextAction::ExportGcode => "Export selection as G-code...",
@@ -114,6 +116,7 @@ impl ContextAction {
             ContextAction::Unlock => Icon::Unlock,
             ContextAction::EditNodes => Icon::Nodes,
             ContextAction::TextToOutlines => Icon::TextOutline,
+            ContextAction::AdjustImage => Icon::Image,
             ContextAction::ExportSvg | ContextAction::ExportDxf | ContextAction::ExportGcode => {
                 Icon::Export
             }
@@ -131,7 +134,11 @@ impl ContextAction {
 }
 
 /// Entries of the context menu over the selected objects.
-fn object_context_actions(count: usize, text_selected: bool) -> Vec<ContextAction> {
+fn object_context_actions(
+    count: usize,
+    text_selected: bool,
+    image_selected: bool,
+) -> Vec<ContextAction> {
     let mut actions = vec![
         ContextAction::Cut,
         ContextAction::Copy,
@@ -151,6 +158,9 @@ fn object_context_actions(count: usize, text_selected: bool) -> Vec<ContextActio
     }
     if text_selected {
         actions.push(ContextAction::TextToOutlines);
+    }
+    if image_selected {
+        actions.push(ContextAction::AdjustImage);
     }
     actions.extend([
         ContextAction::ExportSvg,
@@ -245,6 +255,9 @@ pub struct BeamWrightApp {
     report_open: bool,
     preview_toolpaths: bool,
     image_previews: std::collections::HashMap<String, ImagePreview>,
+    image_original_previews: std::collections::HashMap<String, egui::TextureHandle>,
+    image_adjust: Option<String>,
+    image_adjust_snapshot: Option<Document>,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -629,6 +642,9 @@ impl BeamWrightApp {
             report_open: false,
             preview_toolpaths: false,
             image_previews: std::collections::HashMap::new(),
+            image_original_previews: std::collections::HashMap::new(),
+            image_adjust: None,
+            image_adjust_snapshot: None,
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -3957,19 +3973,25 @@ impl BeamWrightApp {
 
     fn object_context_menu(&mut self, ui: &mut Ui) {
         let count = self.editor.selection.len();
-        let text_selected = if count == 1 {
-            self.editor.selection.ids().first().is_some_and(|id| {
+        let first = self.editor.selection.ids().first().cloned();
+        let text_selected = count == 1
+            && first.as_ref().is_some_and(|id| {
                 self.editor
                     .document
                     .objects
                     .iter()
                     .any(|object| &object.id == id && matches!(object.shape, Shape::Text(_)))
-            })
-        } else {
-            false
-        };
+            });
+        let image_selected = count == 1
+            && first.as_ref().is_some_and(|id| {
+                self.editor
+                    .document
+                    .objects
+                    .iter()
+                    .any(|object| &object.id == id && matches!(object.shape, Shape::Image(_)))
+            });
         let has_selection = count > 0;
-        for action in object_context_actions(count, text_selected) {
+        for action in object_context_actions(count, text_selected, image_selected) {
             if matches!(
                 action,
                 ContextAction::ToFront
@@ -3995,6 +4017,7 @@ impl BeamWrightApp {
                 ContextAction::Group => count >= 2,
                 ContextAction::EditNodes => count == 1,
                 ContextAction::TextToOutlines => text_selected,
+                ContextAction::AdjustImage => image_selected,
                 _ => true,
             };
             if icons::button_enabled(ui, enabled, action.icon(), action.label()).clicked() {
@@ -4106,6 +4129,7 @@ impl BeamWrightApp {
                 }
             }
             ContextAction::TextToOutlines => self.apply_text_outlines(),
+            ContextAction::AdjustImage => self.open_image_adjust(),
             ContextAction::ExportSvg => {
                 self.export_subset = true;
                 self.open_dialog(FileMode::ExportSvg);
@@ -4129,6 +4153,304 @@ impl BeamWrightApp {
             ContextAction::DocumentProperties => self.doc_properties_open = true,
             ContextAction::Preview => self.open_preview(),
             ContextAction::Preferences => self.preferences_open = true,
+        }
+    }
+
+    fn open_image_adjust(&mut self) {
+        let Some(id) = self.editor.selection.ids().first().cloned() else {
+            return;
+        };
+        let is_image = self.editor.document.objects.iter().any(|object| {
+            object.id == id && matches!(object.shape, crate::document::Shape::Image(_))
+        });
+        if !is_image {
+            return;
+        }
+        self.image_adjust_snapshot = Some(self.editor.document.clone());
+        self.image_adjust = Some(id);
+    }
+
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn original_image_texture(
+        &mut self,
+        ctx: &egui::Context,
+        image: &crate::objects::ImageObject,
+    ) -> Option<egui::TextureHandle> {
+        let key = format!(
+            "{}|{:?}|{}",
+            image.path, image.crop, image.settings.rotation_degrees
+        );
+        if let Some(texture) = self.image_original_previews.get(&key) {
+            return Some(texture.clone());
+        }
+        let mut picture = image::open(&image.path).ok()?;
+        if let Some(crop) = image.crop {
+            picture = picture.crop_imm(crop.x, crop.y, crop.width, crop.height);
+        }
+        if image.settings.rotation_degrees == 90.0 {
+            picture = picture.rotate90();
+        } else if image.settings.rotation_degrees == 180.0 {
+            picture = picture.rotate180();
+        } else if image.settings.rotation_degrees == 270.0 {
+            picture = picture.rotate270();
+        }
+        let width = picture.width().max(1);
+        let height = picture.height().max(1);
+        let scale = (480.0 / width.max(height) as f32).min(1.0);
+        if scale < 1.0 {
+            let target_width = ((width as f32) * scale).max(1.0) as u32;
+            let target_height = ((height as f32) * scale).max(1.0) as u32;
+            picture = picture.resize(
+                target_width,
+                target_height,
+                image::imageops::FilterType::Triangle,
+            );
+        }
+        let rgba = picture.to_rgba8();
+        let color = egui::ColorImage::from_rgba_unmultiplied(
+            [rgba.width() as usize, rgba.height() as usize],
+            rgba.as_raw(),
+        );
+        let texture = ctx.load_texture(
+            format!("image-original-{key}"),
+            color,
+            egui::TextureOptions::LINEAR,
+        );
+        self.image_original_previews.insert(key, texture.clone());
+        Some(texture)
+    }
+
+    fn image_adjust_window(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.image_adjust.clone() else {
+            return;
+        };
+        let Some(index) = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .position(|object| object.id == id)
+        else {
+            self.image_adjust = None;
+            return;
+        };
+        let mut image = match &self.editor.document.objects[index].shape {
+            crate::document::Shape::Image(image) => image.clone(),
+            _ => {
+                self.image_adjust = None;
+                return;
+            }
+        };
+        let object_name = self.editor.document.objects[index].name.clone();
+        let original = image.clone();
+        let original_texture = self.original_image_texture(ctx, &image);
+        let processed_texture = self
+            .image_previews
+            .get(&id)
+            .map(|preview| preview.texture.clone());
+
+        let mut close = false;
+        let mut cancel = false;
+        let mut reset = false;
+        let mut preset: Option<crate::objects::ImageSettings> = None;
+        egui::Window::new(format!("Adjust image - {object_name}"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(900.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label("Original");
+                        if let Some(texture) = &original_texture {
+                            ui.add(
+                                egui::Image::new(texture)
+                                    .max_size(egui::vec2(410.0, 300.0))
+                                    .shrink_to_fit(),
+                            );
+                        } else {
+                            ui.weak("Cannot read the image file");
+                        }
+                        ui.weak(format!("{} x {} px", image.width_px, image.height_px));
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.label("Preview");
+                        if let Some(texture) = &processed_texture {
+                            ui.add(
+                                egui::Image::new(texture)
+                                    .max_size(egui::vec2(410.0, 300.0))
+                                    .shrink_to_fit(),
+                            );
+                        } else {
+                            ui.weak("No preview available");
+                        }
+                        let (work_width, work_height) = image.effective_size_px();
+                        ui.weak(format!(
+                            "{work_width} x {work_height} px at {:.0} dpi",
+                            image.effective_dpi()
+                        ));
+                    });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    egui::Grid::new("image_adjust_layers")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Image mode");
+                            let mut mode = image.settings.mode;
+                            egui::ComboBox::from_id_salt("image_adjust_mode")
+                                .selected_text(mode.label())
+                                .show_ui(ui, |ui| {
+                                    for candidate in crate::objects::ImageMode::all() {
+                                        ui.selectable_value(
+                                            &mut mode,
+                                            candidate,
+                                            candidate.label(),
+                                        );
+                                    }
+                                });
+                            image.settings.mode = mode;
+                            ui.end_row();
+                            ui.label("Negative image");
+                            ui.checkbox(&mut image.settings.invert, "");
+                            ui.end_row();
+                            ui.label("Cells per inch");
+                            ui.weak(format!(
+                                "{:.1}",
+                                25.4 / image.settings.line_interval_mm.max(0.001)
+                            ));
+                            ui.end_row();
+                            ui.label("Line interval (mm)");
+                            ui.add(
+                                egui::DragValue::new(&mut image.settings.line_interval_mm)
+                                    .speed(0.01)
+                                    .range(0.01..=2.0),
+                            );
+                            ui.end_row();
+                            ui.label("Halftone angle");
+                            ui.add(
+                                egui::DragValue::new(&mut image.settings.halftone_angle_degrees)
+                                    .speed(0.5)
+                                    .range(-360.0..=360.0)
+                                    .suffix(" deg"),
+                            );
+                            ui.end_row();
+                            ui.label("DPI");
+                            ui.weak(format!("{:.0}", image.effective_dpi()));
+                            ui.end_row();
+                        });
+                    ui.separator();
+                    egui::Grid::new("image_adjust_settings")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Contrast");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.contrast, 0.25..=3.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                            ui.label("Brightness");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.brightness, -100..=100)
+                                    .fixed_decimals(0),
+                            );
+                            ui.end_row();
+                            ui.label("Gamma");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.gamma, 0.2..=3.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                            ui.label("Enhance radius");
+                            ui.add(
+                                egui::DragValue::new(&mut image.settings.enhance_radius_px)
+                                    .range(0..=32)
+                                    .suffix(" px"),
+                            );
+                            ui.end_row();
+                            ui.label("Enhance amount");
+                            ui.add(
+                                egui::DragValue::new(&mut image.settings.enhance_amount)
+                                    .speed(0.05)
+                                    .range(0.0..=5.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                        });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("image_adjust_presets")
+                        .selected_text("Presets")
+                        .width(180.0)
+                        .show_ui(ui, |ui| {
+                            for profile in &self.profiles.images {
+                                if ui.selectable_label(false, &profile.name).clicked() {
+                                    preset = Some(profile.settings);
+                                }
+                            }
+                        });
+                    if ui.button("Reset all").clicked() {
+                        reset = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("OK").clicked() {
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+
+        if let Some(preset) = preset {
+            image.settings = preset;
+        }
+        if reset {
+            image.settings = crate::objects::ImageSettings::default();
+        }
+        if cancel {
+            self.image_adjust_snapshot = None;
+            if let Some(current) = self
+                .editor
+                .document
+                .objects
+                .iter_mut()
+                .find(|object| object.id == id)
+            {
+                if let crate::document::Shape::Image(current) = &mut current.shape {
+                    current.settings = original.settings;
+                }
+            }
+            self.image_adjust = None;
+            return;
+        }
+        let settings_changed = image.settings != original.settings;
+        if let Some(current) = self
+            .editor
+            .document
+            .objects
+            .iter_mut()
+            .find(|object| object.id == id)
+        {
+            if let crate::document::Shape::Image(current) = &mut current.shape {
+                current.settings = image.settings;
+            }
+        }
+        if settings_changed {
+            ctx.request_repaint();
+        }
+        if close {
+            if let Some(snapshot) = self.image_adjust_snapshot.take() {
+                if snapshot != self.editor.document {
+                    self.editor.history.record(&snapshot, "Adjust image");
+                }
+            }
+            self.image_adjust = None;
         }
     }
 
@@ -6225,6 +6547,9 @@ impl BeamWrightApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.image_adjust.is_some() {
+            self.image_adjust_window(ctx);
+        }
         if let Some(dialog) = &mut self.dialog {
             let result = dialog.show(ctx);
             match result {
@@ -6611,20 +6936,24 @@ mod tests {
 
     #[test]
     fn object_context_menu_matches_the_selection() {
-        let none = object_context_actions(0, false);
+        let none = object_context_actions(0, false, false);
         assert!(none.contains(&ContextAction::Cut));
         assert!(!none.contains(&ContextAction::Group));
         assert!(!none.contains(&ContextAction::EditNodes));
         assert!(!none.contains(&ContextAction::TextToOutlines));
 
-        let pair = object_context_actions(2, false);
+        let pair = object_context_actions(2, false, false);
         assert!(pair.contains(&ContextAction::Group));
         assert!(!pair.contains(&ContextAction::EditNodes));
 
-        let text = object_context_actions(1, true);
+        let text = object_context_actions(1, true, false);
         assert!(text.contains(&ContextAction::EditNodes));
         assert!(text.contains(&ContextAction::TextToOutlines));
         assert!(!text.contains(&ContextAction::Group));
+
+        let image = object_context_actions(1, false, true);
+        assert!(image.contains(&ContextAction::AdjustImage));
+        assert!(!image.contains(&ContextAction::TextToOutlines));
     }
 
     #[test]

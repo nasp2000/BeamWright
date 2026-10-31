@@ -42,10 +42,19 @@ pub fn process_luma(
     }
     settings.validate().map_err(BeamError::InvalidInput)?;
 
-    let adjusted: Vec<f32> = luma
+    let mut adjusted: Vec<f32> = luma
         .iter()
         .map(|value| adjust(f32::from(*value), settings))
         .collect();
+    if settings.enhance_radius_px > 0 && settings.enhance_amount > 0.0 {
+        enhance(
+            &mut adjusted,
+            width,
+            height,
+            settings.enhance_radius_px as usize,
+            settings.enhance_amount,
+        );
+    }
 
     let mut burn = vec![false; adjusted.len()];
     match settings.mode {
@@ -85,11 +94,14 @@ pub fn process_luma(
             }
         }
         ImageMode::Newsprint => {
+            let (sin, cos) = settings.halftone_angle_degrees.to_radians().sin_cos();
             for y in 0..height {
                 for x in 0..width {
                     let index = y * width + x;
-                    let u = (x + y) % 8;
-                    let v = (x + 2 * y) % 8;
+                    let rx = (x as f64 * cos + y as f64 * sin).rem_euclid(8.0) as usize;
+                    let ry = (-(x as f64) * sin + y as f64 * cos).rem_euclid(8.0) as usize;
+                    let u = (rx + ry) % 8;
+                    let v = (rx + 2 * ry) % 8;
                     let limit = (f32::from(BAYER_8[u][v]) + 0.5) * 255.0 / 64.0;
                     burn[index] = adjusted[index] < limit;
                 }
@@ -220,6 +232,43 @@ fn sketch(adjusted: &[f32], width: usize, height: usize, threshold: u8) -> Vec<b
         }
     }
     burn
+}
+
+/// Unsharp mask: add the difference between the image and a box blur.
+fn enhance(values: &mut [f32], width: usize, height: usize, radius: usize, amount: f32) {
+    let blurred = box_blur(values, width, height, radius);
+    for (value, blurred) in values.iter_mut().zip(blurred) {
+        *value = (*value + amount * (*value - blurred)).clamp(0.0, 255.0);
+    }
+}
+
+fn box_blur(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+    if radius == 0 {
+        return values.to_vec();
+    }
+    let mut horizontal = vec![0.0; values.len()];
+    #[allow(clippy::cast_precision_loss)]
+    for y in 0..height {
+        for x in 0..width {
+            let start = x.saturating_sub(radius);
+            let end = (x + radius).min(width - 1);
+            let sum: f32 = (start..=end).map(|sx| values[y * width + sx]).sum();
+            let count = (end - start + 1) as f32;
+            horizontal[y * width + x] = sum / count;
+        }
+    }
+    let mut out = vec![0.0; values.len()];
+    #[allow(clippy::cast_precision_loss)]
+    for y in 0..height {
+        let start = y.saturating_sub(radius);
+        let end = (y + radius).min(height - 1);
+        for x in 0..width {
+            let sum: f32 = (start..=end).map(|sy| horizontal[sy * width + x]).sum();
+            let count = (end - start + 1) as f32;
+            out[y * width + x] = sum / count;
+        }
+    }
+    out
 }
 
 fn adjust(value: f32, settings: &ImageSettings) -> f32 {
