@@ -40,6 +40,7 @@ impl OperationType {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperationParams {
     pub speed: f64,

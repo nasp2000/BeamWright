@@ -285,6 +285,7 @@ impl TransformBake {
 ///
 /// Handles linear, outlined and offset fills, including the margin, angle,
 /// pattern offset and alternating direction of a linear fill.
+#[allow(clippy::too_many_lines)]
 fn push_fill_toolpath(
     toolpaths: &mut Vec<Toolpath>,
     object: &Object,
