@@ -2586,15 +2586,12 @@ impl BeamWrightApp {
         });
     }
 
-    fn tool_strip(&mut self, ctx: &egui::Context, rect: Rect) {
-        egui::Area::new(egui::Id::new("tool_strip"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(rect.left_top() + egui::vec2(8.0, 8.0))
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height((rect.height() - 24.0).max(180.0))
-                        .show(ui, |ui| {
+    fn tool_strip(&mut self, ui: &mut Ui) {
+        egui::Panel::left("tool_strip")
+            .resizable(false)
+            .exact_size(56.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         for tool in [
                             Tool::Select,
@@ -2744,7 +2741,6 @@ impl BeamWrightApp {
                                 .range(0.1..=50.0)
                                 .suffix(" mm"),
                         );
-                        });
                     });
                 });
             });
@@ -4063,8 +4059,6 @@ impl BeamWrightApp {
                     self.zoom_to_selection_request = false;
                 }
                 let ctx = ui.ctx().clone();
-                self.tool_strip(&ctx, rect);
-                let over_toolbar = ctx.is_pointer_over_egui();
                 let modal = self.dialog.is_some()
                     || self.confirm.is_some()
                     || self.about_open
@@ -4091,8 +4085,7 @@ impl BeamWrightApp {
                     self.cursor_doc = Some(Point2::new(x, y));
                 }
 
-                let pointer_in_canvas =
-                    pointer.is_some_and(|pos| rect.contains(pos)) && !over_toolbar;
+                let pointer_in_canvas = pointer.is_some_and(|pos| rect.contains(pos));
                 if pointer_in_canvas {
                     let scroll = ctx.input(|input| input.smooth_scroll_delta.y);
                     if scroll.abs() > 0.0 {
@@ -7994,6 +7987,7 @@ impl eframe::App for BeamWrightApp {
         self.menu_bar(ui);
         self.toolbar(ui);
         self.status_bar(ui);
+        self.tool_strip(ui);
         if self.show_layers_panel {
             self.layers_panel(ui);
         }
