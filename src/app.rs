@@ -479,10 +479,10 @@ fn alignment_snap(
         for line in lines {
             for candidate in candidates {
                 let difference = candidate - line;
-                if difference.abs() <= tolerance {
-                    if best.is_none_or(|(best, _)| difference.abs() < best.abs()) {
-                        best = Some((difference, *candidate));
-                    }
+                if difference.abs() <= tolerance
+                    && best.is_none_or(|(best, _)| difference.abs() < best.abs())
+                {
+                    best = Some((difference, *candidate));
                 }
             }
         }
@@ -496,7 +496,7 @@ fn alignment_snap(
     };
     let adjust_x = snap(current_x, &verticals, &mut guides);
     let adjust_y = snap(current_y, &horizontals, &mut guides);
-    guides.sort_by(|left, right| left.total_cmp(right));
+    guides.sort_by(f64::total_cmp);
     guides.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
     let mut result = Vec::new();
     for guide in guides {
