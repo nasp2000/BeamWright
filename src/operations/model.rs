@@ -80,6 +80,16 @@ pub struct OperationParams {
     /// Half of this is removed from contour cuts to compensate the kerf.
     #[serde(default)]
     pub kerf_mm: f64,
+    /// Number of holding tabs left uncut on contour cuts.
+    #[serde(default)]
+    pub tabs: u32,
+    /// Width of each holding tab, in millimetres.
+    #[serde(default = "default_tab_width")]
+    pub tab_width_mm: f64,
+}
+
+fn default_tab_width() -> f64 {
+    2.0
 }
 
 fn default_cut_color() -> String {
@@ -171,6 +181,12 @@ impl OperationParams {
             yes_no(target.show_in_preview),
         );
         push("Colour", self.color.clone(), target.color.clone());
+        push("Tabs", self.tabs.to_string(), target.tabs.to_string());
+        push(
+            "Tab width",
+            format!("{:.2} mm", self.tab_width_mm),
+            format!("{:.2} mm", target.tab_width_mm),
+        );
         push(
             "Kerf",
             format!("{:.2} mm", self.kerf_mm),
@@ -198,6 +214,8 @@ impl Default for OperationParams {
             cross_hatch: false,
             overscan_mm: 0.0,
             kerf_mm: 0.0,
+            tabs: 0,
+            tab_width_mm: default_tab_width(),
         }
     }
 }

@@ -60,6 +60,8 @@ struct Resolved {
     fill_offset_mm: f64,
     overscan_mm: f64,
     kerf_mm: f64,
+    tabs: u32,
+    tab_width_mm: f64,
     cross_hatch: bool,
     air_assist: bool,
     constant_power: bool,
@@ -86,6 +88,8 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
             overscan_mm: operation.params.overscan_mm.max(0.0),
             kerf_mm: operation.params.kerf_mm.max(0.0),
+            tabs: operation.params.tabs,
+            tab_width_mm: operation.params.tab_width_mm.max(0.0),
             cross_hatch: operation.params.cross_hatch,
             air_assist: operation.params.air_assist,
             constant_power: operation.params.constant_power,
@@ -106,6 +110,8 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 fill_offset_mm: params.fill_offset_mm,
                 overscan_mm: params.overscan_mm.max(0.0),
                 kerf_mm: params.kerf_mm.max(0.0),
+                tabs: params.tabs,
+                tab_width_mm: params.tab_width_mm.max(0.0),
                 cross_hatch: params.cross_hatch,
                 air_assist: params.air_assist,
                 constant_power: params.constant_power,
@@ -189,7 +195,12 @@ pub fn build_toolpaths_cancellable(
                             resolved.passes,
                         );
                         let points = kerfed(&points, resolved.kerf_mm);
-                        append_contour(&mut toolpath, &points);
+                        append_contour(
+                            &mut toolpath,
+                            &points,
+                            resolved.tabs,
+                            resolved.tab_width_mm,
+                        );
                         let mut toolpath = toolpath
                             .with_operation(object.operation_id.as_deref())
                             .with_air_assist(resolved.air_assist)
@@ -419,7 +430,7 @@ fn push_fill_toolpath(
     }
     if resolved.op_type == OperationType::FillWithOutline {
         let points = kerfed(points, resolved.kerf_mm);
-        append_contour(&mut toolpath, &points);
+        append_contour(&mut toolpath, &points, resolved.tabs, resolved.tab_width_mm);
     }
     if !toolpath.is_empty() {
         let mut toolpath = toolpath
@@ -459,17 +470,66 @@ fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval:
             break;
         }
         let points: Vec<Point2> = offset.iter().map(|(x, y)| Point2::new(*x, *y)).collect();
-        append_contour(toolpath, &points);
+        append_contour(toolpath, &points, 0, 0.0);
         loops += 1;
     }
     loops
 }
 
-fn append_contour(toolpath: &mut Toolpath, points: &[Point2]) {
-    toolpath.push(MoveKind::Travel, points[0].x, points[0].y);
-    for point in &points[1..] {
-        toolpath.push(MoveKind::Cut, point.x, point.y);
+fn append_contour(toolpath: &mut Toolpath, points: &[Point2], tabs: u32, tab_width: f64) {
+    let mut closed = points.to_vec();
+    if closed.len() > 2 && closed[0].distance(closed[closed.len() - 1]) > 1e-9 {
+        closed.push(closed[0]);
     }
+    if closed.len() < 2 {
+        return;
+    }
+    let mut lengths = Vec::new();
+    let mut total = 0.0;
+    for pair in closed.windows(2) {
+        let length = pair[0].distance(pair[1]);
+        lengths.push(length);
+        total += length;
+    }
+    let mut gaps = Vec::new();
+    if tabs > 0 && tab_width > 0.0 && total > tab_width * f64::from(tabs) {
+        for index in 0..tabs {
+            let center = total * (f64::from(index) + 0.5) / f64::from(tabs);
+            gaps.push((center - tab_width / 2.0, center + tab_width / 2.0));
+        }
+    }
+    toolpath.push(MoveKind::Travel, closed[0].x, closed[0].y);
+    let mut travelled = 0.0;
+    for (index, pair) in closed.windows(2).enumerate() {
+        let (from, to) = (pair[0], pair[1]);
+        let length = lengths[index];
+        if length <= 1e-12 {
+            continue;
+        }
+        let mut cursor = 0.0;
+        for (gap_start, gap_end) in &gaps {
+            let start = (*gap_start - travelled).clamp(0.0, length);
+            let end = (*gap_end - travelled).clamp(0.0, length);
+            if end <= start || start >= length || end <= 0.0 {
+                continue;
+            }
+            if start > cursor {
+                let point = lerp(from, to, start / length);
+                toolpath.push(MoveKind::Cut, point.x, point.y);
+            }
+            let point = lerp(from, to, end / length);
+            toolpath.push(MoveKind::Travel, point.x, point.y);
+            cursor = end;
+        }
+        if cursor < length {
+            toolpath.push(MoveKind::Cut, to.x, to.y);
+        }
+        travelled += length;
+    }
+}
+
+fn lerp(from: Point2, to: Point2, t: f64) -> Point2 {
+    Point2::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 }
 
 /// Operation identifiers in execution order.

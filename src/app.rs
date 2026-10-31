@@ -5033,6 +5033,21 @@ impl BeamWrightApp {
                                         .range(0.0..=10.0),
                                 );
                                 ui.end_row();
+                                ui.label("Holding tabs");
+                                ui.add(
+                                    egui::DragValue::new(&mut operation.params.tabs)
+                                        .range(0..=20),
+                                );
+                                ui.end_row();
+                                ui.label("Tab width (mm)");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut operation.params.tab_width_mm,
+                                    )
+                                    .speed(0.1)
+                                    .range(0.0..=20.0),
+                                );
+                                ui.end_row();
                                 ui.label("Constant power mode");
                                 ui.checkbox(&mut operation.params.constant_power, "");
                                 ui.end_row();
