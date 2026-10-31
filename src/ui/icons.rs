@@ -1144,9 +1144,13 @@ fn texture(ctx: &Context, icon: Icon) -> TextureHandle {
 
 /// The icon as an egui image, sized for a menu row.
 pub fn image(ctx: &Context, icon: Icon) -> Image<'static> {
+    image_at(ctx, icon, ICON_SIZE)
+}
+
+/// The icon as an egui image at an explicit size, for toolbars.
+pub fn image_at(ctx: &Context, icon: Icon, size: f32) -> Image<'static> {
     let handle = texture(ctx, icon);
-    Image::new(egui::load::SizedTexture::from_handle(&handle))
-        .fit_to_exact_size(Vec2::splat(ICON_SIZE))
+    Image::new(egui::load::SizedTexture::from_handle(&handle)).fit_to_exact_size(Vec2::splat(size))
 }
 
 /// A button with a leading icon, keeping the standard button behaviour.
@@ -1154,7 +1158,17 @@ pub fn image(ctx: &Context, icon: Icon) -> Image<'static> {
 /// The icon follows the button text colour, so it dims with a disabled button
 /// and matches the highlight of a selected row.
 pub fn widget(ui: &Ui, icon: Icon, text: impl Into<WidgetText>) -> egui::Button<'static> {
-    egui::Button::new((image(ui.ctx(), icon), text))
+    widget_at(ui, icon, text, ICON_SIZE)
+}
+
+/// Like [`widget`], with an explicit icon size for the toolbar.
+pub fn widget_at(
+    ui: &Ui,
+    icon: Icon,
+    text: impl Into<WidgetText>,
+    size: f32,
+) -> egui::Button<'static> {
+    egui::Button::new((image_at(ui.ctx(), icon, size), text))
         .gap(6.0)
         .image_tint_follows_text_color(true)
 }
@@ -1189,8 +1203,19 @@ pub fn selectable(
     icon: Icon,
     text: impl Into<WidgetText>,
 ) -> Response {
+    selectable_at(ui, selected, icon, text, ICON_SIZE)
+}
+
+/// Like [`selectable`], with an explicit icon size for the toolbar.
+pub fn selectable_at(
+    ui: &mut Ui,
+    selected: bool,
+    icon: Icon,
+    text: impl Into<WidgetText>,
+    size: f32,
+) -> Response {
     ui.add(
-        egui::Button::selectable(selected, (image(ui.ctx(), icon), text))
+        egui::Button::selectable(selected, (image_at(ui.ctx(), icon, size), text))
             .image_tint_follows_text_color(true),
     )
 }
@@ -1219,7 +1244,18 @@ pub fn checkbox(
     icon: Icon,
     text: impl Into<WidgetText>,
 ) -> Response {
-    let image = image(ui.ctx(), icon).tint(ui.visuals().text_color());
+    checkbox_at(ui, checked, icon, text, ICON_SIZE)
+}
+
+/// Like [`checkbox`], with an explicit icon size for the toolbar.
+pub fn checkbox_at(
+    ui: &mut Ui,
+    checked: &mut bool,
+    icon: Icon,
+    text: impl Into<WidgetText>,
+    size: f32,
+) -> Response {
+    let image = image_at(ui.ctx(), icon, size).tint(ui.visuals().text_color());
     ui.checkbox(checked, (image, text))
 }
 

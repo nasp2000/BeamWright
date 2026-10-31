@@ -391,6 +391,23 @@ fn tool_help(tool: Tool) -> &'static str {
     }
 }
 
+/// Icon shown by each tool in the toolbar and Draw menu.
+fn tool_icon(tool: Tool) -> Icon {
+    match tool {
+        Tool::Select => Icon::Select,
+        Tool::Line => Icon::Line,
+        Tool::Rect => Icon::Rectangle,
+        Tool::Ellipse => Icon::Ellipse,
+        Tool::Polygon => Icon::Polygon,
+        Tool::Star => Icon::Star,
+        Tool::Text => Icon::Text,
+        Tool::Measure => Icon::Measure,
+        Tool::Bezier => Icon::Bezier,
+        Tool::Pencil => Icon::Freehand,
+        Tool::Pan => Icon::Pan,
+    }
+}
+
 /// Scale around a point, for direct property edits.
 fn egui_transform_scale(
     factor_x: f64,
@@ -2253,10 +2270,15 @@ impl BeamWrightApp {
                     Tool::Pencil,
                     Tool::Pan,
                 ] {
-                    if ui
-                        .selectable_label(self.editor.tool == tool, tool.label())
-                        .on_hover_text(tool_help(tool))
-                        .clicked()
+                    if icons::selectable_at(
+                        ui,
+                        self.editor.tool == tool,
+                        tool_icon(tool),
+                        tool.label(),
+                        22.0,
+                    )
+                    .on_hover_text(tool_help(tool))
+                    .clicked()
                     {
                         self.editor.tool = tool;
                     }
@@ -2265,7 +2287,7 @@ impl BeamWrightApp {
                 if ui
                     .add_enabled(
                         self.editor.history.can_undo(),
-                        egui::Button::new(self.undo_label()),
+                        icons::widget_at(ui, Icon::Undo, self.undo_label(), 20.0),
                     )
                     .clicked()
                 {
@@ -2274,7 +2296,7 @@ impl BeamWrightApp {
                 if ui
                     .add_enabled(
                         self.editor.history.can_redo(),
-                        egui::Button::new(self.redo_label()),
+                        icons::widget_at(ui, Icon::Redo, self.redo_label(), 20.0),
                     )
                     .clicked()
                 {
@@ -2283,7 +2305,7 @@ impl BeamWrightApp {
                 if ui
                     .add_enabled(
                         !self.editor.selection.is_empty(),
-                        egui::Button::new("Duplicate"),
+                        icons::widget_at(ui, Icon::Duplicate, "Duplicate", 20.0),
                     )
                     .clicked()
                 {
@@ -2292,7 +2314,7 @@ impl BeamWrightApp {
                 if ui
                     .add_enabled(
                         !self.editor.selection.is_empty(),
-                        egui::Button::new("Delete"),
+                        icons::widget_at(ui, Icon::Delete, "Delete", 20.0),
                     )
                     .clicked()
                 {
@@ -2307,7 +2329,7 @@ impl BeamWrightApp {
                     ui.label("sides");
                 }
                 if matches!(self.editor.tool, Tool::Rect | Tool::Ellipse) {
-                    ui.checkbox(&mut self.exact_size, "Exact size");
+                    icons::checkbox_at(ui, &mut self.exact_size, Icon::Measure, "Exact size", 18.0);
                     if self.exact_size {
                         ui.add(
                             egui::DragValue::new(&mut self.exact_width)
@@ -2355,10 +2377,10 @@ impl BeamWrightApp {
                 ui.checkbox(&mut self.editor.snap_enabled, "Snap");
                 ui.checkbox(&mut self.preview_toolpaths, "Toolpaths");
                 ui.separator();
-                if ui.button("Open").clicked() {
+                if icons::button(ui, Icon::Open, "Open").clicked() {
                     self.request(PendingAction::Open);
                 }
-                if ui.button("Save").clicked() {
+                if icons::button(ui, Icon::Save, "Save").clicked() {
                     self.save();
                 }
             });
