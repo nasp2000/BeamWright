@@ -5,6 +5,7 @@ pub enum Tool {
     Line,
     Rect,
     Ellipse,
+    Polygon,
     Pan,
 }
 
@@ -15,6 +16,7 @@ impl Tool {
             Tool::Line => "Line",
             Tool::Rect => "Rectangle",
             Tool::Ellipse => "Ellipse",
+            Tool::Polygon => "Polygon",
             Tool::Pan => "Pan",
         }
     }
@@ -30,6 +32,7 @@ mod tests {
         assert_eq!(Tool::Line.label(), "Line");
         assert_eq!(Tool::Rect.label(), "Rectangle");
         assert_eq!(Tool::Ellipse.label(), "Ellipse");
+        assert_eq!(Tool::Polygon.label(), "Polygon");
         assert_eq!(Tool::Pan.label(), "Pan");
     }
 

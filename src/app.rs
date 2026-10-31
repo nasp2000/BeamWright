@@ -78,6 +78,7 @@ pub struct BeamWrightApp {
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
+    polygon_sides: usize,
 }
 
 struct ImagePreview {
@@ -138,6 +139,7 @@ impl BeamWrightApp {
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
+            polygon_sides: 6,
         };
         if let Some(path) = file {
             app.open_path(&path);
@@ -368,6 +370,7 @@ impl BeamWrightApp {
             escape,
             fit,
             grid,
+            polygon_tool,
             zoom_in,
             zoom_out,
             left,
@@ -392,6 +395,7 @@ impl BeamWrightApp {
                 input.consume_key(Modifiers::NONE, Key::Escape),
                 input.consume_key(Modifiers::NONE, Key::F),
                 input.consume_key(Modifiers::NONE, Key::G),
+                input.consume_key(Modifiers::NONE, Key::P),
                 input.consume_key(Modifiers::NONE, Key::Plus)
                     || input.consume_key(Modifiers::NONE, Key::Equals),
                 input.consume_key(Modifiers::NONE, Key::Minus),
@@ -442,6 +446,9 @@ impl BeamWrightApp {
         }
         if grid {
             self.editor.canvas.grid_visible = !self.editor.canvas.grid_visible;
+        }
+        if polygon_tool {
+            self.editor.tool = Tool::Polygon;
         }
         if zoom_in {
             self.editor.canvas.zoom_in();
@@ -710,6 +717,7 @@ impl BeamWrightApp {
                     Tool::Line,
                     Tool::Rect,
                     Tool::Ellipse,
+                    Tool::Polygon,
                     Tool::Pan,
                 ] {
                     if ui
@@ -749,6 +757,14 @@ impl BeamWrightApp {
                     .clicked()
                 {
                     self.editor.delete_selection();
+                }
+                if self.editor.tool == Tool::Polygon {
+                    ui.add(
+                        egui::DragValue::new(&mut self.polygon_sides)
+                            .speed(1.0)
+                            .range(3..=64),
+                    );
+                    ui.label("sides");
                 }
                 ui.separator();
                 if ui.button("-").clicked() {
@@ -1491,7 +1507,7 @@ impl BeamWrightApp {
                         let point = self.doc_point(rect, pos);
                         match self.editor.tool {
                             Tool::Select => self.begin_select(point, shift),
-                            Tool::Rect | Tool::Ellipse | Tool::Line => {
+                            Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Polygon => {
                                 if self.editor.layer_locked(&self.editor.active_layer_id)
                                     || !self.editor.layer_visible(&self.editor.active_layer_id)
                                 {
@@ -1705,6 +1721,13 @@ impl BeamWrightApp {
                 }
                 Tool::Line => {
                     self.editor.add_line(start, end);
+                }
+                Tool::Polygon => {
+                    self.editor.add_polygon(
+                        Point2::new(f64::midpoint(start.x, end.x), f64::midpoint(start.y, end.y)),
+                        end,
+                        self.polygon_sides,
+                    );
                 }
                 _ => {}
             },

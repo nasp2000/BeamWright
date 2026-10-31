@@ -103,6 +103,31 @@ impl EditorState {
         )
     }
 
+    /// Create a regular polygon centred on `center` with the first vertex at
+    /// `edge`, closing the outline.
+    pub fn add_polygon(&mut self, center: Point2, edge: Point2, sides: usize) -> Option<String> {
+        if !(3..=128).contains(&sides) {
+            return None;
+        }
+        let radius = center.distance(edge);
+        if radius < 0.01 {
+            return None;
+        }
+        let start_angle = (edge.y - center.y).atan2(edge.x - center.x);
+        let points: Vec<(f64, f64)> = (0..sides)
+            .map(|index| {
+                #[allow(clippy::cast_precision_loss)]
+                let angle = start_angle + std::f64::consts::TAU * index as f64 / sides as f64;
+                (
+                    center.x + radius * angle.cos(),
+                    center.y + radius * angle.sin(),
+                )
+            })
+            .collect();
+        let path = Path::from_points(&points, true);
+        self.add_shape(Shape::Path(path), Transform2::identity())
+    }
+
     pub fn add_line(&mut self, start: Point2, end: Point2) -> Option<String> {
         let start = self.snap(start);
         let end = self.snap(end);
@@ -1171,6 +1196,45 @@ mod tests {
         profile.width_mm = 100.0;
         profile.snap_mm = 0.0;
         assert!(!editor.apply_project_profile(&profile));
+    }
+
+    #[test]
+    fn polygon_has_the_requested_number_of_sides() {
+        let mut editor = editor();
+        let id = editor
+            .add_polygon(Point2::new(20.0, 20.0), Point2::new(30.0, 20.0), 6)
+            .unwrap();
+        let path = editor.document.object(&id).unwrap().world_path();
+        assert!(path.closed);
+        assert_eq!(path.segment_count(), 6);
+        let (min, max) = editor.document.object(&id).unwrap().bounds().unwrap();
+        assert!((min.x - 10.0).abs() < 1e-6);
+        assert!((max.x - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn polygon_rejects_invalid_parameters() {
+        let mut editor = editor();
+        assert!(
+            editor
+                .add_polygon(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), 2)
+                .is_none()
+        );
+        assert!(
+            editor
+                .add_polygon(Point2::new(0.0, 0.0), Point2::new(0.0, 0.0), 6)
+                .is_none()
+        );
+        assert_eq!(editor.document.objects.len(), 0);
+    }
+
+    #[test]
+    fn polygon_is_undoable() {
+        let mut editor = editor();
+        editor.add_polygon(Point2::new(20.0, 20.0), Point2::new(25.0, 20.0), 5);
+        assert_eq!(editor.document.objects.len(), 1);
+        assert!(editor.undo());
+        assert_eq!(editor.document.objects.len(), 0);
     }
 
     #[test]
