@@ -266,17 +266,17 @@ pub fn run(cli: Cli) -> Result<()> {
             port,
             token,
         }) => {
+            let token = token
+                .or_else(crate::bridge::configured_token)
+                .or_else(|| {
+                    if host == "127.0.0.1" || host == "localhost" {
+                        crate::bridge::stored_token()
+                    } else {
+                        None
+                    }
+                });
             println!(
                 "{}",
-                let token = token
-                    .or_else(crate::bridge::configured_token)
-                    .or_else(|| {
-                        if host == "127.0.0.1" || host == "localhost" {
-                            crate::bridge::stored_token()
-                        } else {
-                            None
-                        }
-                    });
                 crate::bridge::request(&host, port, token, &json)
                     .map_err(BeamError::InvalidInput)?
             );
