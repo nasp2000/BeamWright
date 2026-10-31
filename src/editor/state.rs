@@ -2617,6 +2617,48 @@ impl EditorState {
     }
 
     /// Create an operation from a profile and assign it to the selection.
+    /// Copy a profile's parameters into an existing operation.
+    ///
+    /// The operation type must match the profile; a mismatch is reported instead
+    /// of silently changing the operation. Returns how many parameters changed.
+    pub fn apply_profile_to_operation(
+        &mut self,
+        operation_id: &str,
+        profile: &crate::profiles::OperationProfile,
+    ) -> std::result::Result<usize, String> {
+        let Some(operation) = self
+            .document
+            .operations
+            .iter()
+            .find(|operation| operation.id == operation_id)
+        else {
+            return Err(format!("unknown operation: {operation_id}"));
+        };
+        if operation.op_type != profile.op_type {
+            return Err(format!(
+                "profile '{}' is for {} operations, not {}",
+                profile.name,
+                profile.op_type.label(),
+                operation.op_type.label()
+            ));
+        }
+        let changes = operation.params.changes_to(&profile.params);
+        if changes.is_empty() {
+            return Ok(0);
+        }
+        let count = changes.len();
+        self.record_action("Apply operation profile");
+        if let Some(operation) = self
+            .document
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == operation_id)
+        {
+            operation.params = profile.params.clone();
+        }
+        Ok(count)
+    }
+
     pub fn apply_operation_profile(
         &mut self,
         profile: &crate::profiles::OperationProfile,
@@ -3512,6 +3554,37 @@ mod tests {
             0
         );
         assert_eq!(editor.assign_operation_to_layer(&layer, Some("missing")), 0);
+    }
+
+    #[test]
+    fn a_profile_can_be_applied_to_an_existing_operation() {
+        use crate::operations::OperationType;
+        use crate::profiles::OperationProfile;
+
+        let mut editor = editor();
+        let id = editor.add_operation("Cut", OperationType::OutlineCutting);
+        let mut profile = OperationProfile::new("Fast cut", OperationType::OutlineCutting);
+        profile.params.speed = 1800.0;
+        profile.params.power = 70.0;
+        assert_eq!(editor.apply_profile_to_operation(&id, &profile).unwrap(), 2);
+        assert_eq!(editor.document.operations[0].params.speed, 1800.0);
+        assert_eq!(editor.document.operations[0].params.power, 70.0);
+        assert!(editor.undo().is_some());
+        assert_eq!(editor.document.operations[0].params.speed, 1000.0);
+
+        // Applying the same values again is a no-op.
+        let operation = &mut editor.document.operations[0];
+        operation.params = profile.params.clone();
+        assert_eq!(editor.apply_profile_to_operation(&id, &profile).unwrap(), 0);
+
+        let wrong = OperationProfile::new("Engrave", OperationType::LineEngraving);
+        let error = editor.apply_profile_to_operation(&id, &wrong).unwrap_err();
+        assert!(error.contains("not"));
+        assert!(
+            editor
+                .apply_profile_to_operation("missing", &profile)
+                .is_err()
+        );
     }
 
     #[test]

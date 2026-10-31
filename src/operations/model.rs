@@ -64,6 +64,61 @@ fn default_true() -> bool {
     true
 }
 
+impl OperationParams {
+    /// Parameters that differ from `target`, ready to show before applying.
+    ///
+    /// Floating-point fields are compared with a small tolerance so a value that
+    /// is unchanged does not appear in the list.
+    pub fn changes_to(&self, target: &Self) -> Vec<ParamChange> {
+        fn changed(current: &str, next: &str) -> bool {
+            current != next
+        }
+        let mut changes = Vec::new();
+        let mut push = |label: &'static str, from: String, to: String| {
+            if changed(&from, &to) {
+                changes.push(ParamChange { label, from, to });
+            }
+        };
+        push(
+            "Speed",
+            format!("{:.0} mm/min", self.speed),
+            format!("{:.0} mm/min", target.speed),
+        );
+        push(
+            "Power",
+            format!("{:.0} %", self.power),
+            format!("{:.0} %", target.power),
+        );
+        push("Passes", self.passes.to_string(), target.passes.to_string());
+        push(
+            "Line interval",
+            format!("{:.2} mm", self.line_interval_mm),
+            format!("{:.2} mm", target.line_interval_mm),
+        );
+        push(
+            "Fill angle",
+            format!("{:.0}°", self.fill_angle_degrees),
+            format!("{:.0}°", target.fill_angle_degrees),
+        );
+        push(
+            "Alternating fill",
+            self.fill_alternate.to_string(),
+            target.fill_alternate.to_string(),
+        );
+        push(
+            "Fill margin",
+            format!("{:.2} mm", self.fill_margin_mm),
+            format!("{:.2} mm", target.fill_margin_mm),
+        );
+        push(
+            "Fill offset",
+            format!("{:.2} mm", self.fill_offset_mm),
+            format!("{:.2} mm", target.fill_offset_mm),
+        );
+        changes
+    }
+}
+
 impl Default for OperationParams {
     fn default() -> Self {
         Self {
@@ -77,6 +132,14 @@ impl Default for OperationParams {
             fill_offset_mm: 0.0,
         }
     }
+}
+
+/// One parameter that a profile would change, with both formatted values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamChange {
+    pub label: &'static str,
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,6 +275,31 @@ mod tests {
         let mut o = sample();
         o.params.power = -1.0;
         assert!(o.validate().is_err());
+    }
+
+    #[test]
+    fn parameter_changes_are_listed() {
+        let current = OperationParams::default();
+        let target = OperationParams {
+            speed: 800.0,
+            power: 55.0,
+            passes: 3,
+            line_interval_mm: 0.05,
+            fill_angle_degrees: 45.0,
+            fill_alternate: false,
+            fill_margin_mm: 0.5,
+            fill_offset_mm: 0.2,
+        };
+        let changes = current.changes_to(&target);
+        let labels: Vec<&str> = changes.iter().map(|change| change.label).collect();
+        assert!(labels.contains(&"Speed"));
+        assert!(labels.contains(&"Power"));
+        assert!(labels.contains(&"Passes"));
+        assert!(labels.contains(&"Fill angle"));
+        assert_eq!(changes.len(), 8);
+        assert_eq!(changes[0].from, "1000 mm/min");
+        assert_eq!(changes[0].to, "800 mm/min");
+        assert_eq!(current.changes_to(&current).len(), 0);
     }
 
     #[test]

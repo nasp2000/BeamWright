@@ -137,6 +137,8 @@ pub struct BeamWrightApp {
     show_properties_panel: bool,
     doc_properties_open: bool,
     operations_compare_open: bool,
+    profile_pending: Option<(String, crate::profiles::OperationProfile)>,
+    profile_confirm_open: bool,
     zoom_to_selection_request: bool,
     export_subset: bool,
     recover_next: bool,
@@ -392,6 +394,8 @@ impl BeamWrightApp {
             show_properties_panel: true,
             doc_properties_open: false,
             operations_compare_open: false,
+            profile_pending: None,
+            profile_confirm_open: false,
             zoom_to_selection_request: false,
             export_subset: false,
             recover_next: false,
@@ -664,6 +668,82 @@ impl BeamWrightApp {
                     });
             });
         self.operations_compare_open = open;
+    }
+
+    fn profile_confirm_window(&mut self, ctx: &egui::Context) {
+        let Some((operation_id, profile)) = self.profile_pending.clone() else {
+            self.profile_confirm_open = false;
+            return;
+        };
+        let mut open = self.profile_confirm_open;
+        let mut apply = false;
+        egui::Window::new(format!("Apply '{}'", profile.name))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let current = self
+                    .editor
+                    .document
+                    .operations
+                    .iter()
+                    .find(|operation| operation.id == operation_id)
+                    .map(|operation| operation.params.clone());
+                let Some(current) = current else {
+                    ui.weak("The operation no longer exists.");
+                    return;
+                };
+                let changes = current.changes_to(&profile.params);
+                ui.label(format!(
+                    "{} parameter(s) will change in this operation:",
+                    changes.len()
+                ));
+                egui::Grid::new("profile_changes")
+                    .num_columns(3)
+                    .striped(true)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.strong("Parameter");
+                        ui.strong("Current");
+                        ui.strong("Profile");
+                        ui.end_row();
+                        for change in &changes {
+                            ui.label(change.label);
+                            ui.label(&change.from);
+                            ui.label(&change.to);
+                            ui.end_row();
+                        }
+                    });
+                ui.separator();
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.profile_confirm_open = false;
+                }
+            });
+        if apply {
+            match self
+                .editor
+                .apply_profile_to_operation(&operation_id, &profile)
+            {
+                Ok(0) => {
+                    self.status = "The operation already has these values".to_string();
+                }
+                Ok(count) => {
+                    self.status = format!("Applied '{}' ({count} parameter(s))", profile.name);
+                }
+                Err(error) => self.status = format!("Cannot apply profile: {error}"),
+            }
+            self.profile_confirm_open = false;
+            self.profile_pending = None;
+        } else {
+            self.profile_confirm_open = open;
+            if !open {
+                self.profile_pending = None;
+            }
+        }
     }
 
     fn open_path(&mut self, path: &Path) {
@@ -4744,6 +4824,19 @@ impl BeamWrightApp {
                             self.status =
                                 format!("Applied '{}' to {count} object(s)", profile_clone.name);
                         }
+                        if ui
+                            .add_enabled(
+                                self.active_operation.is_some(),
+                                egui::Button::new("Apply to active operation"),
+                            )
+                            .clicked()
+                        {
+                            if let Some(operation) = self.active_operation.clone() {
+                                self.profile_pending =
+                                    Some((operation, profile_clone.clone()));
+                                self.profile_confirm_open = true;
+                            }
+                        }
                     }
                 }
                 ui.separator();
@@ -5157,6 +5250,9 @@ impl BeamWrightApp {
         }
         if self.operations_compare_open {
             self.operations_compare_window(ctx);
+        }
+        if self.profile_confirm_open {
+            self.profile_confirm_window(ctx);
         }
         if self.report_open {
             self.report_window(ctx);
