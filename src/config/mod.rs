@@ -1,5 +1,6 @@
 pub mod paths;
 pub mod preferences;
+pub mod shortcuts;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub default_unit: &'static str,

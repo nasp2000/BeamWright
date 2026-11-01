@@ -14,18 +14,20 @@ pub enum Section {
     Images,
     Files,
     Machines,
+    Shortcuts,
     Advanced,
 }
 
 impl Section {
     /// Every category, in the order shown in the window.
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::General,
         Section::Interface,
         Section::Drawing,
         Section::Images,
         Section::Files,
         Section::Machines,
+        Section::Shortcuts,
         Section::Advanced,
     ];
 
@@ -37,6 +39,7 @@ impl Section {
             Section::Images => "Images",
             Section::Files => "Files and backup",
             Section::Machines => "Machines and profiles",
+            Section::Shortcuts => "Shortcuts",
             Section::Advanced => "Advanced",
         }
     }
@@ -50,6 +53,7 @@ impl Section {
             Section::Images => "Limits applied when a raster image is imported.",
             Section::Files => "Default folder, backups and recent projects.",
             Section::Machines => "Work areas and material libraries.",
+            Section::Shortcuts => "Keyboard bindings for the main commands.",
             Section::Advanced => "Where the preferences are stored.",
         }
     }
@@ -98,6 +102,7 @@ impl Section {
                 "firmware",
                 "preset",
             ],
+            Section::Shortcuts => &["keyboard", "keys", "binding", "hotkey", "shortcut"],
             Section::Advanced => &["data", "path", "reset", "defaults", "storage"],
         }
     }
@@ -277,6 +282,8 @@ pub struct AppPreferences {
     pub drawing: DrawingPrefs,
     #[serde(default)]
     pub workspaces: WorkspacePrefs,
+    #[serde(default)]
+    pub shortcuts: super::shortcuts::Keymap,
 }
 
 fn default_snap_step() -> f64 {
@@ -324,6 +331,7 @@ impl AppPreferences {
         self.general.validate()?;
         self.drawing.validate()?;
         self.workspaces.validate()?;
+        self.shortcuts.validate()?;
         Ok(())
     }
 
@@ -381,6 +389,9 @@ impl AppPreferences {
                 self.general.backup_enabled = defaults.general.backup_enabled;
             }
             Section::Machines => {}
+            Section::Shortcuts => {
+                self.shortcuts.reset_all();
+            }
             Section::Advanced => {
                 let recent = std::mem::take(&mut self.general.recent_projects);
                 *self = defaults;

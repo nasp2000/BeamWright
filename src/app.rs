@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use egui::{Color32, Key, Modifiers, Pos2, Rect, Sense, Ui};
 
 use crate::color::{normalize_hex_color, parse_hex_color, to_hex};
+use crate::config::shortcuts::{Command, parse_chord};
 use crate::document::{Document, Shape, Unit};
 use crate::editor::renderer::{PreviewShape, Theme, format_mm, paint_canvas};
 use crate::editor::{EditorState, Tool};
@@ -313,6 +314,7 @@ pub struct BeamWrightApp {
     preferences_open: bool,
     workspaces_open: bool,
     workspace_name: String,
+    shortcut_capture: Option<crate::config::shortcuts::Command>,
     external_gcode_open: bool,
     external_gcode: Option<(PathBuf, crate::gcode::external::Program)>,
     preferences_section: crate::config::preferences::Section,
@@ -841,6 +843,7 @@ impl BeamWrightApp {
             preferences_open: false,
             workspaces_open: false,
             workspace_name: String::new(),
+            shortcut_capture: None,
             external_gcode_open: false,
             external_gcode: None,
             preferences_section: crate::config::preferences::Section::General,
@@ -1831,122 +1834,65 @@ impl BeamWrightApp {
             || self.cuts_open
             || self.image_adjust.is_some()
             || self.help_shortcuts_open
+            || self.workspaces_open
+            || self.external_gcode_open
         {
             return;
         }
-        let (
-            new_doc,
-            open,
-            save,
-            save_as,
-            undo,
-            redo,
-            redo_shift,
-            select_all,
-            duplicate,
-            delete,
-            group,
-            ungroup,
-            escape,
-            fit,
-            grid,
-            polygon_tool,
-            pencil_tool,
-            zoom_in,
-            zoom_out,
-            left,
-            right,
-            up,
-            down,
-            tool_select,
-            tool_line,
-            tool_rect,
-            tool_ellipse,
-            tool_star,
-            tool_text,
-            preview,
-            toggle_layers,
-            toggle_properties,
-            enter,
-        ) = ctx.input_mut(|input| {
-            (
-                input.consume_key(Modifiers::CTRL, Key::N),
-                input.consume_key(Modifiers::CTRL, Key::O),
-                input.consume_key(Modifiers::CTRL, Key::S),
-                input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::S),
-                input.consume_key(Modifiers::CTRL, Key::Z),
-                input.consume_key(Modifiers::CTRL, Key::Y),
-                input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z),
-                input.consume_key(Modifiers::CTRL, Key::A),
-                input.consume_key(Modifiers::CTRL, Key::D),
-                input.consume_key(Modifiers::CTRL, Key::G),
-                input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::G),
-                input.consume_key(Modifiers::NONE, Key::Delete)
-                    || input.consume_key(Modifiers::NONE, Key::Backspace),
-                input.consume_key(Modifiers::NONE, Key::Escape),
-                input.consume_key(Modifiers::NONE, Key::F),
-                input.consume_key(Modifiers::NONE, Key::G),
-                input.consume_key(Modifiers::NONE, Key::P),
-                input.consume_key(Modifiers::NONE, Key::B),
-                input.consume_key(Modifiers::NONE, Key::Plus)
-                    || input.consume_key(Modifiers::NONE, Key::Equals),
-                input.consume_key(Modifiers::NONE, Key::Minus),
-                input.consume_key(Modifiers::NONE, Key::ArrowLeft),
-                input.consume_key(Modifiers::NONE, Key::ArrowRight),
-                input.consume_key(Modifiers::NONE, Key::ArrowUp),
-                input.consume_key(Modifiers::NONE, Key::ArrowDown),
-                input.consume_key(Modifiers::NONE, Key::V),
-                input.consume_key(Modifiers::NONE, Key::L),
-                input.consume_key(Modifiers::NONE, Key::R),
-                input.consume_key(Modifiers::NONE, Key::E),
-                input.consume_key(Modifiers::NONE, Key::S),
-                input.consume_key(Modifiers::NONE, Key::T),
-                input.consume_key(Modifiers::CTRL, Key::P),
-                input.consume_key(Modifiers::NONE, Key::F9),
-                input.consume_key(Modifiers::NONE, Key::F10),
-                input.consume_key(Modifiers::NONE, Key::Enter),
-            )
+        let keymap = self.preferences.shortcuts.clone();
+        let mut pressed = std::collections::HashSet::new();
+        ctx.input_mut(|input| {
+            for command in Command::ALL {
+                if let Ok((modifiers, key)) = parse_chord(keymap.chord(command)) {
+                    if input.consume_key(modifiers, key) {
+                        pressed.insert(command);
+                    }
+                }
+            }
+            // Fixed aliases that stay available whatever the binding is.
+            if input.consume_key(Modifiers::NONE, Key::Backspace) {
+                pressed.insert(Command::Delete);
+            }
+            if input.consume_key(Modifiers::NONE, Key::Equals) {
+                pressed.insert(Command::ZoomIn);
+            }
+            if input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z) {
+                pressed.insert(Command::Redo);
+            }
         });
-        if new_doc {
+        if pressed.contains(&Command::New) {
             self.request(PendingAction::New);
         }
-        if open {
+        if pressed.contains(&Command::Open) {
             self.request(PendingAction::Open);
         }
-        if save_as {
+        if pressed.contains(&Command::SaveAs) {
             self.open_dialog(FileMode::SaveProject);
-        } else if save {
+        } else if pressed.contains(&Command::Save) {
             self.save();
         }
-        if undo {
+        if pressed.contains(&Command::Undo) {
             self.undo();
         }
-        if redo || redo_shift {
+        if pressed.contains(&Command::Redo) {
             self.redo();
         }
-        if select_all {
+        if pressed.contains(&Command::SelectAll) {
             self.editor.select_all();
         }
-        let (cut, copy, paste) = ctx.input_mut(|input| {
-            (
-                input.consume_key(Modifiers::CTRL, Key::X),
-                input.consume_key(Modifiers::CTRL, Key::C),
-                input.consume_key(Modifiers::CTRL, Key::V),
-            )
-        });
-        if cut {
+        if pressed.contains(&Command::Cut) {
             self.cut();
         }
-        if copy {
+        if pressed.contains(&Command::Copy) {
             self.copy();
         }
-        if paste {
+        if pressed.contains(&Command::Paste) {
             self.paste_from_clipboard();
         }
-        if duplicate {
+        if pressed.contains(&Command::Duplicate) {
             self.editor.duplicate_selection();
         }
-        if delete {
+        if pressed.contains(&Command::Delete) {
             if self.editor.is_editing_nodes() && !self.editor.node_selection.is_empty() {
                 let removed = self.editor.delete_selected_nodes();
                 self.status = format!("Deleted {removed} node(s)");
@@ -1954,13 +1900,13 @@ impl BeamWrightApp {
                 self.editor.delete_selection();
             }
         }
-        if group && self.editor.group_selection() {
+        if pressed.contains(&Command::Group) && self.editor.group_selection() {
             self.status = "Objects grouped".to_string();
         }
-        if ungroup && self.editor.ungroup_selection() {
+        if pressed.contains(&Command::Ungroup) && self.editor.ungroup_selection() {
             self.status = "Objects ungrouped".to_string();
         }
-        if escape {
+        if pressed.contains(&Command::Escape) {
             self.drag = None;
             if self.editor.tool == Tool::Bezier {
                 self.pen_nodes.clear();
@@ -1971,52 +1917,52 @@ impl BeamWrightApp {
             }
             self.editor.selection.clear();
         }
-        if tool_select {
+        if pressed.contains(&Command::ToolSelect) {
             self.editor.tool = Tool::Select;
         }
-        if tool_line {
+        if pressed.contains(&Command::ToolLine) {
             self.editor.tool = Tool::Line;
         }
-        if tool_rect {
+        if pressed.contains(&Command::ToolRectangle) {
             self.editor.tool = Tool::Rect;
         }
-        if tool_ellipse {
+        if pressed.contains(&Command::ToolEllipse) {
             self.editor.tool = Tool::Ellipse;
         }
-        if tool_star {
+        if pressed.contains(&Command::ToolStar) {
             self.editor.tool = Tool::Star;
         }
-        if tool_text {
+        if pressed.contains(&Command::ToolText) {
             self.editor.tool = Tool::Text;
         }
-        if preview {
+        if pressed.contains(&Command::Preview) {
             self.open_preview();
         }
-        if toggle_layers {
+        if pressed.contains(&Command::ToggleLayers) {
             self.show_layers_panel = !self.show_layers_panel;
         }
-        if toggle_properties {
+        if pressed.contains(&Command::ToggleProperties) {
             self.show_properties_panel = !self.show_properties_panel;
         }
-        if enter && self.editor.tool == Tool::Bezier {
+        if pressed.contains(&Command::Enter) && self.editor.tool == Tool::Bezier {
             self.finish_pen(false);
         }
-        if fit {
+        if pressed.contains(&Command::Fit) {
             self.needs_fit = true;
         }
-        if grid {
+        if pressed.contains(&Command::Grid) {
             self.editor.canvas.grid_visible = !self.editor.canvas.grid_visible;
         }
-        if polygon_tool {
+        if pressed.contains(&Command::PolygonTool) {
             self.editor.tool = Tool::Polygon;
         }
-        if pencil_tool {
+        if pressed.contains(&Command::PencilTool) {
             self.editor.tool = Tool::Pencil;
         }
-        if zoom_in {
+        if pressed.contains(&Command::ZoomIn) {
             self.editor.zoom_in();
         }
-        if zoom_out {
+        if pressed.contains(&Command::ZoomOut) {
             self.editor.zoom_out();
         }
         let step = if ctx.input(|input| input.modifiers.shift) {
@@ -2026,28 +1972,28 @@ impl BeamWrightApp {
         };
         let editing_nodes =
             self.editor.is_editing_nodes() && !self.editor.node_selection.is_empty();
-        if left {
+        if pressed.contains(&Command::NudgeLeft) {
             if editing_nodes {
                 self.editor.nudge_selected_nodes(-step, 0.0);
             } else {
                 self.editor.nudge_selection(-step, 0.0);
             }
         }
-        if right {
+        if pressed.contains(&Command::NudgeRight) {
             if editing_nodes {
                 self.editor.nudge_selected_nodes(step, 0.0);
             } else {
                 self.editor.nudge_selection(step, 0.0);
             }
         }
-        if up {
+        if pressed.contains(&Command::NudgeUp) {
             if editing_nodes {
                 self.editor.nudge_selected_nodes(0.0, step);
             } else {
                 self.editor.nudge_selection(0.0, step);
             }
         }
-        if down {
+        if pressed.contains(&Command::NudgeDown) {
             if editing_nodes {
                 self.editor.nudge_selected_nodes(0.0, -step);
             } else {
@@ -4906,38 +4852,34 @@ impl BeamWrightApp {
             .resizable(true)
             .default_width(520.0)
             .show(ctx, |ui| {
-                egui::Grid::new("shortcut_table")
-                    .num_columns(2)
-                    .striped(true)
-                    .spacing([20.0, 4.0])
+                egui::ScrollArea::vertical()
+                    .id_salt("shortcut_table_scroll")
+                    .max_height(420.0)
                     .show(ui, |ui| {
-                        for (keys, action) in [
-                            ("Ctrl+N / Ctrl+O / Ctrl+S", "New, open and save"),
-                            ("Ctrl+Shift+S", "Save as"),
-                            ("Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z", "Undo and redo"),
-                            ("Ctrl+X / Ctrl+C / Ctrl+V", "Cut, copy and paste"),
-                            ("Ctrl+D", "Duplicate"),
-                            ("Ctrl+A", "Select all"),
-                            ("Delete / Backspace", "Delete the selection or selected nodes"),
-                            ("Ctrl+G / Ctrl+Shift+G", "Group and ungroup"),
-                            ("Arrows / Shift+Arrows", "Nudge by 1 mm or 0.1 mm"),
-                            ("Escape", "Cancel the drag, leave node editing or clear the selection"),
-                            ("V / L / R / E / S / T / P / B", "Select, line, rectangle, ellipse, star, text, polygon, freehand"),
-                            ("F", "Fit the page"),
-                            ("G", "Toggle the grid"),
-                            ("+ / -", "Zoom in and out"),
-                            ("Ctrl+P", "Preview and G-code"),
-                            ("F9 / F10", "Layers and properties panels"),
-                            ("Enter", "Finish a Bezier path"),
-                        ] {
-                            ui.label(keys);
-                            ui.label(action);
-                            ui.end_row();
-                        }
+                        egui::Grid::new("shortcut_table")
+                            .num_columns(2)
+                            .striped(true)
+                            .spacing([20.0, 4.0])
+                            .show(ui, |ui| {
+                                for command in Command::ALL {
+                                    ui.monospace(self.preferences.shortcuts.chord(command));
+                                    ui.label(command.label());
+                                    ui.end_row();
+                                }
+                                ui.monospace("Backspace");
+                                ui.label("Also deletes the selection (fixed alias)");
+                                ui.end_row();
+                                ui.monospace("Equals");
+                                ui.label("Also zooms in (fixed alias)");
+                                ui.end_row();
+                                ui.monospace("Ctrl+Shift+Z");
+                                ui.label("Also redoes (fixed alias)");
+                                ui.end_row();
+                            });
                     });
                 ui.separator();
                 ui.weak(
-                    "Ctrl and Shift combinations work with the keyboard layout in use; the tools never capture keys while a text field has focus.",
+                    "Change these in Preferences → Shortcuts. Shift+Arrows nudge by 0.1 mm; keys are never captured while a text field has focus.",
                 );
             });
         self.help_shortcuts_open = open;
@@ -8313,6 +8255,37 @@ impl BeamWrightApp {
         if close_requested {
             open = false;
         }
+        if let Some(command) = self.shortcut_capture {
+            let pressed = ctx.input(|input| {
+                input.events.iter().find_map(|event| match event {
+                    egui::Event::Key {
+                        key,
+                        modifiers,
+                        pressed: true,
+                        ..
+                    } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+            });
+            if let Some((key, modifiers)) = pressed {
+                self.shortcut_capture = None;
+                if key == Key::Escape {
+                    self.status = "Shortcut change cancelled".to_string();
+                } else {
+                    match self.preferences.shortcuts.assign(command, key, modifiers) {
+                        Ok(()) => {
+                            changed = true;
+                            self.status = format!(
+                                "{} is now {}",
+                                command.label(),
+                                self.preferences.shortcuts.chord(command)
+                            );
+                        }
+                        Err(error) => self.status = error,
+                    }
+                }
+            }
+        }
         if let Some(first) = Section::first_match(&self.preferences_search) {
             if !self.preferences_section.matches(&self.preferences_search) {
                 self.preferences_section = first;
@@ -8639,6 +8612,52 @@ impl BeamWrightApp {
                         changed = true;
                     }
                 });
+            }
+            Section::Shortcuts => {
+                ui.label(
+                    "Click Change and press the new combination. Escape cancels. \
+                     Delete and Backspace, Equals and Plus, and Ctrl+Shift+Z stay as fixed aliases.",
+                );
+                ui.add_space(4.0);
+                if let Some(command) = self.shortcut_capture {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(47, 182, 166),
+                        format!("Press a key for \"{}\" (Escape cancels)", command.label()),
+                    );
+                }
+                let mut capture: Option<Command> = None;
+                let mut reset: Option<Command> = None;
+                egui::Grid::new("pref_shortcuts")
+                    .num_columns(3)
+                    .striped(true)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        for command in Command::ALL {
+                            ui.label(command.label());
+                            ui.monospace(self.preferences.shortcuts.chord(command));
+                            ui.horizontal(|ui| {
+                                if ui.button("Change").clicked() {
+                                    capture = Some(command);
+                                }
+                                if ui.button("Reset").clicked() {
+                                    reset = Some(command);
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+                if let Some(command) = capture {
+                    self.shortcut_capture = Some(command);
+                }
+                if let Some(command) = reset {
+                    self.preferences.shortcuts.reset(command);
+                    changed = true;
+                }
+                if ui.button("Reset all shortcuts").clicked() {
+                    self.preferences.shortcuts.reset_all();
+                    self.shortcut_capture = None;
+                    changed = true;
+                }
             }
             Section::Machines => {
                 ui.weak(
@@ -9696,6 +9715,7 @@ fn section_icon(section: crate::config::preferences::Section) -> Icon {
         Section::Images => Icon::Image,
         Section::Files => Icon::Save,
         Section::Machines => Icon::Profiles,
+        Section::Shortcuts => Icon::Text,
         Section::Advanced => Icon::Preferences,
     }
 }
