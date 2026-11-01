@@ -446,38 +446,102 @@ impl ProfileLibrary {
 
     /// Built-in reference profiles. They are marked as such and cannot be
     /// edited or deleted; duplicate them to customise.
+    #[allow(clippy::too_many_lines)]
     pub fn with_builtins() -> Self {
+        // Reference materials grouped by family. No power or speed is invented:
+        // cuttable families point at the generic reference operation profiles,
+        // marking-only families recommend nothing. Values are starting points,
+        // never guarantees.
+        const MATERIALS: &[(&str, &str, f64, bool)] = &[
+            ("plywood-3", "Plywood", 3.0, true),
+            ("plywood-4", "Plywood", 4.0, true),
+            ("plywood-6", "Plywood", 6.0, true),
+            ("plywood-9", "Plywood", 9.0, true),
+            ("plywood-12", "Plywood", 12.0, true),
+            ("birch-plywood-3", "Birch plywood", 3.0, true),
+            ("birch-plywood-6", "Birch plywood", 6.0, true),
+            ("mdf-3", "MDF", 3.0, true),
+            ("mdf-6", "MDF", 6.0, true),
+            ("mdf-9", "MDF", 9.0, true),
+            ("mdf-12", "MDF", 12.0, true),
+            ("hardboard-3", "Hardboard", 3.0, true),
+            ("chipboard-10", "Chipboard", 10.0, true),
+            ("osb-9", "OSB", 9.0, true),
+            ("cork-3", "Cork", 3.0, true),
+            ("cork-6", "Cork", 6.0, true),
+            ("balsa-2", "Balsa", 2.0, true),
+            ("balsa-4", "Balsa", 4.0, true),
+            ("basswood-3", "Basswood", 3.0, true),
+            ("basswood-6", "Basswood", 6.0, true),
+            ("walnut-5", "Walnut", 5.0, true),
+            ("oak-5", "Oak", 5.0, true),
+            ("beech-5", "Beech", 5.0, true),
+            ("bamboo-3", "Bamboo", 3.0, true),
+            ("bamboo-5", "Bamboo", 5.0, true),
+            ("acrylic-2", "Acrylic", 2.0, true),
+            ("acrylic-3", "Acrylic", 3.0, true),
+            ("acrylic-5", "Acrylic", 5.0, true),
+            ("acrylic-8", "Acrylic", 8.0, true),
+            ("cast-acrylic-3", "Cast acrylic", 3.0, true),
+            ("extruded-acrylic-3", "Extruded acrylic", 3.0, true),
+            ("polycarbonate-2", "Polycarbonate", 2.0, true),
+            ("polypropylene-3", "Polypropylene", 3.0, true),
+            ("petg-1", "PETG", 1.0, true),
+            ("pom-3", "POM (Delrin)", 3.0, true),
+            ("hdpe-5", "HDPE", 5.0, true),
+            ("ptfe-3", "PTFE", 3.0, true),
+            ("nylon-3", "Nylon", 3.0, true),
+            ("leather-2", "Leather", 2.0, true),
+            ("leather-3", "Leather", 3.0, true),
+            ("felt-2", "Felt", 2.0, true),
+            ("felt-5", "Felt", 5.0, true),
+            ("felt-8", "Felt", 8.0, true),
+            ("cardboard-1", "Cardboard", 1.0, true),
+            ("cardboard-2", "Cardboard", 2.0, true),
+            ("corrugated-cardboard-4", "Corrugated cardboard", 4.0, true),
+            ("paper-03", "Paper", 0.3, true),
+            ("cardstock-05", "Cardstock", 0.5, true),
+            ("foam-board-5", "Foam board", 5.0, true),
+            ("eva-foam-3", "EVA foam", 3.0, true),
+            ("eva-foam-6", "EVA foam", 6.0, true),
+            ("depron-3", "Depron foam", 3.0, true),
+            ("xps-foam-20", "XPS foam", 20.0, true),
+            ("rubber-2", "Rubber", 2.0, true),
+            ("silicone-2", "Silicone", 2.0, true),
+            ("canvas-1", "Canvas", 1.0, true),
+            ("denim-1", "Denim", 1.0, true),
+            ("cotton-05", "Cotton", 0.5, true),
+            ("kraft-paper-03", "Kraft paper", 0.3, true),
+            ("glass-3", "Glass", 3.0, false),
+            ("anodised-aluminium-1", "Anodised aluminium", 1.0, false),
+            ("stainless-steel-1", "Stainless steel", 1.0, false),
+            ("ceramic-6", "Ceramic", 6.0, false),
+            ("slate-4", "Slate", 4.0, false),
+            ("marble-10", "Marble", 10.0, false),
+            ("granite-10", "Granite", 10.0, false),
+        ];
         let mut library = Self::empty();
-        library.materials.push(MaterialProfile {
-            id: "builtin-plywood-3".to_string(),
-            name: "Plywood 3 mm".to_string(),
-            material: "Plywood".to_string(),
-            thickness_mm: 3.0,
-            notes: "Reference values only; test on your own material.".to_string(),
-            builtin: true,
-            meta: ProfileMeta::with_category("Plywood"),
-            recommended_operations: Vec::new(),
-        });
-        library.materials.push(MaterialProfile {
-            id: "builtin-acrylic-3".to_string(),
-            name: "Acrylic 3 mm".to_string(),
-            material: "Acrylic".to_string(),
-            thickness_mm: 3.0,
-            notes: "Reference values only; test on your own material.".to_string(),
-            builtin: true,
-            meta: ProfileMeta::with_category("Acrylic"),
-            recommended_operations: Vec::new(),
-        });
-        library.materials.push(MaterialProfile {
-            id: "builtin-cardboard-2".to_string(),
-            name: "Cardboard 2 mm".to_string(),
-            material: "Cardboard".to_string(),
-            thickness_mm: 2.0,
-            notes: "Reference values only; test on your own material.".to_string(),
-            builtin: true,
-            meta: ProfileMeta::with_category("Cardboard"),
-            recommended_operations: Vec::new(),
-        });
+        for (slug, material, thickness, cuttable) in MATERIALS {
+            let notes = if *cuttable {
+                "Reference values only; test on your own material."
+            } else {
+                "Marking and engraving reference only; cutting needs a suitable laser."
+            };
+            library.materials.push(MaterialProfile {
+                id: format!("builtin-{slug}"),
+                name: format!("{material} {thickness} mm"),
+                material: (*material).to_string(),
+                thickness_mm: *thickness,
+                notes: notes.to_string(),
+                builtin: true,
+                meta: ProfileMeta::with_category(*material),
+                recommended_operations: if *cuttable {
+                    vec!["builtin-cut".to_string()]
+                } else {
+                    Vec::new()
+                },
+            });
+        }
         library.operations.push(OperationProfile {
             id: "builtin-cut".to_string(),
             name: "Outline cut".to_string(),
@@ -840,6 +904,41 @@ mod tests {
     }
 
     #[test]
+    fn the_builtin_library_has_a_broad_material_list() {
+        let library = ProfileLibrary::with_builtins();
+        assert!(
+            library.materials.len() >= 60,
+            "only {} built-in materials",
+            library.materials.len()
+        );
+        let mut ids = std::collections::HashSet::new();
+        for material in &library.materials {
+            assert!(material.builtin);
+            assert_ne!(material.material, "");
+            assert!(material.thickness_mm > 0.0);
+            assert_ne!(material.meta.category, "");
+            assert!(ids.insert(material.id.clone()), "duplicate {}", material.id);
+        }
+        let plywood = library
+            .materials
+            .iter()
+            .find(|material| material.id == "builtin-plywood-3")
+            .unwrap();
+        assert!(
+            plywood
+                .recommended_operations
+                .contains(&"builtin-cut".to_string())
+        );
+        let glass = library
+            .materials
+            .iter()
+            .find(|material| material.id == "builtin-glass-3")
+            .unwrap();
+        assert_eq!(glass.recommended_operations.len(), 0);
+        assert!(library.validate().is_ok());
+    }
+
+    #[test]
     fn rejects_invalid_material() {
         let mut library = ProfileLibrary::empty();
         library.materials.push(MaterialProfile {
@@ -897,8 +996,22 @@ mod tests {
     #[test]
     fn search_matches_material_and_operation() {
         let library = ProfileLibrary::with_builtins();
-        assert_eq!(library.search("plywood").len(), 1);
-        assert_eq!(library.search("cut").len(), 1);
+        let plywood = library.search("plywood");
+        assert!(
+            plywood.len() >= 5,
+            "the search should find the plywood family"
+        );
+        assert!(
+            plywood
+                .iter()
+                .all(|name| name.to_lowercase().contains("plywood")),
+            "{plywood:?}"
+        );
+        let operations = library.search("outline");
+        assert!(
+            operations.iter().any(|name| name.contains("Outline cut")),
+            "{operations:?}"
+        );
         assert_eq!(library.search("   ").len(), 0);
         assert_eq!(library.search("nonexistent").len(), 0);
     }
