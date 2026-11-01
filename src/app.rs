@@ -543,6 +543,14 @@ fn run_export(
                 .with_summary("Objects", document.objects.len().to_string())
                 .with_summary("Format", "LWPOLYLINE subset"))
         }
+        FileMode::ExportHpgl => {
+            let hpgl = crate::export::export_hpgl(document).map_err(|error| error.to_string())?;
+            cancelled()?;
+            std::fs::write(path, hpgl).map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export HPGL", path.display().to_string())
+                .with_summary("Objects", document.objects.len().to_string())
+                .with_summary("Units", "40 per mm"))
+        }
         FileMode::ExportGcode => {
             cancelled()?;
             let cancelled_flag = || cancel.load(std::sync::atomic::Ordering::Relaxed);
@@ -1141,6 +1149,7 @@ impl BeamWrightApp {
         let suggested = match mode {
             FileMode::ImportFile => "drawing.svg".to_string(),
             FileMode::ExportDxf => format!("{stem}.dxf"),
+            FileMode::ExportHpgl => format!("{stem}.plt"),
             FileMode::ExportPng => format!("{stem}.png"),
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
@@ -1185,6 +1194,7 @@ impl BeamWrightApp {
             }
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
+            FileMode::ExportHpgl => builder = builder.add_filter("HPGL", &["plt", "hpgl"]),
             FileMode::ExportPng => builder = builder.add_filter("PNG", &["png"]),
             FileMode::ExportGcode | FileMode::PreviewGcode => {
                 builder = builder.add_filter(
@@ -1288,6 +1298,7 @@ impl BeamWrightApp {
             FileMode::SaveProject => self.save_to(path),
             FileMode::ExportPng
             | FileMode::ExportDxf
+            | FileMode::ExportHpgl
             | FileMode::ExportGcode
             | FileMode::ExportSvg => self.start_export(mode, path, document, offset_origin),
             FileMode::RelinkImage => self.relink_image(path),
@@ -2224,6 +2235,10 @@ impl BeamWrightApp {
                         self.open_dialog(FileMode::ExportDxf);
                         ui.close();
                     }
+                    if icons::button(ui, Icon::Export, "Export HPGL...").clicked() {
+                        self.open_dialog(FileMode::ExportHpgl);
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Export, "Export PNG...").clicked() {
                         self.open_dialog(FileMode::ExportPng);
                         ui.close();
@@ -2410,11 +2425,6 @@ impl BeamWrightApp {
                         ui.close();
                     }
                     ui.separator();
-                    if icons::button(ui, Icon::Preferences, "Preferences...").clicked() {
-                        self.preferences_open = true;
-                        ui.close();
-                    }
-                    ui.separator();
                     if ui
                         .add_enabled(self.editor.selection.len() >= 2, icons::widget(ui, Icon::Group, "Group"))
                         .clicked()
@@ -2450,48 +2460,6 @@ impl BeamWrightApp {
                             self.editor.tool = tool;
                             ui.close();
                         }
-                    }
-                    ui.separator();
-                    if icons::button(ui, Icon::Image, "Insert image...").clicked() {
-                        self.open_dialog(FileMode::ImportFile);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.editor.selection.len() == 1,
-                            icons::widget(ui, Icon::Nodes, "Edit nodes"),
-                        )
-                        .clicked()
-                    {
-                        if let Some(id) = self.editor.selection.ids().first().cloned() {
-                            match self.editor.begin_node_edit(&id) {
-                                Ok(()) => self.status = "Editing nodes".to_string(),
-                                Err(error) => {
-                                    self.status = format!("Cannot edit nodes: {error}");
-                                }
-                            }
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.editor.selection.len() >= 2,
-                            icons::widget(ui, Icon::Trim, "Trim segments"),
-                        )
-                        .clicked()
-                    {
-                        self.apply_trim();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.editor.selection.len() >= 2,
-                            icons::widget(ui, Icon::Join, "Join paths"),
-                        )
-                        .clicked()
-                    {
-                        self.apply_join_paths();
-                        ui.close();
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Operations, "Operations"), |ui| {
@@ -2543,16 +2511,6 @@ impl BeamWrightApp {
                     }
                     if ui
                         .add_enabled(
-                            !self.editor.selection.is_empty(),
-                            icons::widget(ui, Icon::Check, "Apply profile"),
-                        )
-                        .clicked()
-                    {
-                        self.profiles_open = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
                             self.active_operation.is_some(),
                             icons::widget(ui, Icon::Duplicate, "Duplicate operation"),
                         )
@@ -2585,7 +2543,7 @@ impl BeamWrightApp {
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Materials, "Materials and profiles"), |ui| {
-                    if icons::button(ui, Icon::Book, "Open library...").clicked() {
+                    if icons::button(ui, Icon::Materials, "Materials and operations...").clicked() {
                         self.profiles_open = true;
                         ui.close();
                     }
@@ -2916,12 +2874,6 @@ impl BeamWrightApp {
                         ui.close();
                     }
                 });
-                ui.menu_button(icons::menu_label(ui, Icon::Book, "Profiles"), |ui| {
-                    if icons::button(ui, Icon::Materials, "Materials and operations...").clicked() {
-                        self.profiles_open = true;
-                        ui.close();
-                    }
-                });
                 ui.menu_button(icons::menu_label(ui, Icon::View, "View"), |ui| {
                     if icons::button(ui, Icon::ZoomIn, "Zoom in").clicked() {
                         self.editor.zoom_in();
@@ -2994,14 +2946,6 @@ impl BeamWrightApp {
                         self.palette_open = true;
                         self.palette_focus = true;
                         self.palette_query.clear();
-                        ui.close();
-                    }
-                    if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
-                        self.operations_compare_open = true;
-                        ui.close();
-                    }
-                    if icons::button(ui, Icon::Play, "Preview and G-code...").clicked() {
-                        self.open_preview();
                         ui.close();
                     }
                     icons::checkbox(ui, &mut self.dark_mode, Icon::DarkMode, "Dark mode");
@@ -8929,8 +8873,9 @@ impl BeamWrightApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size([760.0, 520.0])
-            .min_size([600.0, 420.0])
+            .default_size([720.0, 440.0])
+            .min_size([600.0, 340.0])
+            .max_height(500.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.add(icons::image_at(ui.ctx(), Icon::Search, 16.0));
@@ -8944,7 +8889,7 @@ impl BeamWrightApp {
                     }
                 });
                 ui.separator();
-                let content_height = (ui.available_height() - 44.0).max(220.0);
+                let content_height = (ui.available_height() - 44.0).clamp(200.0, 330.0);
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(190.0, content_height),
@@ -9451,10 +9396,20 @@ impl BeamWrightApp {
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
                         ui.label("Data directory");
-                        ui.monospace(crate::config::paths::data_dir().display().to_string());
+                        let data = crate::config::paths::data_dir().display().to_string();
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(data.clone()).monospace())
+                                .truncate(),
+                        )
+                        .on_hover_text(data);
                         ui.end_row();
                         ui.label("Preferences file");
-                        ui.monospace(self.preferences_path.display().to_string());
+                        let file = self.preferences_path.display().to_string();
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(file.clone()).monospace())
+                                .truncate(),
+                        )
+                        .on_hover_text(file);
                         ui.end_row();
                     });
                 ui.weak(

@@ -2,7 +2,8 @@ use std::fmt::Write as _;
 
 use crate::document::Document;
 use crate::errors::Result;
-use crate::geometry::{Path, path::Segment};
+
+use super::paths::{flatten, fmt_num};
 
 /// Export the document as DXF, aiming at the widely supported R12 `ENTITIES`
 /// subset.
@@ -48,53 +49,6 @@ pub fn export_dxf(document: &Document) -> Result<String> {
 /// Pack an RGB colour as a DXF true-colour value.
 fn true_colour(red: u8, green: u8, blue: u8) -> u32 {
     (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn flatten(path: &Path, steps_per_curve: usize) -> Vec<(f64, f64)> {
-    let mut points = Vec::new();
-    for segment in &path.segments {
-        match segment {
-            Segment::Line { from, to } => {
-                if points.is_empty() {
-                    points.push((from.x, from.y));
-                }
-                points.push((to.x, to.y));
-            }
-            Segment::Cubic(curve) => {
-                if points.is_empty() {
-                    points.push((curve.p0.x, curve.p0.y));
-                }
-                for step in 1..=steps_per_curve {
-                    let t = step as f64 / steps_per_curve as f64;
-                    let point = curve.eval(t);
-                    points.push((point.x, point.y));
-                }
-            }
-        }
-    }
-    if path.closed && points.len() > 1 {
-        let first = points[0];
-        let last = points[points.len() - 1];
-        if (first.0 - last.0).abs() < 1e-9 && (first.1 - last.1).abs() < 1e-9 {
-            points.pop();
-        }
-    }
-    points
-}
-
-fn fmt_num(value: f64) -> String {
-    if value.abs() < 1e-9 {
-        return "0".to_string();
-    }
-    let mut text = format!("{value:.6}");
-    while text.contains('.') && text.ends_with('0') {
-        text.pop();
-    }
-    if text.ends_with('.') {
-        text.pop();
-    }
-    text
 }
 
 #[cfg(test)]
