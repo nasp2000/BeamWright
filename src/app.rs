@@ -311,6 +311,8 @@ pub struct BeamWrightApp {
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
+    workspaces_open: bool,
+    workspace_name: String,
     external_gcode_open: bool,
     external_gcode: Option<(PathBuf, crate::gcode::external::Program)>,
     preferences_section: crate::config::preferences::Section,
@@ -837,6 +839,8 @@ impl BeamWrightApp {
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
+            workspaces_open: false,
+            workspace_name: String::new(),
             external_gcode_open: false,
             external_gcode: None,
             preferences_section: crate::config::preferences::Section::General,
@@ -2860,6 +2864,10 @@ impl BeamWrightApp {
                     icons::checkbox(ui, &mut self.preview_toolpaths, Icon::Toolpaths, "Show toolpaths");
                     icons::checkbox(ui, &mut self.show_layers_panel, Icon::Panels, "Layers panel (F9)");
                     icons::checkbox(ui, &mut self.show_properties_panel, Icon::Panels, "Properties panel (F10)");
+                    if icons::button(ui, Icon::Panels, "Workspaces...").clicked() {
+                        self.workspaces_open = true;
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
                         self.operations_compare_open = true;
                         ui.close();
@@ -8055,6 +8063,144 @@ impl BeamWrightApp {
         self.grid_array_open = open && self.grid_array_open;
     }
 
+    fn current_workspace(&self, name: &str) -> crate::config::preferences::Workspace {
+        crate::config::preferences::Workspace {
+            name: name.trim().to_string(),
+            layers_panel: self.show_layers_panel,
+            properties_panel: self.show_properties_panel,
+            rulers: self.editor.show_rulers,
+            grid: self.editor.canvas.grid_visible,
+            guides: self.editor.guides_visible,
+            toolpaths: self.preview_toolpaths,
+        }
+    }
+
+    fn apply_workspace(&mut self, workspace: &crate::config::preferences::Workspace) {
+        self.show_layers_panel = workspace.layers_panel;
+        self.show_properties_panel = workspace.properties_panel;
+        self.editor.show_rulers = workspace.rulers;
+        self.editor.canvas.grid_visible = workspace.grid;
+        self.editor.guides_visible = workspace.guides;
+        self.preview_toolpaths = workspace.toolpaths;
+        self.preferences.drawing.show_rulers = workspace.rulers;
+        self.preferences.drawing.guides_visible = workspace.guides;
+    }
+
+    fn workspaces_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.workspaces_open;
+        let mut save = false;
+        let mut apply: Option<String> = None;
+        let mut delete: Option<String> = None;
+        let mut reset = false;
+        let mut close_requested = false;
+        egui::Window::new("Workspaces")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "A workspace stores which panels and overlays are visible. \
+                     The tool paths, layers, properties, rulers, grid and guides are recorded.",
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.workspace_name)
+                            .hint_text("Workspace name")
+                            .desired_width(220.0),
+                    );
+                    if ui
+                        .add_enabled(
+                            !self.workspace_name.trim().is_empty(),
+                            egui::Button::new("Save current layout"),
+                        )
+                        .on_hover_text(
+                            "Saves the layout under this name; an existing name is replaced",
+                        )
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                });
+                ui.separator();
+                if self.preferences.workspaces.saved.is_empty() {
+                    ui.weak("No workspaces saved yet.");
+                }
+                for workspace in &self.preferences.workspaces.saved {
+                    ui.horizontal(|ui| {
+                        ui.label(&workspace.name);
+                        if ui.button("Apply").clicked() {
+                            apply = Some(workspace.name.clone());
+                        }
+                        if ui
+                            .button("Delete")
+                            .on_hover_text(
+                                "Removes this workspace; the current layout stays as it is",
+                            )
+                            .clicked()
+                        {
+                            delete = Some(workspace.name.clone());
+                        }
+                    });
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Reset layout")
+                        .on_hover_text("Restores the initial layout")
+                        .clicked()
+                    {
+                        reset = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+            });
+        let mut stored = false;
+        if save {
+            let name = self.workspace_name.trim().to_string();
+            let workspace = self.current_workspace(&name);
+            match self.preferences.workspaces.upsert(workspace) {
+                Ok(()) => {
+                    self.status = format!("Workspace '{name}' saved");
+                    stored = true;
+                }
+                Err(error) => self.status = error,
+            }
+        }
+        if let Some(name) = apply {
+            if let Some(workspace) = self.preferences.workspaces.find(&name).cloned() {
+                self.apply_workspace(&workspace);
+                self.status = format!("Workspace '{name}' applied");
+            }
+        }
+        if let Some(name) = delete {
+            if self.preferences.workspaces.remove(&name) {
+                self.status = format!("Workspace '{name}' deleted");
+                stored = true;
+            }
+        }
+        if reset {
+            self.apply_workspace(&crate::config::preferences::Workspace::initial());
+            self.status = "Layout reset to the initial layout".to_string();
+        }
+        if stored {
+            match self.preferences.save(&self.preferences_path) {
+                Ok(()) => {}
+                Err(error) => self.status = format!("Cannot save preferences: {error}"),
+            }
+        }
+        if close_requested {
+            open = false;
+        }
+        self.workspaces_open = open;
+    }
+
     fn preferences_window(&mut self, ctx: &egui::Context) {
         use crate::config::preferences::Section;
         let mut open = self.preferences_open;
@@ -9401,6 +9547,9 @@ impl BeamWrightApp {
         }
         if self.preferences_open {
             self.preferences_window(ctx);
+        }
+        if self.workspaces_open {
+            self.workspaces_window(ctx);
         }
         if self.grid_array_open {
             self.grid_array_window(ctx);

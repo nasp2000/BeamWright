@@ -172,10 +172,111 @@ fn default_text_font() -> String {
     crate::textfont::BUNDLED_NAME.to_string()
 }
 
+/// A saved combination of panel visibility and canvas overlays.
+///
+/// The booleans are independent toggles, not a state machine.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub name: String,
+    pub layers_panel: bool,
+    pub properties_panel: bool,
+    pub rulers: bool,
+    pub grid: bool,
+    pub guides: bool,
+    pub toolpaths: bool,
+}
+
+impl Workspace {
+    /// The layout a new installation starts with.
+    pub fn initial() -> Self {
+        Self {
+            name: "Initial layout".to_string(),
+            layers_panel: true,
+            properties_panel: true,
+            rulers: true,
+            grid: true,
+            guides: true,
+            toolpaths: false,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("a workspace needs a name".to_string());
+        }
+        if self.name.chars().count() > 60 {
+            return Err("a workspace name is limited to 60 characters".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Saved workspaces, in the order they were created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WorkspacePrefs {
+    #[serde(default)]
+    pub saved: Vec<Workspace>,
+}
+
+/// Largest number of saved workspaces.
+pub const MAX_WORKSPACES: usize = 20;
+
+impl WorkspacePrefs {
+    /// Save a workspace, replacing the one with the same name.
+    pub fn upsert(&mut self, workspace: Workspace) -> Result<(), String> {
+        workspace.validate()?;
+        let name = workspace.name.trim().to_string();
+        if let Some(existing) = self
+            .saved
+            .iter_mut()
+            .find(|candidate| candidate.name == name)
+        {
+            *existing = workspace;
+            return Ok(());
+        }
+        if self.saved.len() >= MAX_WORKSPACES {
+            return Err(format!(
+                "at most {MAX_WORKSPACES} workspaces can be saved; delete one first"
+            ));
+        }
+        let mut workspace = workspace;
+        workspace.name = name;
+        self.saved.push(workspace);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str) -> bool {
+        let before = self.saved.len();
+        self.saved.retain(|workspace| workspace.name != name);
+        self.saved.len() != before
+    }
+
+    pub fn find(&self, name: &str) -> Option<&Workspace> {
+        self.saved.iter().find(|workspace| workspace.name == name)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.saved.len() > MAX_WORKSPACES {
+            return Err(format!("at most {MAX_WORKSPACES} workspaces can be saved"));
+        }
+        let mut names = std::collections::HashSet::new();
+        for workspace in &self.saved {
+            workspace.validate()?;
+            if !names.insert(workspace.name.trim()) {
+                return Err(format!("duplicate workspace name: {}", workspace.name));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppPreferences {
     pub general: GeneralPrefs,
     pub drawing: DrawingPrefs,
+    #[serde(default)]
+    pub workspaces: WorkspacePrefs,
 }
 
 fn default_snap_step() -> f64 {
@@ -222,6 +323,7 @@ impl AppPreferences {
     pub fn validate(&self) -> Result<(), String> {
         self.general.validate()?;
         self.drawing.validate()?;
+        self.workspaces.validate()?;
         Ok(())
     }
 
@@ -421,6 +523,93 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         let q: AppPreferences = serde_json::from_str(&s).unwrap();
         assert_eq!(q.general.theme, p.general.theme);
+    }
+
+    #[test]
+    fn workspaces_are_saved_replaced_and_removed() {
+        let mut prefs = WorkspacePrefs::default();
+        assert_eq!(prefs.saved.len(), 0);
+        prefs
+            .upsert(Workspace {
+                name: "Drawing".to_string(),
+                grid: false,
+                ..Workspace::initial()
+            })
+            .unwrap();
+        prefs.upsert(Workspace::initial()).unwrap();
+        assert_eq!(prefs.saved.len(), 2);
+        // Saving the same name replaces it instead of adding a duplicate.
+        prefs
+            .upsert(Workspace {
+                name: "Drawing".to_string(),
+                toolpaths: true,
+                ..Workspace::initial()
+            })
+            .unwrap();
+        assert_eq!(prefs.saved.len(), 2);
+        assert!(prefs.find("Drawing").unwrap().toolpaths);
+        assert!(prefs.remove("Drawing"));
+        assert!(!prefs.remove("Drawing"));
+        assert_eq!(prefs.saved.len(), 1);
+    }
+
+    #[test]
+    fn workspace_names_and_counts_are_validated() {
+        let mut prefs = WorkspacePrefs::default();
+        assert!(
+            prefs
+                .upsert(Workspace {
+                    name: "   ".to_string(),
+                    ..Workspace::initial()
+                })
+                .is_err()
+        );
+        for index in 0..MAX_WORKSPACES {
+            prefs
+                .upsert(Workspace {
+                    name: format!("Workspace {index}"),
+                    ..Workspace::initial()
+                })
+                .unwrap();
+        }
+        assert!(
+            prefs
+                .upsert(Workspace {
+                    name: "One too many".to_string(),
+                    ..Workspace::initial()
+                })
+                .is_err()
+        );
+        let mut duplicate = WorkspacePrefs {
+            saved: vec![Workspace::initial(), Workspace::initial()],
+        };
+        assert!(duplicate.validate().is_err());
+        duplicate.saved.pop();
+        assert!(duplicate.validate().is_ok());
+        duplicate.saved[0].name = "x".repeat(61);
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn the_initial_layout_is_the_documented_one() {
+        let layout = Workspace::initial();
+        assert!(layout.layers_panel);
+        assert!(layout.properties_panel);
+        assert!(layout.rulers);
+        assert!(layout.grid);
+        assert!(layout.guides);
+        assert!(!layout.toolpaths);
+        assert!(layout.validate().is_ok());
+    }
+
+    #[test]
+    fn old_preferences_load_without_workspaces() {
+        let json = r#"{"general":{"default_unit":"mm","theme":"dark","confirm_destructive":true,
+            "backup_enabled":true,"default_directory":""},
+            "drawing":{"grid_spacing_mm":10.0,"snap_tolerance_px":8.0,"show_rulers":true}}"#;
+        let preferences: AppPreferences = serde_json::from_str(json).unwrap();
+        assert_eq!(preferences.workspaces.saved.len(), 0);
+        assert!(preferences.validate().is_ok());
     }
 
     #[test]
