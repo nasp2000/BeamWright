@@ -27,6 +27,7 @@ pub mod layers;
 pub mod machines;
 pub mod material_test;
 pub mod mcp;
+pub mod mcp_content;
 pub mod mcp_http;
 pub mod objects;
 pub mod operations;

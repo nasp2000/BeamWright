@@ -70,6 +70,28 @@ impl McpServer {
         &self.policy
     }
 
+    fn read_resource(&self, params: &Value) -> Result<Value> {
+        let uri = params
+            .get("uri")
+            .and_then(Value::as_str)
+            .ok_or_else(|| missing("uri"))?;
+        let content = crate::mcp_content::read(uri, &self.editor.document)
+            .map_err(BeamError::InvalidInput)?;
+        Ok(json!({"contents": [content]}))
+    }
+
+    fn read_prompt(params: &Value) -> Result<Value> {
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| missing("name"))?;
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        crate::mcp_content::prompt(name, &arguments).map_err(BeamError::InvalidInput)
+    }
+
     /// Handle one JSON-RPC request and return the response object.
     pub fn handle(&mut self, request: &Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
@@ -81,9 +103,17 @@ impl McpServer {
         let result = match method {
             "initialize" => Ok(json!({
                 "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                 "serverInfo": {"name": "beamwright", "version": env!("CARGO_PKG_VERSION")}
             })),
+            "resources/list" => Ok(json!({
+                "resources": crate::mcp_content::resources()
+            })),
+            "resources/read" => self.read_resource(&params),
+            "prompts/list" => Ok(json!({
+                "prompts": crate::mcp_content::prompts()
+            })),
+            "prompts/get" => Self::read_prompt(&params),
             "tools/list" => Ok(json!({"tools": tool_definitions()})),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -2152,6 +2182,54 @@ mod tests {
             json!({"operation": id, "expressions": {"speed": "missing + 1"}}),
         );
         assert!(bad_expression.get("error").is_some());
+    }
+
+    #[test]
+    fn resources_and_prompts_are_served() {
+        let mut server = McpServer::new();
+        let init = server.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}));
+        assert!(init["result"]["capabilities"]["resources"].is_object());
+        assert!(init["result"]["capabilities"]["prompts"].is_object());
+
+        let listed = server.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}));
+        assert_eq!(listed["result"]["resources"].as_array().unwrap().len(), 4);
+        let read = server.handle(&json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "resources/read",
+            "params": {"uri": "beamwright://document/summary"}
+        }));
+        let text = read["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\"project\""));
+        let missing = server.handle(&json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "resources/read",
+            "params": {"uri": "beamwright://nope"}
+        }));
+        assert!(missing.get("error").is_some());
+
+        let listed = server.handle(&json!({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}));
+        assert_eq!(listed["result"]["prompts"].as_array().unwrap().len(), 4);
+        let got = server.handle(&json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "prompts/get",
+            "params": {"name": "prepare_job", "arguments": {"material": "3 mm plywood"}}
+        }));
+        assert!(
+            got["result"]["messages"][0]["content"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("3 mm plywood")
+        );
+        let missing = server.handle(&json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "prompts/get",
+            "params": {"name": "nope"}
+        }));
+        assert!(missing.get("error").is_some());
     }
 
     #[test]
