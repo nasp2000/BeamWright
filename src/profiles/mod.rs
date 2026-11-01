@@ -1,3 +1,4 @@
+pub mod csv;
 pub mod library;
 pub mod model;
 

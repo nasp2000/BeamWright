@@ -17,6 +17,8 @@ pub enum FileMode {
     ExportProfiles,
     ImportMachines,
     ExportMachines,
+    ImportMaterialsCsv,
+    ExportMaterialsCsv,
     PreviewGcode,
 }
 
@@ -38,6 +40,8 @@ impl FileMode {
             FileMode::ExportProfiles => "Export profiles",
             FileMode::ImportMachines => "Import machine profiles",
             FileMode::ExportMachines => "Export machine profiles",
+            FileMode::ImportMaterialsCsv => "Import materials CSV",
+            FileMode::ExportMaterialsCsv => "Export materials CSV",
             FileMode::PreviewGcode => "Preview external G-code",
         }
     }
@@ -53,9 +57,12 @@ impl FileMode {
             | FileMode::ExportPng
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
-            | FileMode::ExportMachines => "Export",
+            | FileMode::ExportMachines
+            | FileMode::ExportMaterialsCsv => "Export",
             FileMode::RelinkImage => "Relink",
-            FileMode::ImportProfiles | FileMode::ImportMachines => "Import",
+            FileMode::ImportProfiles | FileMode::ImportMachines | FileMode::ImportMaterialsCsv => {
+                "Import"
+            }
         }
     }
 
@@ -73,6 +80,7 @@ impl FileMode {
             | FileMode::ExportProfiles
             | FileMode::ImportMachines
             | FileMode::ExportMachines => "json",
+            FileMode::ImportMaterialsCsv | FileMode::ExportMaterialsCsv => "csv",
         }
     }
 
@@ -82,6 +90,9 @@ impl FileMode {
             FileMode::OpenProject => "Shows .bwp and .svg files",
             FileMode::ImportProfiles | FileMode::ExportProfiles => "Shows .json profile libraries",
             FileMode::ImportMachines | FileMode::ExportMachines => "Shows .json machine libraries",
+            FileMode::ImportMaterialsCsv | FileMode::ExportMaterialsCsv => {
+                "Shows .csv material lists"
+            }
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::SaveArchive => "Saves .bwpz files with the images inside",
             FileMode::ImportFile => {
@@ -153,6 +164,7 @@ impl FileMode {
             | FileMode::ExportProfiles
             | FileMode::ImportMachines
             | FileMode::ExportMachines => extension == "json",
+            FileMode::ImportMaterialsCsv | FileMode::ExportMaterialsCsv => extension == "csv",
         }
     }
 }
@@ -356,6 +368,7 @@ impl FileDialog {
                     | FileMode::ExportGcode
                     | FileMode::ExportProfiles
                     | FileMode::ExportMachines
+                    | FileMode::ExportMaterialsCsv
             ) {
                 path.set_extension(self.mode.default_extension());
             } else {
@@ -368,6 +381,7 @@ impl FileDialog {
             | FileMode::RelinkImage
             | FileMode::ImportProfiles
             | FileMode::ImportMachines
+            | FileMode::ImportMaterialsCsv
             | FileMode::PreviewGcode => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
@@ -382,7 +396,8 @@ impl FileDialog {
             | FileMode::ExportPng
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
-            | FileMode::ExportMachines => {
+            | FileMode::ExportMachines
+            | FileMode::ExportMaterialsCsv => {
                 if let Some(parent) = path.parent() {
                     if !parent.is_dir() {
                         return Err(format!("Directory not found: {}", parent.display()));
@@ -484,6 +499,25 @@ mod tests {
             dialog.directory.is_dir(),
             "{} is not a folder",
             dialog.directory.display()
+        );
+    }
+
+    #[test]
+    fn material_csv_uses_the_csv_extension() {
+        assert!(FileMode::ImportMaterialsCsv.accepts(std::path::Path::new("m.csv")));
+        assert!(FileMode::ExportMaterialsCsv.accepts(std::path::Path::new("M.CSV")));
+        assert!(!FileMode::ExportMaterialsCsv.accepts(std::path::Path::new("m.json")));
+        let mut dialog = FileDialog::new(
+            FileMode::ExportMaterialsCsv,
+            Some(std::path::Path::new("/tmp/beamwright-csv")),
+            "beamwright-csv",
+        );
+        dialog.directory = std::env::temp_dir();
+        dialog.file_name = "beamwright-csv".to_string();
+        let path = dialog.resolve().unwrap();
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("csv")
         );
     }
 

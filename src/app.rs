@@ -1189,6 +1189,9 @@ impl BeamWrightApp {
             FileMode::RelinkImage => "image.png".to_string(),
             FileMode::PreviewGcode => "job.nc".to_string(),
             FileMode::ImportProfiles | FileMode::ExportProfiles => "profiles.json".to_string(),
+            FileMode::ImportMaterialsCsv | FileMode::ExportMaterialsCsv => {
+                "materials.csv".to_string()
+            }
             FileMode::ImportMachines | FileMode::ExportMachines => "machines.json".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
             FileMode::SaveArchive => format!("{stem}.bwpz"),
@@ -1247,6 +1250,9 @@ impl BeamWrightApp {
             | FileMode::ExportMachines
             | FileMode::ImportProfiles
             | FileMode::ImportMachines => builder = builder.add_filter("JSON", &["json"]),
+            FileMode::ImportMaterialsCsv | FileMode::ExportMaterialsCsv => {
+                builder = builder.add_filter("CSV", &["csv"]);
+            }
             FileMode::SaveProject => builder = builder.add_filter("BeamWright", &["bwp"]),
             FileMode::SaveArchive => {
                 builder = builder.add_filter("BeamWright archive", &["bwpz"]);
@@ -1258,6 +1264,7 @@ impl BeamWrightApp {
             | FileMode::RelinkImage
             | FileMode::ImportProfiles
             | FileMode::ImportMachines
+            | FileMode::ImportMaterialsCsv
             | FileMode::PreviewGcode => builder.pick_file(),
             _ => builder.save_file(),
         };
@@ -1299,6 +1306,8 @@ impl BeamWrightApp {
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.start_import(path),
             FileMode::PreviewGcode => self.preview_external_gcode(path),
+            FileMode::ImportMaterialsCsv => self.import_materials_csv(path),
+            FileMode::ExportMaterialsCsv => self.export_materials_csv(path),
             FileMode::ImportProfiles => {
                 match crate::profiles::library::import_into(&mut self.profiles, path) {
                     Ok(count) => {
@@ -6541,6 +6550,33 @@ impl BeamWrightApp {
         self.status = format!("Traced {} centerline(s)", created.len());
     }
 
+    fn import_materials_csv(&mut self, path: &Path) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.status = format!("Cannot read the CSV: {error}");
+                return;
+            }
+        };
+        match crate::profiles::csv::import_materials_csv(&mut self.profiles, &text) {
+            Ok(count) => {
+                match crate::profiles::library::save(&self.profiles, &self.profiles_path) {
+                    Ok(()) => self.status = format!("Imported {count} material(s) from CSV"),
+                    Err(error) => self.status = format!("Cannot save the library: {error}"),
+                }
+            }
+            Err(error) => self.status = format!("CSV import failed: {error}"),
+        }
+    }
+
+    fn export_materials_csv(&mut self, path: &Path) {
+        let csv = crate::profiles::csv::export_materials_csv(&self.profiles);
+        match std::fs::write(path, csv) {
+            Ok(()) => self.status = format!("Exported materials to {}", path.display()),
+            Err(error) => self.status = format!("CSV export failed: {error}"),
+        }
+    }
+
     fn preview_external_gcode(&mut self, path: &Path) {
         match crate::gcode::external::parse_file(path) {
             Ok(program) => {
@@ -9747,6 +9783,16 @@ impl BeamWrightApp {
                     if ui.button("Export profiles...").clicked() {
                         self.open_dialog(FileMode::ExportProfiles);
                     }
+                    ui.menu_button("Materials CSV", |ui| {
+                        if ui.button("Import materials CSV...").clicked() {
+                            self.open_dialog(FileMode::ImportMaterialsCsv);
+                            ui.close();
+                        }
+                        if ui.button("Export materials CSV...").clicked() {
+                            self.open_dialog(FileMode::ExportMaterialsCsv);
+                            ui.close();
+                        }
+                    });
                 });
                 ui.horizontal(|ui| {
                     ui.label("Search");
