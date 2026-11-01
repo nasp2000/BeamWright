@@ -76,6 +76,7 @@ enum PaletteAction {
     Cuts,
     Preview,
     MaterialTest,
+    RegistrationMarks,
     DocumentProperties,
     Preferences,
     Workspaces,
@@ -123,6 +124,7 @@ fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
         (Action::Cuts, "Cuts and layers..."),
         (Action::Preview, "Preview and G-code..."),
         (Action::MaterialTest, "Material test..."),
+        (Action::RegistrationMarks, "Registration marks..."),
         (Action::DocumentProperties, "Document properties..."),
         (Action::Preferences, "Preferences..."),
         (Action::Workspaces, "Workspaces..."),
@@ -424,6 +426,8 @@ pub struct BeamWrightApp {
     palette_open: bool,
     palette_query: String,
     palette_focus: bool,
+    regmarks_open: bool,
+    regmarks_options: crate::regmarks::Options,
     interface_presets_open: bool,
     interface_preset_name: String,
     shortcut_capture: Option<crate::config::shortcuts::Command>,
@@ -976,6 +980,8 @@ impl BeamWrightApp {
             palette_open: false,
             palette_query: String::new(),
             palette_focus: false,
+            regmarks_open: false,
+            regmarks_options: crate::regmarks::Options::default(),
             interface_presets_open: false,
             interface_preset_name: String::new(),
             shortcut_capture: None,
@@ -2472,6 +2478,10 @@ impl BeamWrightApp {
                     }
                 });
                 ui.menu_button(icons::menu_label(ui, Icon::Operations, "Operations"), |ui| {
+                    if icons::button(ui, Icon::Intersections, "Registration marks...").clicked() {
+                        self.regmarks_open = true;
+                        ui.close();
+                    }
                     if icons::button(ui, Icon::GridArray, "Material test...").clicked() {
                         self.material_test_open = true;
                         ui.close();
@@ -5425,6 +5435,115 @@ impl BeamWrightApp {
         self.external_gcode_open = open;
     }
 
+    fn registration_marks_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.regmarks_open;
+        let mut generate = false;
+        let mut close_requested = false;
+        egui::Window::new("Registration marks")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Adds four marks around the selection, or around the whole drawing \
+                     when nothing is selected. They are ordinary paths and stay outside \
+                     the artwork; alignment itself is still manual.",
+                );
+                ui.add_space(4.0);
+                egui::Grid::new("registration_marks_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Size (mm)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.regmarks_options.size_mm)
+                                .speed(0.5)
+                                .range(0.5..=100.0),
+                        );
+                        ui.end_row();
+                        ui.label("Margin (mm)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.regmarks_options.margin_mm)
+                                .speed(0.5)
+                                .range(0.0..=200.0),
+                        );
+                        ui.end_row();
+                        ui.label("Style");
+                        let mut style = self.regmarks_options.style;
+                        egui::ComboBox::from_id_salt("registration_mark_style")
+                            .selected_text(style.label())
+                            .show_ui(ui, |ui| {
+                                for candidate in crate::regmarks::MarkStyle::all() {
+                                    ui.selectable_value(&mut style, candidate, candidate.label());
+                                }
+                            });
+                        self.regmarks_options.style = style;
+                        ui.end_row();
+                    });
+                if let Err(error) = self.regmarks_options.validate() {
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Add marks").clicked() {
+                        generate = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        if generate {
+            let bounds = self.editor.selected_bounds().or_else(|| {
+                self.editor.document.bounds().or_else(|| {
+                    Some((
+                        Point2::new(0.0, 0.0),
+                        Point2::new(
+                            self.editor.document.width_mm,
+                            self.editor.document.height_mm,
+                        ),
+                    ))
+                })
+            });
+            match bounds {
+                Some(bounds) => match crate::regmarks::marks(bounds, &self.regmarks_options) {
+                    Ok(outlines) => {
+                        self.editor.record_action("Registration marks");
+                        let layer_id = self
+                            .editor
+                            .document
+                            .add_layer("Registration marks")
+                            .id
+                            .clone();
+                        let operation = self.active_operation.clone();
+                        let mut added = 0;
+                        for outline in &outlines {
+                            let mut object = crate::document::Object::new(
+                                layer_id.clone(),
+                                crate::document::Shape::Path(crate::centerline::to_path(outline)),
+                            );
+                            object.name = "Registration mark".to_string();
+                            object.operation_id.clone_from(&operation);
+                            object.style.stroke = Some("#000000".to_string());
+                            object.style.fill = None;
+                            self.editor.document.add_object(object);
+                            added += 1;
+                        }
+                        self.status = format!("Added {added} registration mark(s)");
+                        open = false;
+                    }
+                    Err(error) => self.status = error,
+                },
+                None => self.status = "There is nothing to put marks around".to_string(),
+            }
+        }
+        if close_requested {
+            open = false;
+        }
+        self.regmarks_open = open;
+    }
+
     fn open_cuts(&mut self) {
         self.cuts_snapshot = Some(self.editor.document.clone());
         if self.active_operation.is_none() {
@@ -8342,6 +8461,7 @@ impl BeamWrightApp {
             Action::Cuts => self.open_cuts(),
             Action::Preview => self.open_preview(),
             Action::MaterialTest => self.material_test_open = true,
+            Action::RegistrationMarks => self.regmarks_open = true,
             Action::DocumentProperties => {
                 self.doc_properties_snapshot = Some(self.editor.document.clone());
                 self.doc_properties_open = true;
@@ -9936,6 +10056,9 @@ impl BeamWrightApp {
         }
         if self.image_test_open {
             self.image_test_window(ctx);
+        }
+        if self.regmarks_open {
+            self.registration_marks_window(ctx);
         }
         if self.external_gcode_open {
             self.external_gcode_window(ctx);

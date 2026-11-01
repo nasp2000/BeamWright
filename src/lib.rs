@@ -30,6 +30,7 @@ pub mod objects;
 pub mod operations;
 pub mod profiles;
 pub mod raster;
+pub mod regmarks;
 pub mod report;
 pub mod task;
 pub mod textfont;
