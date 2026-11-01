@@ -299,6 +299,9 @@ pub struct BeamWrightApp {
     material_test_open: bool,
     gcode_dialect: crate::gcode::Dialect,
     material_test_options: crate::material_test::Options,
+    image_test_open: bool,
+    image_test_options: crate::image_test::Options,
+    image_test_target: Option<String>,
     bridge: Option<crate::bridge::LiveBridge>,
     live_server: crate::mcp::McpServer,
     preferences: crate::config::preferences::AppPreferences,
@@ -814,6 +817,9 @@ impl BeamWrightApp {
             material_test_open: false,
             gcode_dialect: crate::gcode::Dialect::default(),
             material_test_options: crate::material_test::Options::default(),
+            image_test_open: false,
+            image_test_options: crate::image_test::Options::default(),
+            image_test_target: None,
             bridge: crate::bridge::LiveBridge::start(
                 bridge_bind,
                 crate::bridge::configured_port(),
@@ -4888,6 +4894,117 @@ impl BeamWrightApp {
         }
     }
 
+    fn image_test_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.image_test_open;
+        let mut generate = false;
+        let mut close_requested = false;
+        egui::Window::new("Image test grid")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Copies the adjusted image once per speed (columns) and power (rows). \
+                     Every copy keeps the source file, crop and preparation settings, and \
+                     gets its own outline operation.",
+                );
+                ui.separator();
+                egui::Grid::new("image_test_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Columns / rows");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.columns)
+                                    .range(1..=20),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.rows)
+                                    .range(1..=20),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Speed range (mm/min)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.speed_min)
+                                    .speed(10.0)
+                                    .range(1.0..=100_000.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.speed_max)
+                                    .speed(10.0)
+                                    .range(1.0..=100_000.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Power range (%)");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.power_min)
+                                    .range(0.0..=100.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.image_test_options.power_max)
+                                    .range(0.0..=100.0),
+                            );
+                        });
+                        ui.end_row();
+                        ui.label("Gap (mm)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.image_test_options.gap_mm)
+                                .speed(0.5)
+                                .range(0.0..=100.0),
+                        );
+                        ui.end_row();
+                    });
+                ui.weak(format!(
+                    "{} copies in a {} x {} grid",
+                    self.image_test_options.cell_count(),
+                    self.image_test_options.columns,
+                    self.image_test_options.rows
+                ));
+                if let Err(error) = self.image_test_options.validate() {
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Generate").clicked() {
+                        generate = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        if close_requested {
+            open = false;
+        }
+        if generate {
+            match self.image_test_target.clone() {
+                Some(id) => {
+                    let before = self.editor.document.clone();
+                    match crate::image_test::generate(
+                        &mut self.editor.document,
+                        &id,
+                        &self.image_test_options,
+                    ) {
+                        Ok(copies) => {
+                            self.editor.history.record(&before, "Image test grid");
+                            self.status = format!("Image test grid: {copies} copy/copies created");
+                            open = false;
+                        }
+                        Err(error) => self.status = format!("Image test grid failed: {error}"),
+                    }
+                }
+                None => self.status = "Image test grid: select an image first".to_string(),
+            }
+        }
+        self.image_test_open = open;
+    }
+
     fn open_cuts(&mut self) {
         self.cuts_snapshot = Some(self.editor.document.clone());
         if self.active_operation.is_none() {
@@ -5701,6 +5818,7 @@ impl BeamWrightApp {
         let mut export_prepared = false;
         let mut apply_all = false;
         let mut compare = false;
+        let mut open_test_grid = false;
         let mut preset: Option<crate::objects::ImageSettings> = None;
         egui::Window::new(format!("Adjust image - {object_name}"))
             .pivot(egui::Align2::CENTER_CENTER)
@@ -5946,6 +6064,9 @@ impl BeamWrightApp {
                     if ui.button("Export prepared PNG").clicked() {
                         export_prepared = true;
                     }
+                    if ui.button("Test grid...").clicked() {
+                        open_test_grid = true;
+                    }
                     if ui.button("Apply to selected images").clicked() {
                         apply_all = true;
                     }
@@ -6012,6 +6133,10 @@ impl BeamWrightApp {
         self.image_burn_map = burn_map;
         self.image_target_dpi = target_dpi;
         self.image_target_width_mm = target_width_mm;
+        if open_test_grid {
+            self.image_test_target = Some(id.clone());
+            self.image_test_open = true;
+        }
 
         if export_prepared {
             match crate::raster::process_object(std::path::Path::new(&image.path), &image) {
@@ -8467,6 +8592,9 @@ impl BeamWrightApp {
         }
         if self.image_adjust.is_some() {
             self.image_adjust_window(ctx);
+        }
+        if self.image_test_open {
+            self.image_test_window(ctx);
         }
         if let Some(dialog) = &mut self.dialog {
             let result = dialog.show(ctx);

@@ -18,6 +18,7 @@ pub mod export;
 pub mod gcode;
 pub mod geometry;
 pub mod history;
+pub mod image_test;
 pub mod import;
 pub mod layers;
 pub mod machines;
