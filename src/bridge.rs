@@ -166,7 +166,12 @@ fn serve_client(stream: TcpStream, sender: Sender<BridgeRequest>, token: Option<
 ///
 /// Lines from stdin are forwarded to the bridge and the answers are printed to
 /// stdout unchanged, so an MCP client sees the usual JSON-RPC stream.
-pub fn proxy_stdio(host: &str, port: u16, token: Option<String>) -> Result<(), String> {
+pub fn proxy_stdio(
+    host: &str,
+    port: u16,
+    token: Option<String>,
+    policy: &crate::policy::Policy,
+) -> Result<(), String> {
     let stream = TcpStream::connect((host, port)).map_err(|error| {
         format!("no running BeamWright editor on {host}:{port} ({error}); start BeamWright first")
     })?;
@@ -180,9 +185,18 @@ pub fn proxy_stdio(host: &str, port: u16, token: Option<String>) -> Result<(), S
         .try_clone()
         .map_err(|error| format!("cannot use the bridge connection: {error}"))?;
     let reader = BufReader::new(stream);
+    let policy = policy.clone();
     let stdin_thread = std::thread::spawn(move || {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines().map_while(Result::ok) {
+            let line = match enforce(&policy, &line) {
+                Routed::Forward(line) => line,
+                Routed::Refused(response) => {
+                    println!("{response}");
+                    let _ = std::io::stdout().flush();
+                    continue;
+                }
+            };
             if writeln!(writer, "{line}").is_err() {
                 return;
             }
@@ -195,6 +209,41 @@ pub fn proxy_stdio(host: &str, port: u16, token: Option<String>) -> Result<(), S
     }
     let _ = stdin_thread.join();
     Ok(())
+}
+
+/// Where a request goes after the session policy looked at it.
+enum Routed {
+    /// Send this (possibly rewritten) request to the editor.
+    Forward(String),
+    /// Answer the agent locally instead of forwarding.
+    Refused(String),
+}
+
+/// Apply the session policy to one request line.
+///
+/// A refused request becomes a local JSON-RPC error so the agent sees the
+/// restriction instead of a silent failure.
+fn enforce(policy: &crate::policy::Policy, line: &str) -> Routed {
+    let Ok(mut request) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Routed::Forward(line.to_string());
+    };
+    match policy.enforce(&mut request) {
+        Ok(()) => Routed::Forward(request.to_string()),
+        Err(error) => {
+            let id = request
+                .get("id")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            Routed::Refused(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {"code": -32000, "message": error}
+                })
+                .to_string(),
+            )
+        }
+    }
 }
 
 /// Send one JSON-RPC request to a running editor and print the answer.
@@ -330,11 +379,55 @@ pub fn configured_port() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::configured_port;
+    use super::{Routed, configured_port, enforce};
+    use serde_json::json;
 
     #[test]
     fn the_default_port_is_stable() {
         let port = configured_port();
         assert!(port > 1024);
+    }
+
+    #[test]
+    fn a_refused_request_gets_a_local_error() {
+        let policy = crate::policy::Policy::new(None, true).unwrap();
+        let line = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": "add_rectangle", "arguments": {}}
+        })
+        .to_string();
+        let Routed::Refused(response) = enforce(&policy, &line) else {
+            panic!("the request was not refused");
+        };
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["id"], 7);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("read-only")
+        );
+    }
+
+    #[test]
+    fn allowed_requests_and_plain_text_pass_through() {
+        let policy = crate::policy::Policy::new(None, false).unwrap();
+        let line = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "add_rectangle", "arguments": {}}
+        })
+        .to_string();
+        let Routed::Forward(passed) = enforce(&policy, &line) else {
+            panic!("the request was refused");
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&passed).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()
+        );
+        assert!(matches!(enforce(&policy, "not json"), Routed::Forward(_)));
     }
 }

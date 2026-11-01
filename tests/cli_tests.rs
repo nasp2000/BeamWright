@@ -49,6 +49,44 @@ fn cli_list_layers_command() {
 }
 
 #[test]
+fn cli_mcp_accepts_workspace_and_read_only_flags() {
+    let cli =
+        Cli::try_parse_from(["BeamWright", "mcp", "--workspace", "/tmp", "--read-only"]).unwrap();
+    match cli.command {
+        Some(Commands::Mcp {
+            workspace,
+            read_only,
+            ..
+        }) => {
+            assert_eq!(workspace.as_deref(), Some(std::path::Path::new("/tmp")));
+            assert!(read_only);
+        }
+        _ => panic!("expected the mcp command"),
+    }
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "mcp-http",
+        "--token",
+        "secret",
+        "--workspace",
+        "/tmp",
+        "--read-only",
+    ])
+    .unwrap();
+    match cli.command {
+        Some(Commands::McpHttp {
+            workspace,
+            read_only,
+            ..
+        }) => {
+            assert!(workspace.is_some());
+            assert!(read_only);
+        }
+        _ => panic!("expected the mcp-http command"),
+    }
+}
+
+#[test]
 fn cli_inspect_and_measure_report_a_project() {
     let path = temp_dir().join("bw_cli_inspect.bwp");
     let document = beamwright::document::Document::default();

@@ -34,12 +34,19 @@ struct Server {
     bridge_host: String,
     bridge_port: u16,
     bridge_token: Option<String>,
+    policy: crate::policy::Policy,
     buckets: Mutex<HashMap<IpAddr, Bucket>>,
     audit: PathBuf,
 }
 
 /// Run the HTTP MCP front-end until the process is stopped.
-pub fn serve(listen: &str, token: &str, bridge_host: &str, bridge_port: u16) -> Result<(), String> {
+pub fn serve(
+    listen: &str,
+    token: &str,
+    bridge_host: &str,
+    bridge_port: u16,
+    policy: &crate::policy::Policy,
+) -> Result<(), String> {
     let listener =
         TcpListener::bind(listen).map_err(|error| format!("cannot listen on {listen}: {error}"))?;
     let server = Arc::new(Server {
@@ -47,6 +54,7 @@ pub fn serve(listen: &str, token: &str, bridge_host: &str, bridge_port: u16) -> 
         bridge_host: bridge_host.to_string(),
         bridge_port,
         bridge_token: bridge::configured_token().or_else(bridge::stored_token),
+        policy: policy.clone(),
         buckets: Mutex::new(HashMap::new()),
         audit: audit_path(),
     });
@@ -128,8 +136,10 @@ fn handle(mut stream: TcpStream, server: &Server) -> Result<(), String> {
     reader
         .read_exact(&mut body)
         .map_err(|error| error.to_string())?;
-    let request = String::from_utf8(body).map_err(|_| "body is not UTF-8".to_string())?;
-    let tool = serde_json::from_str::<serde_json::Value>(&request)
+    let mut request = String::from_utf8(body).map_err(|_| "body is not UTF-8".to_string())?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&request);
+    let tool = parsed
+        .as_ref()
         .ok()
         .and_then(|value| {
             value
@@ -145,6 +155,17 @@ fn handle(mut stream: TcpStream, server: &Server) -> Result<(), String> {
                 })
         })
         .unwrap_or_else(|| "unknown".to_string());
+    if let Ok(mut value) = parsed {
+        if let Err(error) = server.policy.enforce(&mut value) {
+            audit(&server.audit, peer, &tool, 403);
+            return respond(
+                &mut stream,
+                403,
+                &serde_json::json!({"error": error}).to_string(),
+            );
+        }
+        request = value.to_string();
+    }
     match bridge::request(
         &server.bridge_host,
         server.bridge_port,
@@ -177,6 +198,7 @@ fn respond(stream: &mut TcpStream, status: u16, body: &str) -> Result<(), String
     let reason = match status {
         200 => "OK",
         401 => "Unauthorized",
+        403 => "Forbidden",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
         429 => "Too Many Requests",

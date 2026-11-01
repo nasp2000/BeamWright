@@ -19,6 +19,7 @@ pub struct McpServer {
     path: Option<PathBuf>,
     clipboard: Vec<Object>,
     checkpoints: crate::checkpoints::Checkpoints,
+    policy: crate::policy::Policy,
 }
 
 impl Default for McpServer {
@@ -55,7 +56,18 @@ impl McpServer {
             path: None,
             clipboard: Vec::new(),
             checkpoints: crate::checkpoints::Checkpoints::new(),
+            policy: crate::policy::Policy::unrestricted(),
         }
+    }
+
+    /// Apply the session restrictions (workspace, read-only).
+    pub fn set_policy(&mut self, policy: crate::policy::Policy) {
+        self.policy = policy;
+    }
+
+    /// The restrictions this session runs under.
+    pub fn policy(&self) -> &crate::policy::Policy {
+        &self.policy
     }
 
     /// Handle one JSON-RPC request and return the response object.
@@ -166,8 +178,28 @@ impl McpServer {
         }))
     }
 
+    /// A path argument resolved against the session workspace.
+    fn path_argument(&self, arguments: &Value, key: &str) -> Result<Option<PathBuf>> {
+        match path_argument(arguments, key) {
+            Some(path) => Ok(Some(
+                self.policy
+                    .resolve(&path)
+                    .map_err(BeamError::InvalidInput)?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    fn required_path(&self, arguments: &Value, key: &str) -> Result<PathBuf> {
+        self.path_argument(arguments, key)?
+            .ok_or_else(|| missing(key))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn call_tool(&mut self, name: &str, arguments: &Value) -> Result<Value> {
+        self.policy
+            .check_tool(name)
+            .map_err(BeamError::InvalidInput)?;
         match name {
             "get_status" => Ok(self.status()),
             "new_project" => {
@@ -181,13 +213,21 @@ impl McpServer {
                 Ok(self.status())
             }
             "open_project" => {
-                let path = required_path(arguments, "path")?;
+                let path = self.required_path(arguments, "path")?;
                 self.editor.load(&path)?;
                 self.path = Some(path);
                 Ok(self.status())
             }
             "save_project" => {
-                let path = path_argument(arguments, "path").or_else(|| self.path.clone());
+                let path = match self.path_argument(arguments, "path")? {
+                    Some(path) => Some(path),
+                    None => match &self.path {
+                        Some(path) => {
+                            Some(self.policy.resolve(path).map_err(BeamError::InvalidInput)?)
+                        }
+                        None => None,
+                    },
+                };
                 let path = path.ok_or_else(|| {
                     BeamError::InvalidInput(
                         "no project path: pass 'path' or open a project".to_string(),
@@ -198,7 +238,7 @@ impl McpServer {
                 Ok(json!({"status": "saved", "path": path.display().to_string()}))
             }
             "import_file" => {
-                let path = required_path(arguments, "path")?;
+                let path = self.required_path(arguments, "path")?;
                 let outcome = crate::import::format::import_with_report(&path)?;
                 let mut document = outcome.document;
                 if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
@@ -1022,19 +1062,19 @@ impl McpServer {
                 Ok(json!({"intersections": hits, "count": hits.len()}))
             }
             "export_svg" => {
-                let path = required_path(arguments, "path")?;
+                let path = self.required_path(arguments, "path")?;
                 let text = crate::export::export_svg(&self.editor.document)?;
                 std::fs::write(&path, text)?;
                 Ok(json!({"path": path.display().to_string()}))
             }
             "export_dxf" => {
-                let path = required_path(arguments, "path")?;
+                let path = self.required_path(arguments, "path")?;
                 let text = crate::export::export_dxf(&self.editor.document)?;
                 std::fs::write(&path, text)?;
                 Ok(json!({"path": path.display().to_string()}))
             }
             "export_gcode" => {
-                let path = required_path(arguments, "path")?;
+                let path = self.required_path(arguments, "path")?;
                 let report = crate::gcode::export_job(
                     &self.editor.document,
                     &path,
@@ -1186,7 +1226,9 @@ impl McpServer {
             "objects": document.objects.len(),
             "operations": document.operations.len(),
             "path": self.path.as_ref().map(|path| path.display().to_string()),
-            "dirty": self.editor.history.can_undo()
+            "dirty": self.editor.history.can_undo(),
+            "read_only": self.policy.read_only(),
+            "workspace": self.policy.workspace().map(|path| path.display().to_string()),
         })
     }
 
@@ -1742,10 +1784,6 @@ fn path_argument(arguments: &Value, key: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn required_path(arguments: &Value, key: &str) -> Result<PathBuf> {
-    path_argument(arguments, key).ok_or_else(|| missing(key))
-}
-
 fn index_argument(arguments: &Value, key: &str) -> Result<usize> {
     let value = arguments
         .get(key)
@@ -1877,6 +1915,53 @@ mod tests {
                 .iter()
                 .any(|issue| issue["code"] == "text-not-outlined")
         );
+    }
+
+    #[test]
+    fn a_read_only_session_refuses_changes() {
+        let mut server = McpServer::new();
+        server.set_policy(crate::policy::Policy::new(None, true).unwrap());
+        let refused = call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 5.0, "height": 5.0}),
+        );
+        assert!(refused.get("error").is_some());
+        assert_eq!(server.editor.document.objects.len(), 0);
+        let allowed = call(&mut server, "inspect", json!({}));
+        assert!(allowed.get("error").is_none(), "{allowed}");
+        let status = call(&mut server, "get_status", json!({}));
+        assert_eq!(status["result"]["read_only"], true);
+    }
+
+    #[test]
+    fn a_workspace_confines_project_paths() {
+        let folder =
+            std::env::temp_dir().join(format!("beamwright_mcp_workspace_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut server = McpServer::new();
+        server.set_policy(crate::policy::Policy::new(Some(folder.clone()), false).unwrap());
+        let saved = call(&mut server, "save_project", json!({"path": "part.bwp"}));
+        assert!(saved.get("error").is_none(), "{saved}");
+        assert!(folder.join("part.bwp").is_file());
+        let outside = std::env::temp_dir().join("beamwright_mcp_outside.bwp");
+        let _ = std::fs::remove_file(&outside);
+        let refused = call(
+            &mut server,
+            "save_project",
+            json!({"path": outside.to_string_lossy()}),
+        );
+        assert!(refused.get("error").is_some());
+        assert!(!outside.is_file());
+        let opened = call(&mut server, "open_project", json!({"path": "part.bwp"}));
+        assert!(opened.get("error").is_none(), "{opened}");
+        let status = call(&mut server, "get_status", json!({}));
+        assert_eq!(
+            status["result"]["workspace"],
+            folder.to_string_lossy().as_ref()
+        );
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]

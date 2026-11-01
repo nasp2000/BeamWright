@@ -81,6 +81,12 @@ pub enum Commands {
         /// Bridge token for a non-loopback host
         #[arg(long)]
         token: Option<String>,
+        /// Confine every path the agent sends to this folder
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Refuse tools that change the document
+        #[arg(long)]
+        read_only: bool,
     },
     /// Run MCP over HTTP with Bearer authentication (remote agents)
     McpHttp {
@@ -90,6 +96,12 @@ pub enum Commands {
         /// Bearer token; required for a non-loopback address
         #[arg(long)]
         token: Option<String>,
+        /// Confine every path the agent sends to this folder
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Refuse tools that change the document
+        #[arg(long)]
+        read_only: bool,
     },
     /// Send one JSON-RPC request to the running editor
     LiveRequest {
@@ -296,7 +308,11 @@ pub fn run(cli: Cli) -> Result<()> {
             host,
             port,
             token,
+            workspace,
+            read_only,
         }) => {
+            let policy = crate::policy::Policy::new(workspace, read_only)
+                .map_err(BeamError::InvalidInput)?;
             if live {
                 let token = token.or_else(crate::bridge::configured_token).or_else(|| {
                     if host == "127.0.0.1" || host == "localhost" {
@@ -305,14 +321,23 @@ pub fn run(cli: Cli) -> Result<()> {
                         None
                     }
                 });
-                crate::bridge::proxy_stdio(&host, port, token).map_err(BeamError::InvalidInput)?;
+                crate::bridge::proxy_stdio(&host, port, token, &policy)
+                    .map_err(BeamError::InvalidInput)?;
             } else {
                 let mut server = crate::mcp::McpServer::new();
+                server.set_policy(policy);
                 server.serve_stdio()?;
             }
             Ok(())
         }
-        Some(Commands::McpHttp { listen, token }) => {
+        Some(Commands::McpHttp {
+            listen,
+            token,
+            workspace,
+            read_only,
+        }) => {
+            let policy = crate::policy::Policy::new(workspace, read_only)
+                .map_err(BeamError::InvalidInput)?;
             let token = token.or_else(crate::bridge::configured_token).or_else(|| {
                 if crate::mcp_http::is_loopback(&listen) {
                     crate::bridge::stored_token()
@@ -330,6 +355,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 &token,
                 "127.0.0.1",
                 crate::bridge::configured_port(),
+                &policy,
             )
             .map_err(BeamError::InvalidInput)?;
             Ok(())
