@@ -22,6 +22,9 @@ pub struct JobOptions {
     ///
     /// Use it with a selection to engrave only that zone at the machine origin.
     pub offset_to_origin: bool,
+    /// Corner-rounding radius applied to cut runs, in millimetres; 0 leaves the
+    /// toolpaths exactly as generated.
+    pub smooth_mm: f64,
 }
 
 impl Default for JobOptions {
@@ -31,6 +34,7 @@ impl Default for JobOptions {
             travel_speed_mm_min: 3000.0,
             assisted_ordering: true,
             offset_to_origin: false,
+            smooth_mm: 0.0,
         }
     }
 }
@@ -1156,6 +1160,121 @@ pub fn merge_collinear(toolpaths: &mut [Toolpath]) {
     }
 }
 
+/// Round the corners of every cut run with a quadratic blend.
+///
+/// Each interior vertex is replaced by a short curve of the given radius, never
+/// longer than half of either neighbouring segment, so the path stays within
+/// `radius_mm` of the original. Straight-through vertices are kept unchanged and
+/// zero or negative radii leave the toolpaths untouched.
+pub fn smooth_toolpaths(toolpaths: &mut [Toolpath], radius_mm: f64) {
+    if radius_mm <= 0.0 {
+        return;
+    }
+    for toolpath in toolpaths.iter_mut() {
+        let mut output: Vec<crate::gcode::toolpath::Move> =
+            Vec::with_capacity(toolpath.moves.len());
+        let mut run: Vec<crate::gcode::toolpath::Move> = Vec::new();
+        let mut start = toolpath.start().unwrap_or_else(Point2::origin);
+        for movement in toolpath.moves.drain(..) {
+            if movement.kind == MoveKind::Cut {
+                run.push(movement);
+                continue;
+            }
+            flush_smoothed_run(&mut run, start, &mut output, radius_mm);
+            start = Point2::new(movement.x, movement.y);
+            output.push(movement);
+        }
+        flush_smoothed_run(&mut run, start, &mut output, radius_mm);
+        toolpath.moves = output;
+    }
+}
+
+fn flush_smoothed_run(
+    run: &mut Vec<crate::gcode::toolpath::Move>,
+    start: Point2,
+    output: &mut Vec<crate::gcode::toolpath::Move>,
+    radius: f64,
+) {
+    if run.is_empty() {
+        return;
+    }
+    let power = run.first().and_then(|movement| movement.power);
+    let uniform = run.iter().all(|movement| movement.power == power);
+    if !uniform || power.is_some() {
+        // A run with per-move power is a grayscale raster; leave it alone.
+        output.append(run);
+        return;
+    }
+    let mut points = Vec::with_capacity(run.len() + 1);
+    points.push(start);
+    points.extend(
+        run.iter()
+            .map(|movement| Point2::new(movement.x, movement.y)),
+    );
+    let smoothed = round_corners(&points, radius);
+    for point in smoothed.into_iter().skip(1) {
+        output.push(crate::gcode::toolpath::Move {
+            kind: MoveKind::Cut,
+            x: point.x,
+            y: point.y,
+            power: None,
+        });
+    }
+    run.clear();
+}
+
+/// Replace each corner of a polyline with a quadratic blend.
+fn round_corners(points: &[Point2], radius: f64) -> Vec<Point2> {
+    const STEPS: u32 = 4;
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+    let mut out = Vec::with_capacity(points.len() * 4);
+    out.push(points[0]);
+    for index in 1..points.len() - 1 {
+        let (previous, current, next) = (points[index - 1], points[index], points[index + 1]);
+        let incoming = normalized(previous, current);
+        let outgoing = normalized(current, next);
+        if incoming == (0.0, 0.0) || outgoing == (0.0, 0.0) {
+            out.push(current);
+            continue;
+        }
+        let cross = incoming.0 * outgoing.1 - incoming.1 * outgoing.0;
+        let dot = incoming.0 * outgoing.0 + incoming.1 * outgoing.1;
+        if cross.abs() < 1e-9 && dot > 0.0 {
+            out.push(current);
+            continue;
+        }
+        let blend = radius
+            .min(current.distance(previous) * 0.5)
+            .min(current.distance(next) * 0.5);
+        if blend <= 1e-9 {
+            out.push(current);
+            continue;
+        }
+        let before = Point2::new(
+            current.x - incoming.0 * blend,
+            current.y - incoming.1 * blend,
+        );
+        let after = Point2::new(
+            current.x + outgoing.0 * blend,
+            current.y + outgoing.1 * blend,
+        );
+        out.push(before);
+        for step in 1..STEPS {
+            let t = f64::from(step) / f64::from(STEPS);
+            let inverse = 1.0 - t;
+            out.push(Point2::new(
+                inverse * inverse * before.x + 2.0 * inverse * t * current.x + t * t * after.x,
+                inverse * inverse * before.y + 2.0 * inverse * t * current.y + t * t * after.y,
+            ));
+        }
+        out.push(after);
+    }
+    out.push(points[points.len() - 1]);
+    out
+}
+
 /// Move every toolpath so the job starts at (0, 0).
 pub fn shift_to_origin(toolpaths: &mut [Toolpath]) {
     let mut min_x = f64::INFINITY;
@@ -1220,6 +1339,9 @@ pub fn render_job_cancellable(
     }
     if options.offset_to_origin {
         shift_to_origin(&mut toolpaths);
+    }
+    if options.smooth_mm > 0.0 {
+        smooth_toolpaths(&mut toolpaths, options.smooth_mm);
     }
     merge_collinear(&mut toolpaths);
     validate_bounds(document, &toolpaths)?;
@@ -1919,6 +2041,80 @@ mod tests {
             .count();
         assert_eq!(travels, 5, "one entry and four tab crossings");
         assert_eq!(cuts, 8, "a cut before and after each tab");
+    }
+
+    #[test]
+    fn smoothing_rounds_a_right_angle_without_moving_the_ends() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push(MoveKind::Cut, 10.0, 0.0);
+        toolpath.push(MoveKind::Cut, 10.0, 10.0);
+        let mut toolpaths = vec![toolpath];
+        smooth_toolpaths(&mut toolpaths, 1.0);
+        let cuts: Vec<Point2> = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .map(|movement| Point2::new(movement.x, movement.y))
+            .collect();
+        assert!(cuts.len() > 2, "the corner was not blended");
+        let travel = toolpaths[0].moves[0];
+        assert_eq!(travel.kind, MoveKind::Travel);
+        assert!(travel.x.abs() < 1e-9 && travel.y.abs() < 1e-9);
+        assert!(
+            (cuts[0].x - 9.0).abs() < 1e-9 && cuts[0].y.abs() < 1e-9,
+            "the blend does not start one radius before the corner: {:?}",
+            cuts[0]
+        );
+        assert!(cuts[cuts.len() - 1].distance(Point2::new(10.0, 10.0)) < 1e-9);
+        assert!(
+            cuts.iter()
+                .any(|point| (point.x - 10.0).abs() < 1e-9 && (point.y - 1.0).abs() < 1e-9),
+            "the blend does not end one radius after the corner"
+        );
+        let corner = Point2::new(10.0, 0.0);
+        for point in cuts.iter().filter(|point| point.x >= 9.0 && point.y <= 1.0) {
+            assert!(
+                point.distance(corner) <= 1.0 + 1e-9,
+                "the blend left the radius: {point:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn smoothing_keeps_straight_runs_and_zero_radius() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push(MoveKind::Cut, 5.0, 0.0);
+        toolpath.push(MoveKind::Cut, 10.0, 0.0);
+        let mut toolpaths = vec![toolpath];
+        smooth_toolpaths(&mut toolpaths, 1.0);
+        let cuts = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .count();
+        assert_eq!(cuts, 2, "a straight run was changed");
+
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push(MoveKind::Cut, 10.0, 0.0);
+        toolpath.push(MoveKind::Cut, 10.0, 10.0);
+        let mut toolpaths = vec![toolpath.clone()];
+        smooth_toolpaths(&mut toolpaths, 0.0);
+        assert_eq!(toolpaths[0], toolpath);
+    }
+
+    #[test]
+    fn smoothing_leaves_grayscale_power_runs_alone() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push_powered(MoveKind::Cut, 10.0, 0.0, 200.0);
+        toolpath.push_powered(MoveKind::Cut, 10.0, 10.0, 100.0);
+        let original = toolpath.clone();
+        let mut toolpaths = vec![toolpath];
+        smooth_toolpaths(&mut toolpaths, 1.0);
+        assert_eq!(toolpaths[0], original);
     }
 
     #[test]

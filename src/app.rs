@@ -408,6 +408,7 @@ pub struct BeamWrightApp {
     cuts_drag_target: Option<usize>,
     material_test_open: bool,
     gcode_dialect: crate::gcode::Dialect,
+    gcode_smooth_mm: f64,
     material_test_options: crate::material_test::Options,
     image_test_open: bool,
     image_test_options: crate::image_test::Options,
@@ -503,6 +504,7 @@ fn run_export(
     cancel: &std::sync::atomic::AtomicBool,
     offset_origin: bool,
     dialect: crate::gcode::Dialect,
+    smooth_mm: f64,
 ) -> std::result::Result<FileReport, String> {
     let cancelled = || {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -539,6 +541,7 @@ fn run_export(
                 path,
                 &crate::gcode::JobOptions {
                     offset_to_origin: offset_origin,
+                    smooth_mm,
                     gcode: crate::gcode::GCodeOptions {
                         dialect,
                         ..crate::gcode::GCodeOptions::default()
@@ -953,6 +956,7 @@ impl BeamWrightApp {
             cuts_drag_target: None,
             material_test_open: false,
             gcode_dialect: crate::gcode::Dialect::default(),
+            gcode_smooth_mm: 0.0,
             material_test_options: crate::material_test::Options::default(),
             image_test_open: false,
             image_test_options: crate::image_test::Options::default(),
@@ -1838,6 +1842,7 @@ impl BeamWrightApp {
         }
         let path = path.to_path_buf();
         let dialect = self.gcode_dialect;
+        let smooth_mm = self.gcode_smooth_mm;
         let label = format!("Exporting {}", path.display());
         let worker_path = path.clone();
         self.task = Some(crate::task::BackgroundTask::spawn(label, move |cancel| {
@@ -1851,6 +1856,7 @@ impl BeamWrightApp {
                 cancel,
                 offset_origin,
                 dialect,
+                smooth_mm,
             )))
         }));
         self.status = "Exporting...".to_string();
@@ -5458,6 +5464,15 @@ impl BeamWrightApp {
                             }
                         });
                     self.gcode_dialect = dialect;
+                    ui.label("Smooth paths (mm)");
+                    ui.add(
+                        egui::DragValue::new(&mut self.gcode_smooth_mm)
+                            .speed(0.05)
+                            .range(0.0..=5.0),
+                    )
+                    .on_hover_text(
+                        "Rounds the corners of cut runs before writing the file; zero keeps the exact geometry",
+                    );
                 });
                 ui.separator();
                 let mut row_centers: Vec<(usize, f32)> = Vec::new();
