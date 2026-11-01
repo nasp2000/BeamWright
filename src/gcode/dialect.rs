@@ -27,6 +27,22 @@ impl Dialect {
         ]
     }
 
+    /// Stable identifier used in saved settings.
+    pub fn id(self) -> &'static str {
+        match self {
+            Dialect::Grbl => "grbl",
+            Dialect::Marlin => "marlin",
+            Dialect::Smoothie => "smoothie",
+            Dialect::LinuxCnc => "linuxcnc",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Dialect> {
+        Dialect::all()
+            .into_iter()
+            .find(|dialect| dialect.id() == id)
+    }
+
     /// Only GRBL distinguishes dynamic (`M4`) from constant (`M3`) power.
     pub fn supports_dynamic_power(self) -> bool {
         self == Dialect::Grbl

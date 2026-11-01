@@ -411,6 +411,12 @@ pub struct BeamWrightApp {
     material_test_open: bool,
     gcode_dialect: crate::gcode::Dialect,
     gcode_smooth_mm: f64,
+    gcode_decimals: u8,
+    gcode_comments: bool,
+    gcode_travel: bool,
+    gcode_crlf: bool,
+    export_presets_open: bool,
+    export_preset_name: String,
     material_test_options: crate::material_test::Options,
     image_test_open: bool,
     image_test_options: crate::image_test::Options,
@@ -507,7 +513,7 @@ fn run_export(
     document: &crate::document::Document,
     cancel: &std::sync::atomic::AtomicBool,
     offset_origin: bool,
-    dialect: crate::gcode::Dialect,
+    gcode: crate::gcode::GCodeOptions,
     smooth_mm: f64,
 ) -> std::result::Result<FileReport, String> {
     let cancelled = || {
@@ -546,10 +552,7 @@ fn run_export(
                 &crate::gcode::JobOptions {
                     offset_to_origin: offset_origin,
                     smooth_mm,
-                    gcode: crate::gcode::GCodeOptions {
-                        dialect,
-                        ..crate::gcode::GCodeOptions::default()
-                    },
+                    gcode,
                     ..crate::gcode::JobOptions::default()
                 },
                 &cancelled_flag,
@@ -961,6 +964,12 @@ impl BeamWrightApp {
             material_test_open: false,
             gcode_dialect: crate::gcode::Dialect::default(),
             gcode_smooth_mm: 0.0,
+            gcode_decimals: 3,
+            gcode_comments: true,
+            gcode_travel: true,
+            gcode_crlf: false,
+            export_presets_open: false,
+            export_preset_name: String::new(),
             material_test_options: crate::material_test::Options::default(),
             image_test_open: false,
             image_test_options: crate::image_test::Options::default(),
@@ -1847,7 +1856,14 @@ impl BeamWrightApp {
             return;
         }
         let path = path.to_path_buf();
-        let dialect = self.gcode_dialect;
+        let gcode = crate::gcode::GCodeOptions {
+            dialect: self.gcode_dialect,
+            decimals: self.gcode_decimals,
+            include_comments: self.gcode_comments,
+            include_travel: self.gcode_travel,
+            line_ending_crlf: self.gcode_crlf,
+            ..crate::gcode::GCodeOptions::default()
+        };
         let smooth_mm = self.gcode_smooth_mm;
         let label = format!("Exporting {}", path.display());
         let worker_path = path.clone();
@@ -1861,7 +1877,7 @@ impl BeamWrightApp {
                 &document,
                 cancel,
                 offset_origin,
-                dialect,
+                gcode,
                 smooth_mm,
             )))
         }));
@@ -1982,6 +1998,7 @@ impl BeamWrightApp {
             || self.interface_presets_open
             || self.external_gcode_open
             || self.palette_open
+            || self.export_presets_open
         {
             return;
         }
@@ -5435,6 +5452,121 @@ impl BeamWrightApp {
         self.external_gcode_open = open;
     }
 
+    fn apply_export_preset(&mut self, preset: &crate::config::preferences::ExportPreset) {
+        if let Some(dialect) = crate::gcode::Dialect::from_id(&preset.dialect) {
+            self.gcode_dialect = dialect;
+        }
+        self.gcode_decimals = preset.decimals;
+        self.gcode_comments = preset.comments;
+        self.gcode_travel = preset.travel;
+        self.gcode_crlf = preset.crlf;
+        self.gcode_smooth_mm = preset.smooth_mm;
+    }
+
+    fn export_presets_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.export_presets_open;
+        let mut save = false;
+        let mut apply: Option<String> = None;
+        let mut delete: Option<String> = None;
+        let mut close_requested = false;
+        egui::Window::new("Export presets")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "An export preset stores the G-code dialect, decimals, comments, \
+                     travel moves, line endings and smoothing.",
+                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.export_preset_name)
+                            .hint_text("Preset name")
+                            .desired_width(200.0),
+                    );
+                    if ui
+                        .add_enabled(
+                            !self.export_preset_name.trim().is_empty(),
+                            egui::Button::new("Save current options"),
+                        )
+                        .on_hover_text("An existing name is replaced")
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                });
+                ui.separator();
+                if self.preferences.export_presets.saved.is_empty() {
+                    ui.weak("No export presets saved yet.");
+                }
+                for preset in &self.preferences.export_presets.saved {
+                    ui.horizontal(|ui| {
+                        ui.label(&preset.name);
+                        ui.weak(format!(
+                            "{} · {} decimals · {} smooth",
+                            preset.dialect, preset.decimals, preset.smooth_mm
+                        ));
+                        if ui.button("Apply").clicked() {
+                            apply = Some(preset.name.clone());
+                        }
+                        if ui.button("Delete").clicked() {
+                            delete = Some(preset.name.clone());
+                        }
+                    });
+                }
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        let mut stored = false;
+        if save {
+            let name = self.export_preset_name.trim().to_string();
+            let preset = crate::config::preferences::ExportPreset {
+                name: name.clone(),
+                dialect: self.gcode_dialect.id().to_string(),
+                decimals: self.gcode_decimals,
+                comments: self.gcode_comments,
+                travel: self.gcode_travel,
+                crlf: self.gcode_crlf,
+                smooth_mm: self.gcode_smooth_mm,
+            };
+            match self.preferences.export_presets.upsert(preset) {
+                Ok(()) => {
+                    self.status = format!("Export preset '{name}' saved");
+                    stored = true;
+                }
+                Err(error) => self.status = error,
+            }
+        }
+        if let Some(name) = apply {
+            if let Some(preset) = self.preferences.export_presets.find(&name).cloned() {
+                self.apply_export_preset(&preset);
+                self.status = format!("Export preset '{name}' applied");
+            }
+        }
+        if let Some(name) = delete {
+            if self.preferences.export_presets.remove(&name) {
+                self.status = format!("Export preset '{name}' deleted");
+                stored = true;
+            }
+        }
+        if stored {
+            match self.preferences.save(&self.preferences_path) {
+                Ok(()) => {}
+                Err(error) => self.status = format!("Cannot save preferences: {error}"),
+            }
+        }
+        if close_requested {
+            open = false;
+        }
+        self.export_presets_open = open;
+    }
+
     fn registration_marks_window(&mut self, ctx: &egui::Context) {
         let mut open = self.regmarks_open;
         let mut generate = false;
@@ -5592,6 +5724,23 @@ impl BeamWrightApp {
                     .on_hover_text(
                         "Rounds the corners of cut runs before writing the file; zero keeps the exact geometry",
                     );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Decimals");
+                    ui.add(
+                        egui::DragValue::new(&mut self.gcode_decimals).range(0..=6),
+                    )
+                    .on_hover_text("Decimals written for coordinates");
+                    ui.checkbox(&mut self.gcode_comments, "Comments");
+                    ui.checkbox(&mut self.gcode_travel, "Travel moves");
+                    ui.checkbox(&mut self.gcode_crlf, "CRLF line endings");
+                    if ui
+                        .button("Export presets...")
+                        .on_hover_text("Save and reuse these output options")
+                        .clicked()
+                    {
+                        self.export_presets_open = true;
+                    }
                 });
                 ui.separator();
                 let mut row_centers: Vec<(usize, f32)> = Vec::new();
@@ -10059,6 +10208,9 @@ impl BeamWrightApp {
         }
         if self.regmarks_open {
             self.registration_marks_window(ctx);
+        }
+        if self.export_presets_open {
+            self.export_presets_window(ctx);
         }
         if self.external_gcode_open {
             self.external_gcode_window(ctx);

@@ -359,6 +359,97 @@ impl InterfacePresetPrefs {
     }
 }
 
+/// A saved set of G-code output options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportPreset {
+    pub name: String,
+    /// Dialect id: `grbl`, `marlin`, `smoothie` or `linuxcnc`.
+    pub dialect: String,
+    pub decimals: u8,
+    pub comments: bool,
+    pub travel: bool,
+    pub crlf: bool,
+    pub smooth_mm: f64,
+}
+
+/// Largest number of saved export presets.
+pub const MAX_EXPORT_PRESETS: usize = 20;
+
+impl ExportPreset {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("an export preset needs a name".to_string());
+        }
+        if self.name.chars().count() > 60 {
+            return Err("an export preset name is limited to 60 characters".to_string());
+        }
+        if crate::gcode::Dialect::from_id(&self.dialect).is_none() {
+            return Err(format!("unknown G-code dialect: {}", self.dialect));
+        }
+        if self.decimals > 6 {
+            return Err("coordinate decimals must be between 0 and 6".to_string());
+        }
+        if !self.smooth_mm.is_finite() || !(0.0..=5.0).contains(&self.smooth_mm) {
+            return Err("smoothing must be between 0 and 5 mm".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Saved export presets, in the order they were created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ExportPresetPrefs {
+    #[serde(default)]
+    pub saved: Vec<ExportPreset>,
+}
+
+impl ExportPresetPrefs {
+    /// Save a preset, replacing the one with the same name.
+    pub fn upsert(&mut self, preset: ExportPreset) -> Result<(), String> {
+        preset.validate()?;
+        let name = preset.name.trim().to_string();
+        let mut preset = preset;
+        preset.name.clone_from(&name);
+        if let Some(existing) = self.saved.iter_mut().find(|entry| entry.name == name) {
+            *existing = preset;
+            return Ok(());
+        }
+        if self.saved.len() >= MAX_EXPORT_PRESETS {
+            return Err(format!(
+                "at most {MAX_EXPORT_PRESETS} export presets can be saved; delete one first"
+            ));
+        }
+        self.saved.push(preset);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str) -> bool {
+        let before = self.saved.len();
+        self.saved.retain(|preset| preset.name != name);
+        self.saved.len() != before
+    }
+
+    pub fn find(&self, name: &str) -> Option<&ExportPreset> {
+        self.saved.iter().find(|preset| preset.name == name)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.saved.len() > MAX_EXPORT_PRESETS {
+            return Err(format!(
+                "at most {MAX_EXPORT_PRESETS} export presets can be saved"
+            ));
+        }
+        let mut names = std::collections::HashSet::new();
+        for preset in &self.saved {
+            preset.validate()?;
+            if !names.insert(preset.name.trim()) {
+                return Err(format!("duplicate export preset name: {}", preset.name));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppPreferences {
     pub general: GeneralPrefs,
@@ -369,6 +460,8 @@ pub struct AppPreferences {
     pub shortcuts: super::shortcuts::Keymap,
     #[serde(default)]
     pub interface_presets: InterfacePresetPrefs,
+    #[serde(default)]
+    pub export_presets: ExportPresetPrefs,
 }
 
 fn default_snap_step() -> f64 {
@@ -418,6 +511,7 @@ impl AppPreferences {
         self.workspaces.validate()?;
         self.shortcuts.validate()?;
         self.interface_presets.validate()?;
+        self.export_presets.validate()?;
         Ok(())
     }
 
@@ -681,6 +775,67 @@ mod tests {
                 .unwrap();
         }
         assert!(presets.upsert(sample_preset("One too many")).is_err());
+    }
+
+    fn sample_export(name: &str) -> ExportPreset {
+        ExportPreset {
+            name: name.to_string(),
+            dialect: "grbl".to_string(),
+            decimals: 3,
+            comments: true,
+            travel: true,
+            crlf: false,
+            smooth_mm: 0.5,
+        }
+    }
+
+    #[test]
+    fn export_presets_are_saved_replaced_and_removed() {
+        let mut presets = ExportPresetPrefs::default();
+        presets.upsert(sample_export("Fast")).unwrap();
+        presets.upsert(sample_export("Fine")).unwrap();
+        assert_eq!(presets.saved.len(), 2);
+        let mut replaced = sample_export("Fast");
+        replaced.dialect = "linuxcnc".to_string();
+        presets.upsert(replaced).unwrap();
+        assert_eq!(presets.saved.len(), 2);
+        assert_eq!(presets.find("Fast").unwrap().dialect, "linuxcnc");
+        assert!(presets.remove("Fast"));
+        assert!(!presets.remove("Fast"));
+        assert_eq!(presets.saved.len(), 1);
+    }
+
+    #[test]
+    fn export_presets_are_validated() {
+        let mut presets = ExportPresetPrefs::default();
+        let mut blank = sample_export("  ");
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.name = "Bad".to_string();
+        blank.dialect = "unknown".to_string();
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.dialect = "grbl".to_string();
+        blank.decimals = 7;
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.decimals = 3;
+        blank.smooth_mm = 6.0;
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.smooth_mm = 1.0;
+        assert!(presets.upsert(blank).is_ok());
+
+        let mut duplicate = ExportPresetPrefs {
+            saved: vec![sample_export("Same"), sample_export("Same")],
+        };
+        assert!(duplicate.validate().is_err());
+        duplicate.saved.pop();
+        assert!(duplicate.validate().is_ok());
+
+        presets.saved.clear();
+        for index in 0..MAX_EXPORT_PRESETS {
+            presets
+                .upsert(sample_export(&format!("Preset {index}")))
+                .unwrap();
+        }
+        assert!(presets.upsert(sample_export("One too many")).is_err());
     }
 
     #[test]
