@@ -69,6 +69,10 @@ jobs:
             libgl1-mesa-dev libudev-dev
 
       - name: Build
+        # On Windows the C runtime is linked statically so the single .exe runs
+        # without the Visual C++ redistributable on older machines.
+        env:
+          RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-C target-feature=+crt-static' || '' }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifact
