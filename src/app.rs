@@ -414,6 +414,7 @@ pub struct BeamWrightApp {
     image_test_target: Option<String>,
     bridge: Option<crate::bridge::LiveBridge>,
     live_server: crate::mcp::McpServer,
+    toasts: Vec<Toast>,
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
@@ -812,6 +813,19 @@ fn profile_meta_editor(
     changed
 }
 
+/// A short message shown over the canvas and then forgotten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToastKind {
+    Info,
+    Error,
+}
+
+struct Toast {
+    text: String,
+    kind: ToastKind,
+    created: std::time::Instant,
+}
+
 struct ImagePreview {
     /// Black burns on white paper, used by the canvas and the normal preview.
     texture: egui::TextureHandle,
@@ -949,6 +963,7 @@ impl BeamWrightApp {
                 Some(crate::bridge::effective_token()),
             ),
             live_server: crate::mcp::McpServer::new(),
+            toasts: Vec::new(),
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
@@ -1906,6 +1921,7 @@ impl BeamWrightApp {
                 let _ = std::fs::remove_file(&self.recovery_path);
                 self.last_autosave = std::time::Instant::now();
                 self.status = format!("Saved {}", path.display());
+                self.toast(self.status.clone());
             }
             Err(error) => self.status = format!("Save failed: {error}"),
         }
@@ -7224,6 +7240,56 @@ impl BeamWrightApp {
         }
     }
 
+    fn toast(&mut self, text: impl Into<String>) {
+        self.push_toast(text.into(), ToastKind::Info);
+    }
+
+    fn toast_error(&mut self, text: impl Into<String>) {
+        self.push_toast(text.into(), ToastKind::Error);
+    }
+
+    fn push_toast(&mut self, text: String, kind: ToastKind) {
+        self.toasts.push(Toast {
+            text,
+            kind,
+            created: std::time::Instant::now(),
+        });
+        while self.toasts.len() > 4 {
+            self.toasts.remove(0);
+        }
+    }
+
+    fn paint_toasts(&mut self, ctx: &egui::Context) {
+        const LIFE: f32 = 4.0;
+        self.toasts
+            .retain(|toast| toast.created.elapsed().as_secs_f32() < LIFE);
+        if self.toasts.is_empty() {
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        egui::Area::new(egui::Id::new("toasts"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 48.0))
+            .order(egui::Order::Foreground)
+            .interactable(false)
+            .show(ctx, |ui| {
+                for toast in &self.toasts {
+                    let color = match toast.kind {
+                        ToastKind::Info => egui::Color32::from_rgb(47, 182, 166),
+                        ToastKind::Error => egui::Color32::from_rgb(210, 80, 70),
+                    };
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(28, 30, 34))
+                        .stroke(egui::Stroke::new(1.0, color))
+                        .corner_radius(6)
+                        .inner_margin(8)
+                        .show(ui, |ui| {
+                            ui.colored_label(color, &toast.text);
+                        });
+                    ui.add_space(4.0);
+                }
+            });
+    }
+
     fn poll_task(&mut self, ctx: &egui::Context) {
         let Some(task) = &self.task else {
             return;
@@ -7248,12 +7314,16 @@ impl BeamWrightApp {
                 match result {
                     Ok(report) => {
                         self.status = report.headline();
+                        self.toast(self.status.clone());
                         self.show_report(report);
                     }
                     Err(error) if error == "Cancelled" => {
                         self.status = "Export cancelled".to_string();
                     }
-                    Err(error) => self.status = format!("Export failed: {error}"),
+                    Err(error) => {
+                        self.status = format!("Export failed: {error}");
+                        self.toast_error(self.status.clone());
+                    }
                 }
             }
         }
@@ -10043,6 +10113,7 @@ impl eframe::App for BeamWrightApp {
         self.canvas(ui);
         let ctx = ui.ctx().clone();
         self.dialogs(&ctx);
+        self.paint_toasts(&ctx);
         if self.quit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
