@@ -424,6 +424,8 @@ pub struct BeamWrightApp {
     export_presets_open: bool,
     export_preset_name: String,
     history_open: bool,
+    tour_open: bool,
+    tour_step: usize,
     material_test_options: crate::material_test::Options,
     image_test_open: bool,
     image_test_options: crate::image_test::Options,
@@ -994,6 +996,8 @@ impl BeamWrightApp {
             export_presets_open: false,
             export_preset_name: String::new(),
             history_open: false,
+            tour_open: !preferences.general.tour_seen,
+            tour_step: 0,
             material_test_options: crate::material_test::Options::default(),
             image_test_open: false,
             image_test_options: crate::image_test::Options::default(),
@@ -2063,6 +2067,7 @@ impl BeamWrightApp {
             || self.palette_open
             || self.export_presets_open
             || self.history_open
+            || self.tour_open
         {
             return;
         }
@@ -3023,6 +3028,11 @@ impl BeamWrightApp {
                 ui.menu_button(icons::menu_label(ui, Icon::Help, "Help"), |ui| {
                     if icons::button(ui, Icon::Text, "Keyboard shortcuts").clicked() {
                         self.help_shortcuts_open = true;
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Info, "Show the tour").clicked() {
+                        self.tour_open = true;
+                        self.tour_step = 0;
                         ui.close();
                     }
                     if icons::button(ui, Icon::Info, "About BeamWright").clicked() {
@@ -8636,6 +8646,59 @@ impl BeamWrightApp {
         }
     }
 
+    fn tour_window(&mut self, ctx: &egui::Context) {
+        let steps = tour_steps();
+        let mut open = self.tour_open;
+        let mut step = self.tour_step.min(steps.len() - 1);
+        let mut finish = false;
+        let mut close_requested = false;
+        egui::Window::new("Welcome to BeamWright")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                let (title, body) = steps[step];
+                ui.heading(title);
+                ui.add_space(4.0);
+                ui.label(body);
+                ui.add_space(8.0);
+                ui.weak(format!("Step {} of {}", step + 1, steps.len()));
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(step > 0, egui::Button::new("Back"))
+                        .clicked()
+                    {
+                        step -= 1;
+                    }
+                    let last = step + 1 == steps.len();
+                    if ui.button(if last { "Finish" } else { "Next" }).clicked() {
+                        if last {
+                            finish = true;
+                        } else {
+                            step += 1;
+                        }
+                    }
+                    if ui.button("Skip").clicked() {
+                        close_requested = true;
+                    }
+                    ui.weak("Help → Show the tour reopens this.");
+                });
+            });
+        if finish || close_requested {
+            open = false;
+            self.preferences.general.tour_seen = true;
+            if let Err(error) = self.preferences.save(&self.preferences_path) {
+                self.status = format!("Cannot save preferences: {error}");
+            }
+        }
+        self.tour_step = step;
+        self.tour_open = open;
+    }
+
     fn history_window(&mut self, ctx: &egui::Context) {
         let mut open = self.history_open;
         let labels = self.editor.history.labels();
@@ -10447,6 +10510,9 @@ impl BeamWrightApp {
         if self.history_open {
             self.history_window(ctx);
         }
+        if self.tour_open {
+            self.tour_window(ctx);
+        }
         if self.interface_presets_open {
             self.interface_presets_window(ctx);
         }
@@ -10582,6 +10648,37 @@ impl eframe::App for BeamWrightApp {
 }
 
 /// Font picker shared by the text properties and the preferences window.
+/// The short first-run tour.
+fn tour_steps() -> &'static [(&'static str, &'static str)] {
+    &[
+        (
+            "Draw or import",
+            "Use the tools on the left, or File → Import SVG or DXF to bring in a drawing. \
+             Objects keep their layer and can be moved, scaled and rotated on the canvas.",
+        ),
+        (
+            "Assign operations",
+            "Create an operation in Operations → New operation and assign it to the selection. \
+             Speed, power, passes, kerf, tabs and leads live in Cuts / Layers.",
+        ),
+        (
+            "Prepare images",
+            "Right-click an image and choose Adjust image for dithering, tone curves and \
+             presets. Vectorize image traces its outline; Trace centerline follows its strokes.",
+        ),
+        (
+            "Check before writing",
+            "View → Preview and G-code shows the planned path, the estimated time and the text \
+             that will be written. Nothing is sent to a machine from this application.",
+        ),
+        (
+            "Write the file",
+            "File → Export G-code writes a standard file for a sender of your choice. \
+             You can save the project as .bwp or, with images, as .bwpz.",
+        ),
+    ]
+}
+
 /// Live values shown next to the cursor while drawing or measuring.
 fn drag_measurement(drag: Option<&DragState>) -> Option<String> {
     match drag? {
@@ -10805,6 +10902,16 @@ mod tests {
             burn_image.pixels[0],
             egui::Color32::from_rgb(0xFF, 0x7A, 0x1A)
         );
+    }
+
+    #[test]
+    fn the_tour_has_short_non_empty_steps() {
+        let steps = tour_steps();
+        assert!(steps.len() >= 4);
+        for (title, body) in steps {
+            assert_ne!(*title, "");
+            assert_ne!(*body, "");
+        }
     }
 
     #[test]

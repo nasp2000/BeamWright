@@ -142,6 +142,9 @@ pub struct GeneralPrefs {
     /// Recently opened or saved project files, newest first.
     #[serde(default)]
     pub recent_projects: Vec<String>,
+    /// The first-run tour has been finished or skipped.
+    #[serde(default)]
+    pub tour_seen: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -154,6 +157,7 @@ impl Default for GeneralPrefs {
             default_directory: String::new(),
             text_font: default_text_font(),
             recent_projects: Vec::new(),
+            tour_seen: false,
         }
     }
 }
@@ -605,9 +609,10 @@ mod tests {
     }
 
     #[test]
-    fn the_first_run_is_dark() {
+    fn the_first_run_is_dark_and_shows_the_tour() {
         let preferences = AppPreferences::default();
         assert_eq!(preferences.general.theme, "dark");
+        assert!(!preferences.general.tour_seen);
         assert!(preferences.validate().is_ok());
     }
 
