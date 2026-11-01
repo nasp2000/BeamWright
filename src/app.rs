@@ -71,6 +71,7 @@ enum PaletteAction {
     Import,
     ExportSvg,
     ExportDxf,
+    ExportPdf,
     ExportPng,
     ExportGcode,
     Cuts,
@@ -119,6 +120,7 @@ fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
         (Action::Import, "Import SVG, DXF or image..."),
         (Action::ExportSvg, "Export SVG..."),
         (Action::ExportDxf, "Export DXF..."),
+        (Action::ExportPdf, "Export PDF..."),
         (Action::ExportPng, "Export PNG..."),
         (Action::ExportGcode, "Export G-code..."),
         (Action::Cuts, "Cuts and layers..."),
@@ -542,6 +544,14 @@ fn run_export(
             Ok(FileReport::new("Export DXF", path.display().to_string())
                 .with_summary("Objects", document.objects.len().to_string())
                 .with_summary("Format", "LWPOLYLINE subset"))
+        }
+        FileMode::ExportPdf => {
+            let pdf = crate::export::export_pdf(document).map_err(|error| error.to_string())?;
+            cancelled()?;
+            std::fs::write(path, pdf.as_bytes()).map_err(|error| error.to_string())?;
+            Ok(FileReport::new("Export PDF", path.display().to_string())
+                .with_summary("Objects", document.objects.len().to_string())
+                .with_summary("Format", "single-page vector"))
         }
         FileMode::ExportHpgl => {
             let hpgl = crate::export::export_hpgl(document).map_err(|error| error.to_string())?;
@@ -1150,6 +1160,7 @@ impl BeamWrightApp {
             FileMode::ImportFile => "drawing.svg".to_string(),
             FileMode::ExportDxf => format!("{stem}.dxf"),
             FileMode::ExportHpgl => format!("{stem}.plt"),
+            FileMode::ExportPdf => format!("{stem}.pdf"),
             FileMode::ExportPng => format!("{stem}.png"),
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
@@ -1195,6 +1206,7 @@ impl BeamWrightApp {
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
             FileMode::ExportHpgl => builder = builder.add_filter("HPGL", &["plt", "hpgl"]),
+            FileMode::ExportPdf => builder = builder.add_filter("PDF", &["pdf"]),
             FileMode::ExportPng => builder = builder.add_filter("PNG", &["png"]),
             FileMode::ExportGcode | FileMode::PreviewGcode => {
                 builder = builder.add_filter(
@@ -1299,6 +1311,7 @@ impl BeamWrightApp {
             FileMode::ExportPng
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
+            | FileMode::ExportPdf
             | FileMode::ExportGcode
             | FileMode::ExportSvg => self.start_export(mode, path, document, offset_origin),
             FileMode::RelinkImage => self.relink_image(path),
@@ -2237,6 +2250,10 @@ impl BeamWrightApp {
                     }
                     if icons::button(ui, Icon::Export, "Export HPGL...").clicked() {
                         self.open_dialog(FileMode::ExportHpgl);
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Export, "Export PDF...").clicked() {
+                        self.open_dialog(FileMode::ExportPdf);
                         ui.close();
                     }
                     if icons::button(ui, Icon::Export, "Export PNG...").clicked() {
@@ -8549,6 +8566,7 @@ impl BeamWrightApp {
             Action::Import => self.open_dialog(FileMode::ImportFile),
             Action::ExportSvg => self.open_dialog(FileMode::ExportSvg),
             Action::ExportDxf => self.open_dialog(FileMode::ExportDxf),
+            Action::ExportPdf => self.open_dialog(FileMode::ExportPdf),
             Action::ExportPng => self.open_dialog(FileMode::ExportPng),
             Action::ExportGcode => self.open_dialog(FileMode::ExportGcode),
             Action::Cuts => self.open_cuts(),

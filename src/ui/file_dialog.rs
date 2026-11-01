@@ -8,6 +8,7 @@ pub enum FileMode {
     ExportSvg,
     ExportDxf,
     ExportHpgl,
+    ExportPdf,
     ExportPng,
     ExportGcode,
     RelinkImage,
@@ -27,6 +28,7 @@ impl FileMode {
             FileMode::ExportSvg => "Export SVG",
             FileMode::ExportDxf => "Export DXF",
             FileMode::ExportHpgl => "Export HPGL",
+            FileMode::ExportPdf => "Export PDF",
             FileMode::ExportPng => "Export PNG",
             FileMode::ExportGcode => "Export G-code",
             FileMode::RelinkImage => "Relink image",
@@ -45,6 +47,7 @@ impl FileMode {
             FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
+            | FileMode::ExportPdf
             | FileMode::ExportPng
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
@@ -60,6 +63,7 @@ impl FileMode {
             FileMode::ExportGcode | FileMode::PreviewGcode => "nc",
             FileMode::ExportDxf => "dxf",
             FileMode::ExportHpgl => "plt",
+            FileMode::ExportPdf => "pdf",
             FileMode::ExportPng | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
             FileMode::ImportProfiles
@@ -82,6 +86,7 @@ impl FileMode {
             FileMode::ExportSvg => "Saves .svg files",
             FileMode::ExportDxf => "Saves .dxf files",
             FileMode::ExportHpgl => "Saves .plt and .hpgl files",
+            FileMode::ExportPdf => "Saves .pdf files",
             FileMode::ExportPng => "Saves .png files",
             FileMode::ExportGcode => {
                 "Saves .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
@@ -110,6 +115,7 @@ impl FileMode {
             FileMode::ExportSvg => extension == "svg",
             FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportHpgl => extension == "plt" || extension == "hpgl",
+            FileMode::ExportPdf => extension == "pdf",
             FileMode::ExportPng => extension == "png",
             FileMode::ExportGcode => matches!(
                 extension.as_str(),
@@ -353,6 +359,7 @@ impl FileDialog {
             | FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
+            | FileMode::ExportPdf
             | FileMode::ExportPng
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
