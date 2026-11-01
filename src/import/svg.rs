@@ -78,6 +78,8 @@ pub fn import_svg_report_cancellable(src: &str, cancel: &dyn Fn() -> bool) -> Re
     let root_transform = root_transform(&root, view_box, doc.width_mm, doc.height_mm);
     let root_style = SvgStyle::from_node(&root);
     let layer_id = doc.layers[0].id.clone();
+    let mut ids = HashMap::new();
+    collect_ids(&root, &mut ids);
 
     for child in &root.children {
         if cancel() {
@@ -90,6 +92,8 @@ pub fn import_svg_report_cancellable(src: &str, cancel: &dyn Fn() -> bool) -> Re
             &mut doc,
             &layer_id,
             &mut warnings,
+            &ids,
+            0,
         );
     }
 
@@ -260,6 +264,17 @@ fn root_transform(
     }
 }
 
+/// Every element with an `id`, used to expand `<use>` references.
+fn collect_ids<'a>(node: &'a Node, ids: &mut HashMap<String, &'a Node>) {
+    if let Some(id) = node.attr("id") {
+        ids.entry(id.to_string()).or_insert(node);
+    }
+    for child in &node.children {
+        collect_ids(child, ids);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn process_node(
     node: &Node,
     parent_transform: Transform2,
@@ -267,6 +282,8 @@ fn process_node(
     doc: &mut Document,
     layer_id: &str,
     warnings: &mut Vec<String>,
+    ids: &HashMap<String, &Node>,
+    depth: usize,
 ) {
     let local = node
         .attr("transform")
@@ -278,12 +295,67 @@ fn process_node(
     match node.name.as_str() {
         "g" | "a" | "svg" => {
             for child in &node.children {
-                process_node(child, transform, &style, doc, layer_id, warnings);
+                process_node(
+                    child, transform, &style, doc, layer_id, warnings, ids, depth,
+                );
             }
         }
         "defs" | "clipPath" | "mask" | "symbol" | "pattern" | "marker" | "metadata" | "title"
         | "desc" | "style" => {}
-        "use" => warnings.push("<use> references are not expanded".to_string()),
+        "use" => {
+            let href = node
+                .attr("href")
+                .or_else(|| node.attr("xlink:href"))
+                .map(str::trim)
+                .unwrap_or_default();
+            if href.is_empty() {
+                warnings.push("<use> without href was skipped".to_string());
+            } else if let Some(id) = href.strip_prefix('#') {
+                match ids.get(id) {
+                    None => warnings.push(format!("<use> references missing #{id}")),
+                    Some(_) if depth >= 8 => {
+                        warnings.push("<use> nesting is too deep".to_string());
+                    }
+                    Some(target) => {
+                        let offset = Transform2::translate(
+                            node.number("x").unwrap_or(0.0),
+                            node.number("y").unwrap_or(0.0),
+                        );
+                        let transform = transform.compose(&offset);
+                        match target.name.as_str() {
+                            "symbol" | "g" | "svg" => {
+                                for child in &target.children {
+                                    process_node(
+                                        child,
+                                        transform,
+                                        &style,
+                                        doc,
+                                        layer_id,
+                                        warnings,
+                                        ids,
+                                        depth + 1,
+                                    );
+                                }
+                            }
+                            _ => process_node(
+                                target,
+                                transform,
+                                &style,
+                                doc,
+                                layer_id,
+                                warnings,
+                                ids,
+                                depth + 1,
+                            ),
+                        }
+                    }
+                }
+            } else {
+                warnings.push(format!(
+                    "<use> to the external reference '{href}' is not supported"
+                ));
+            }
+        }
         "rect" => import_rect(node, transform, &style, doc, layer_id, warnings),
         "circle" => import_circle(node, transform, &style, doc, layer_id, warnings),
         "ellipse" => import_ellipse(node, transform, &style, doc, layer_id, warnings),
@@ -901,6 +973,60 @@ mod tests {
     fn imports_circle_and_line() {
         let doc = import_svg(SVG_SHAPES).unwrap();
         assert_eq!(doc.objects.len(), 2);
+    }
+
+    #[test]
+    fn use_references_are_expanded_like_the_referenced_shape() {
+        let direct = import_svg(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm">
+                <rect x="20" y="30" width="10" height="5"/>
+            </svg>"#,
+        )
+        .unwrap();
+        let used = import_svg(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm">
+                <defs><rect id="r" width="10" height="5"/></defs>
+                <use href="#r" x="20" y="30"/>
+            </svg>"##,
+        )
+        .unwrap();
+        assert_eq!(direct.objects.len(), 1);
+        assert_eq!(used.objects.len(), 1);
+        let expected = direct.objects[0].bounds().unwrap();
+        let actual = used.objects[0].bounds().unwrap();
+        assert!(
+            (expected.0.x - actual.0.x).abs() < 1e-6,
+            "{expected:?} {actual:?}"
+        );
+        assert!(
+            (expected.0.y - actual.0.y).abs() < 1e-6,
+            "{expected:?} {actual:?}"
+        );
+        assert!(
+            (expected.1.x - actual.1.x).abs() < 1e-6,
+            "{expected:?} {actual:?}"
+        );
+        assert!(
+            (expected.1.y - actual.1.y).abs() < 1e-6,
+            "{expected:?} {actual:?}"
+        );
+    }
+
+    #[test]
+    fn use_references_to_missing_ids_are_reported() {
+        let report = import_svg_report(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm">
+                <use href="#missing"/>
+            </svg>"##,
+        )
+        .unwrap();
+        assert_eq!(report.document.objects.len(), 0);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("missing #missing"))
+        );
     }
 
     #[test]
