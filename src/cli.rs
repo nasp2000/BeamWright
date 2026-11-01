@@ -105,6 +105,29 @@ pub enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+    /// Describe a project or drawing: layers, objects, operations and parameters
+    Inspect {
+        path: PathBuf,
+        /// Print the report as JSON
+        #[arg(long)]
+        json: bool,
+        /// Limit the object list to these ids
+        #[arg(long, value_delimiter = ',')]
+        ids: Vec<String>,
+    },
+    /// Measure lengths, areas, bounds and job distances
+    Measure {
+        path: PathBuf,
+        /// Print the report as JSON
+        #[arg(long)]
+        json: bool,
+        /// Limit the measurement to these ids
+        #[arg(long, value_delimiter = ',')]
+        ids: Vec<String>,
+        /// Include hidden objects
+        #[arg(long)]
+        include_hidden: bool,
+    },
     /// Preflight a project or drawing without exporting
     Check {
         path: PathBuf,
@@ -331,6 +354,33 @@ pub fn run(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
+        Some(Commands::Inspect { path, json, ids }) => {
+            let document = open_document(&path)?;
+            let filter = (!ids.is_empty()).then_some(ids.as_slice());
+            let report = crate::inspection::inspect(&document, filter);
+            if json {
+                println!("{}", pretty(&report)?);
+            } else {
+                print_inspection(&report);
+            }
+            Ok(())
+        }
+        Some(Commands::Measure {
+            path,
+            json,
+            ids,
+            include_hidden,
+        }) => {
+            let document = open_document(&path)?;
+            let filter = (!ids.is_empty()).then_some(ids.as_slice());
+            let report = crate::inspection::measure(&document, filter, include_hidden);
+            if json {
+                println!("{}", pretty(&report)?);
+            } else {
+                print_measurement(&report);
+            }
+            Ok(())
+        }
         Some(Commands::Check { path, json }) => {
             let outcome = crate::import::format::import_with_report(&path)?;
             let report = crate::preflight::check(&outcome.document);
@@ -435,6 +485,87 @@ pub fn run(cli: Cli) -> Result<()> {
 ///
 /// This is the measurement tool: run it on the target
 /// hardware to record import, export, save and G-code times.
+fn pretty(value: &serde_json::Value) -> Result<String> {
+    serde_json::to_string_pretty(value).map_err(|error| BeamError::InvalidInput(error.to_string()))
+}
+
+fn print_inspection(report: &serde_json::Value) {
+    let project = &report["project"];
+    println!(
+        "{}: {} x {} {}",
+        project["name"].as_str().unwrap_or("Untitled"),
+        project["width_mm"],
+        project["height_mm"],
+        project["unit"].as_str().unwrap_or("mm")
+    );
+    let counts = &report["counts"];
+    println!(
+        "{} layer(s), {} object(s), {} operation(s), {} parameter(s)",
+        counts["layers"], counts["objects"], counts["operations"], counts["parameters"]
+    );
+    for object in report["objects"].as_array().into_iter().flatten() {
+        println!(
+            "  {} [{}] layer {} operation {} length {:.3} mm area {:.3} mm2",
+            object["name"].as_str().unwrap_or("?"),
+            object["kind"].as_str().unwrap_or("?"),
+            object["layer"].as_str().unwrap_or("(none)"),
+            object["operation"].as_str().unwrap_or("(none)"),
+            object["length_mm"].as_f64().unwrap_or(0.0),
+            object["area_mm2"].as_f64().unwrap_or(0.0)
+        );
+    }
+    for parameter in report["parameters"].as_array().into_iter().flatten() {
+        match parameter["value"].as_f64() {
+            Some(value) => println!(
+                "  parameter {} = {} {}",
+                parameter["name"].as_str().unwrap_or("?"),
+                value,
+                parameter["unit"].as_str().unwrap_or("")
+            ),
+            None => println!(
+                "  parameter {} is invalid: {}",
+                parameter["name"].as_str().unwrap_or("?"),
+                parameter["error"].as_str().unwrap_or("")
+            ),
+        }
+    }
+}
+
+fn print_measurement(report: &serde_json::Value) {
+    println!(
+        "{} object(s): {:.3} mm of path, {:.3} mm2 gross, {:.3} mm2 net",
+        report["objects"],
+        report["length_mm"].as_f64().unwrap_or(0.0),
+        report["area_mm2"].as_f64().unwrap_or(0.0),
+        report["net_area_mm2"].as_f64().unwrap_or(0.0)
+    );
+    if let Some(bounds) = report["bounds_mm"].as_object() {
+        println!(
+            "  bounds {:.3} x {:.3} mm at ({:.3}, {:.3})",
+            bounds["width"].as_f64().unwrap_or(0.0),
+            bounds["height"].as_f64().unwrap_or(0.0),
+            bounds["min_x"].as_f64().unwrap_or(0.0),
+            bounds["min_y"].as_f64().unwrap_or(0.0)
+        );
+    }
+    for entry in report["by_operation"].as_array().into_iter().flatten() {
+        println!(
+            "  {}: {} object(s), {:.3} mm",
+            entry["operation"].as_str().unwrap_or("(none)"),
+            entry["objects"],
+            entry["length_mm"].as_f64().unwrap_or(0.0)
+        );
+    }
+    if let Some(job) = report["job"].as_object() {
+        println!(
+            "  job: {} path(s), {:.3} mm cut, {:.3} mm travel",
+            job["paths"],
+            job["cut_mm"].as_f64().unwrap_or(0.0),
+            job["travel_mm"].as_f64().unwrap_or(0.0)
+        );
+    }
+}
+
 fn response_error(response: &serde_json::Value) -> Option<String> {
     response
         .get("error")

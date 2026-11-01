@@ -1010,6 +1010,25 @@ impl McpServer {
                     .ok_or_else(|| missing("steps"))?;
                 self.apply_batch(steps)
             }
+            "inspect" => {
+                let ids = ids(arguments);
+                let mut report = crate::inspection::inspect(&self.editor.document, ids.as_deref());
+                report["selection"] = json!(self.editor.selection.ids());
+                report["active_tool"] = json!(self.editor.tool.label());
+                Ok(report)
+            }
+            "measure" => {
+                let ids = ids(arguments);
+                let include_hidden = arguments
+                    .get("include_hidden")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                Ok(crate::inspection::measure(
+                    &self.editor.document,
+                    ids.as_deref(),
+                    include_hidden,
+                ))
+            }
             "estimate" => {
                 let (_, report) = crate::gcode::render_job(
                     &self.editor.document,
@@ -1559,6 +1578,21 @@ fn tool_definitions() -> Vec<Value> {
             "Export a GRBL-compatible G-code job.",
             json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
         ),
+        tool_with(
+            "inspect",
+            "Describe the project: layers, objects, operations, parameters, stock and selection. Read-only.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}}
+            }}),
+        ),
+        tool_with(
+            "measure",
+            "Measure lengths, areas, bounds and job distances for the document or a subset. Read-only.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "include_hidden": {"type": "boolean"}
+            }}),
+        ),
         tool("estimate", "Estimate job paths, lines, bytes and duration."),
         tool_with(
             "check_job",
@@ -1601,6 +1635,20 @@ fn positive(arguments: &Value, key: &str) -> Result<f64> {
         return Err(BeamError::InvalidInput(format!("'{key}' must be positive")));
     }
     Ok(value)
+}
+
+/// The `ids` array, when present and made of strings.
+fn ids(arguments: &Value) -> Option<Vec<String>> {
+    arguments
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
 }
 
 fn string(arguments: &Value, key: &str) -> Option<String> {
@@ -1755,6 +1803,59 @@ mod tests {
                 .iter()
                 .any(|issue| issue["code"] == "text-not-outlined")
         );
+    }
+
+    #[test]
+    fn inspect_describes_the_project_and_selection() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 5.0}),
+        );
+        let id = server.editor.document.objects[0].id.clone();
+        call(&mut server, "copy_objects", json!({"ids": [id.clone()]}));
+        let report = call(&mut server, "inspect", json!({}));
+        let report = &report["result"];
+        assert_eq!(report["counts"]["objects"], 1);
+        assert_eq!(report["objects"][0]["kind"], "Rectangle");
+        assert_eq!(report["selection"][0], id);
+        assert_eq!(report["layers"][0]["objects"], 1);
+    }
+
+    #[test]
+    fn inspect_accepts_an_id_filter() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 5.0}),
+        );
+        call(&mut server, "add_circle", json!({"radius": 2.0}));
+        let second = server.editor.document.objects[1].id.clone();
+        let report = call(&mut server, "inspect", json!({"ids": [second]}));
+        assert_eq!(report["result"]["objects"].as_array().unwrap().len(), 1);
+        assert_eq!(report["result"]["counts"]["objects"], 2);
+    }
+
+    #[test]
+    fn measure_reports_lengths_and_job_distances_without_changing_anything() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 5.0}),
+        );
+        let before = server.editor.document.clone();
+        let history = server.editor.history.undo_len();
+        let report = call(&mut server, "measure", json!({}));
+        let report = &report["result"];
+        assert_eq!(report["objects"], 1);
+        assert!((report["length_mm"].as_f64().unwrap() - 30.0).abs() < 1e-6);
+        assert!((report["bounds_mm"]["width"].as_f64().unwrap() - 10.0).abs() < 1e-6);
+        assert!(report["job"]["travel_mm"].as_f64().unwrap() >= 0.0);
+        assert_eq!(server.editor.document, before);
+        assert_eq!(server.editor.history.undo_len(), history);
     }
 
     #[test]

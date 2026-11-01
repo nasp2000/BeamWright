@@ -49,6 +49,28 @@ fn cli_list_layers_command() {
 }
 
 #[test]
+fn cli_inspect_and_measure_report_a_project() {
+    let path = temp_dir().join("bw_cli_inspect.bwp");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &path).unwrap();
+    let cli = Cli::try_parse_from(["BeamWright", "inspect", path.to_str().unwrap()]).unwrap();
+    run(cli).unwrap();
+    let cli =
+        Cli::try_parse_from(["BeamWright", "inspect", path.to_str().unwrap(), "--json"]).unwrap();
+    run(cli).unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "measure",
+        path.to_str().unwrap(),
+        "--json",
+        "--include-hidden",
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn cli_check_reports_a_project() {
     let path = temp_dir().join("bw_cli_check.bwp");
     let document = beamwright::document::Document::default();
