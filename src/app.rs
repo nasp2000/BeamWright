@@ -400,6 +400,7 @@ pub struct BeamWrightApp {
     image_adjust: Option<String>,
     image_adjust_snapshot: Option<Document>,
     image_burn_map: bool,
+    image_estimate_speed: f64,
     image_target_dpi: f64,
     image_target_width_mm: f64,
     machines: crate::machines::MachineLibrary,
@@ -888,6 +889,7 @@ struct ImagePreview {
     path: String,
     settings: crate::objects::ImageSettings,
     crop: Option<crate::objects::ImageCrop>,
+    stats: crate::raster::RasterStats,
 }
 
 /// The burn-map texture of the image currently open in Adjust image.
@@ -1001,6 +1003,7 @@ impl BeamWrightApp {
             image_adjust: None,
             image_adjust_snapshot: None,
             image_burn_map: false,
+            image_estimate_speed: 3000.0,
             image_target_dpi: 254.0,
             image_target_width_mm: 0.0,
             machines,
@@ -1884,10 +1887,18 @@ impl BeamWrightApp {
                         }
                     });
                 ui.separator();
-                if ui.button("Apply").clicked() {
+                if ui
+                    .button("Apply")
+                    .on_hover_text("Apply the profile to the active operation")
+                    .clicked()
+                {
                     apply = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Close without applying the profile")
+                    .clicked()
+                {
                     self.profile_confirm_open = false;
                 }
             });
@@ -5323,7 +5334,11 @@ impl BeamWrightApp {
                     if ui.button("Generate").clicked() {
                         generate = true;
                     }
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });
@@ -5428,7 +5443,11 @@ impl BeamWrightApp {
                     if ui.button("Generate").clicked() {
                         generate = true;
                     }
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });
@@ -5638,7 +5657,11 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });
@@ -5741,7 +5764,11 @@ impl BeamWrightApp {
                     if ui.button("Add marks").clicked() {
                         generate = true;
                     }
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });
@@ -6178,7 +6205,7 @@ impl BeamWrightApp {
                             }
                         }
                     }
-                    if ui.button("Close").clicked() {
+                    if ui.button("Close").on_hover_text("Close this window").clicked() {
                         close_requested = true;
                     }
                 });
@@ -7154,10 +7181,18 @@ impl BeamWrightApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("OK").clicked() {
+                        if ui
+                            .button("OK")
+                            .on_hover_text("Apply these image settings and close")
+                            .clicked()
+                        {
                             close = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui
+                            .button("Cancel")
+                            .on_hover_text("Close without applying the changes")
+                            .clicked()
+                        {
                             cancel = true;
                         }
                     });
@@ -7298,6 +7333,7 @@ impl BeamWrightApp {
             let path = image.path.clone();
             let settings = image.settings;
             let crop = image.crop;
+            let stats = crate::raster::RasterStats::of(&bitmap);
             let texture = ctx.load_texture(
                 format!("image-preview-{id}"),
                 preview_color_image(&bitmap, false),
@@ -7310,6 +7346,7 @@ impl BeamWrightApp {
                     path,
                     settings,
                     crop,
+                    stats,
                 },
             );
         }
@@ -7911,7 +7948,11 @@ impl BeamWrightApp {
                     ui.label(task.label());
                 });
                 ui.weak("You can stop waiting; the result will be discarded.");
-                if ui.button("Cancel").clicked() {
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Stop waiting; the result is discarded")
+                    .clicked()
+                {
                     cancel = true;
                 }
             });
@@ -8146,7 +8187,11 @@ impl BeamWrightApp {
                             }
                         });
                 }
-                if ui.button("Close").clicked() {
+                if ui
+                    .button("Close")
+                    .on_hover_text("Close this window")
+                    .clicked()
+                {
                     self.report_open = false;
                 }
             });
@@ -8560,11 +8605,16 @@ impl BeamWrightApp {
                         .is_some_and(|proposal| !proposal.placements.is_empty());
                     if ui
                         .add_enabled(can_apply, egui::Button::new("Apply"))
+                        .on_hover_text("Apply the nesting proposal")
                         .clicked()
                     {
                         apply = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button("Cancel")
+                        .on_hover_text("Close without applying the nesting")
+                        .clicked()
+                    {
                         self.nest_open = false;
                     }
                 });
@@ -9124,7 +9174,11 @@ impl BeamWrightApp {
                         reset = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
+                        if ui
+                            .button("Close")
+                            .on_hover_text("Close this window")
+                            .clicked()
+                        {
                             close_requested = true;
                         }
                     });
@@ -9230,7 +9284,11 @@ impl BeamWrightApp {
                 }
                 ui.separator();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });
@@ -9382,7 +9440,11 @@ impl BeamWrightApp {
                     }
                     ui.weak("Changes are saved automatically.");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
+                        if ui
+                            .button("Close")
+                            .on_hover_text("Close this window")
+                            .clicked()
+                        {
                             close_requested = true;
                         }
                     });
@@ -10701,7 +10763,11 @@ impl BeamWrightApp {
                         if ui.button("Replace").clicked() {
                             replace = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui
+                            .button("Cancel")
+                            .on_hover_text("Keep the current file")
+                            .clicked()
+                        {
                             cancel = true;
                         }
                     });
@@ -10728,7 +10794,11 @@ impl BeamWrightApp {
                         if ui.button("Discard").clicked() {
                             action = self.confirm;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui
+                            .button("Cancel")
+                            .on_hover_text("Keep the project open")
+                            .clicked()
+                        {
                             cancel = true;
                         }
                     });

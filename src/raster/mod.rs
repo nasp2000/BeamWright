@@ -30,6 +30,77 @@ impl RasterBitmap {
     }
 }
 
+/// Counts used to estimate how long an engraving takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RasterStats {
+    pub width: usize,
+    pub height: usize,
+    /// Pixels whose power is above zero.
+    pub burned: usize,
+    /// Burned runs, one per uninterrupted stretch in a row.
+    pub runs: usize,
+    /// Unburned pixels between the first and last burned pixel of a row.
+    pub gap_pixels: usize,
+}
+
+impl RasterStats {
+    pub fn of(bitmap: &RasterBitmap) -> Self {
+        let mut stats = Self {
+            width: bitmap.width,
+            height: bitmap.height,
+            ..Self::default()
+        };
+        for row in 0..bitmap.height {
+            let mut first: Option<usize> = None;
+            let mut last = 0;
+            let mut row_burned = 0;
+            let mut previous = false;
+            for column in 0..bitmap.width {
+                let on = bitmap.get(column, row);
+                if on {
+                    stats.burned += 1;
+                    row_burned += 1;
+                    first.get_or_insert(column);
+                    last = column;
+                    if !previous {
+                        stats.runs += 1;
+                    }
+                }
+                previous = on;
+            }
+            if let Some(first) = first {
+                stats.gap_pixels += (last - first + 1) - row_burned;
+            }
+        }
+        stats
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.burned == 0
+    }
+}
+
+/// Rough engraving time from the processed pixels.
+///
+/// Cut length is the burned pixels times the pixel width; travel is the
+/// unburned pixels between runs. Row changes and acceleration are ignored, so
+/// the result is an estimate, not a promise.
+#[allow(clippy::cast_precision_loss)]
+pub fn estimate_engraving(
+    stats: RasterStats,
+    width_mm: f64,
+    speed_mm_min: f64,
+) -> Option<(f64, f64, f64)> {
+    if stats.width == 0 || !width_mm.is_finite() || width_mm <= 0.0 || speed_mm_min <= 0.0 {
+        return None;
+    }
+    let pixel_mm = width_mm / stats.width as f64;
+    let cut_mm = stats.burned as f64 * pixel_mm;
+    let travel_mm = stats.gap_pixels as f64 * pixel_mm;
+    let seconds = (cut_mm + travel_mm) / speed_mm_min * 60.0;
+    Some((cut_mm, travel_mm, seconds))
+}
+
 /// Convert a luminance buffer using the image settings.
 ///
 /// Pipeline: black/white clipping, brightness, contrast, tone curve (shadows,
@@ -713,6 +784,37 @@ mod tests {
         config.highlight_lift = 0.0;
         config.shadow_lift = -1.0;
         assert!(adjust(0.0, &config).abs() < 1e-4);
+    }
+
+    #[test]
+    fn raster_stats_count_runs_and_internal_gaps() {
+        let bitmap = super::RasterBitmap {
+            width: 4,
+            height: 2,
+            power: vec![255, 255, 0, 0, 255, 0, 255, 0],
+        };
+        let stats = super::RasterStats::of(&bitmap);
+        assert_eq!(stats.burned, 4);
+        assert_eq!(stats.runs, 3);
+        assert_eq!(stats.gap_pixels, 1);
+        assert!(!stats.is_empty());
+    }
+
+    #[test]
+    fn the_engraving_estimate_uses_cut_travel_and_speed() {
+        let stats = super::RasterStats {
+            width: 4,
+            height: 1,
+            burned: 2,
+            runs: 2,
+            gap_pixels: 1,
+        };
+        let (cut, travel, seconds) = super::estimate_engraving(stats, 4.0, 60.0).unwrap();
+        assert!((cut - 2.0).abs() < 1e-9);
+        assert!((travel - 1.0).abs() < 1e-9);
+        assert!((seconds - 3.0).abs() < 1e-9);
+        assert!(super::estimate_engraving(stats, 4.0, 0.0).is_none());
+        assert!(super::estimate_engraving(stats, 0.0, 60.0).is_none());
     }
 
     #[test]
