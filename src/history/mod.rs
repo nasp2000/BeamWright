@@ -93,6 +93,30 @@ impl History {
         self.redo.clear();
     }
 
+    /// Action names of the undo steps, oldest first.
+    pub fn labels(&self) -> Vec<String> {
+        self.undo.iter().map(|entry| entry.action.clone()).collect()
+    }
+
+    /// Action names of the redo steps, next redo first.
+    pub fn redo_labels(&self) -> Vec<String> {
+        self.redo
+            .iter()
+            .rev()
+            .map(|entry| entry.action.clone())
+            .collect()
+    }
+
+    /// Undo `steps` actions at once, returning the name of the last undone one.
+    pub fn jump_to(&mut self, document: &mut Document, steps: usize) -> Option<String> {
+        let steps = steps.min(self.undo.len());
+        let mut last = None;
+        for _ in 0..steps {
+            last = self.undo(document);
+        }
+        last
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -139,6 +163,43 @@ mod tests {
             },
         ));
         document
+    }
+
+    #[test]
+    fn jumping_back_moves_the_steps_to_redo() {
+        let mut document = Document::default();
+        let mut history = History::new(10);
+        let layer_id = document.layers[0].id.clone();
+        history.record(&document, "One");
+        document.add_object(Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 1.0,
+                height: 1.0,
+                corner_radius: 0.0,
+            },
+        ));
+        history.record(&document, "Two");
+        document.add_object(Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 2.0,
+                height: 2.0,
+                corner_radius: 0.0,
+            },
+        ));
+        history.record(&document, "Three");
+        assert_eq!(history.labels(), vec!["One", "Two", "Three"]);
+        assert_eq!(history.redo_labels(), Vec::<String>::new());
+
+        assert_eq!(history.jump_to(&mut document, 2), Some("Two".to_string()));
+        assert_eq!(document.objects.len(), 1);
+        assert_eq!(history.redo_labels(), vec!["Two", "Three"]);
+
+        // Jumping past the oldest step stops there instead of failing.
+        assert_eq!(history.jump_to(&mut document, 99), Some("One".to_string()));
+        assert_eq!(history.undo_len(), 0);
+        assert_eq!(history.jump_to(&mut document, 1), None);
     }
 
     #[test]

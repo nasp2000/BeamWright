@@ -2499,6 +2499,13 @@ impl EditorState {
         Some(action)
     }
 
+    /// Undo several steps at once and return the last reverted action.
+    pub fn jump_history(&mut self, steps: usize) -> Option<String> {
+        let action = self.history.jump_to(&mut self.document, steps)?;
+        self.prune_selection();
+        Some(action)
+    }
+
     fn prune_selection(&mut self) {
         let ids = self.selection.ids().to_vec();
         for id in ids {

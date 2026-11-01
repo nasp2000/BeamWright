@@ -83,6 +83,7 @@ enum PaletteAction {
     Preferences,
     Workspaces,
     InterfacePresets,
+    History,
     MachineProfiles,
     Materials,
     KeyboardShortcuts,
@@ -133,6 +134,7 @@ fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
         (Action::Preferences, "Preferences..."),
         (Action::Workspaces, "Workspaces..."),
         (Action::InterfacePresets, "Interface presets..."),
+        (Action::History, "History..."),
         (Action::MachineProfiles, "Machine profiles..."),
         (Action::Materials, "Materials and operations..."),
         (Action::KeyboardShortcuts, "Keyboard shortcuts"),
@@ -421,6 +423,7 @@ pub struct BeamWrightApp {
     gcode_crlf: bool,
     export_presets_open: bool,
     export_preset_name: String,
+    history_open: bool,
     material_test_options: crate::material_test::Options,
     image_test_open: bool,
     image_test_options: crate::image_test::Options,
@@ -990,6 +993,7 @@ impl BeamWrightApp {
             gcode_crlf: false,
             export_presets_open: false,
             export_preset_name: String::new(),
+            history_open: false,
             material_test_options: crate::material_test::Options::default(),
             image_test_open: false,
             image_test_options: crate::image_test::Options::default(),
@@ -2058,6 +2062,7 @@ impl BeamWrightApp {
             || self.external_gcode_open
             || self.palette_open
             || self.export_presets_open
+            || self.history_open
         {
             return;
         }
@@ -2992,6 +2997,10 @@ impl BeamWrightApp {
                     icons::checkbox(ui, &mut self.show_properties_panel, Icon::Panels, "Properties panel (F10)");
                     if icons::button(ui, Icon::Panels, "Workspaces...").clicked() {
                         self.workspaces_open = true;
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Clock, "History...").clicked() {
+                        self.history_open = true;
                         ui.close();
                     }
                     if icons::button(ui, Icon::Palette, "Interface presets...").clicked() {
@@ -8620,10 +8629,80 @@ impl BeamWrightApp {
             Action::Preferences => self.preferences_open = true,
             Action::Workspaces => self.workspaces_open = true,
             Action::InterfacePresets => self.interface_presets_open = true,
+            Action::History => self.history_open = true,
             Action::MachineProfiles => self.machines_open = true,
             Action::Materials => self.profiles_open = true,
             Action::KeyboardShortcuts => self.help_shortcuts_open = true,
         }
+    }
+
+    fn history_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.history_open;
+        let labels = self.editor.history.labels();
+        let redo = self.editor.history.redo_labels();
+        let mut jump: Option<usize> = None;
+        let mut redo_once = false;
+        egui::Window::new("History")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([360.0, 380.0])
+            .max_height(460.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Click a step to return to the state just before it; that step \
+                     and every later one move to redo.",
+                );
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("history_steps")
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        if labels.is_empty() {
+                            ui.weak("No undo steps yet.");
+                        }
+                        for (index, label) in labels.iter().enumerate() {
+                            if ui
+                                .add(
+                                    egui::Button::new(label)
+                                        .frame(false)
+                                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                )
+                                .clicked()
+                            {
+                                jump = Some(labels.len() - index);
+                            }
+                        }
+                        ui.separator();
+                        ui.strong("Current state");
+                        for label in &redo {
+                            if ui
+                                .add(
+                                    egui::Button::new(format!("Redo {label}"))
+                                        .frame(false)
+                                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                )
+                                .clicked()
+                            {
+                                redo_once = true;
+                            }
+                        }
+                    });
+            });
+        if let Some(steps) = jump {
+            if let Some(action) = self.editor.jump_history(steps) {
+                self.status = format!("Reverted to before {action}");
+                self.needs_fit = true;
+            }
+        }
+        if redo_once {
+            if let Some(action) = self.editor.redo() {
+                self.status = format!("Redo {action}");
+            }
+        }
+        self.history_open = open;
     }
 
     fn palette_window(&mut self, ctx: &egui::Context) {
@@ -10364,6 +10443,9 @@ impl BeamWrightApp {
         }
         if self.palette_open {
             self.palette_window(ctx);
+        }
+        if self.history_open {
+            self.history_window(ctx);
         }
         if self.interface_presets_open {
             self.interface_presets_window(ctx);
