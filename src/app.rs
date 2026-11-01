@@ -311,6 +311,8 @@ pub struct BeamWrightApp {
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
+    external_gcode_open: bool,
+    external_gcode: Option<(PathBuf, crate::gcode::external::Program)>,
     preferences_section: crate::config::preferences::Section,
     preferences_search: String,
     polygon_sides: usize,
@@ -835,6 +837,8 @@ impl BeamWrightApp {
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
+            external_gcode_open: false,
+            external_gcode: None,
             preferences_section: crate::config::preferences::Section::General,
             preferences_search: String::new(),
             polygon_sides: 6,
@@ -984,6 +988,7 @@ impl BeamWrightApp {
             FileMode::ExportSvg => format!("{stem}.svg"),
             FileMode::ExportGcode => format!("{stem}.nc"),
             FileMode::RelinkImage => "image.png".to_string(),
+            FileMode::PreviewGcode => "job.nc".to_string(),
             FileMode::ImportProfiles | FileMode::ExportProfiles => "profiles.json".to_string(),
             FileMode::ImportMachines | FileMode::ExportMachines => "machines.json".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
@@ -1024,7 +1029,7 @@ impl BeamWrightApp {
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),
             FileMode::ExportPng => builder = builder.add_filter("PNG", &["png"]),
-            FileMode::ExportGcode => {
+            FileMode::ExportGcode | FileMode::PreviewGcode => {
                 builder = builder.add_filter(
                     "G-code",
                     &[
@@ -1043,7 +1048,8 @@ impl BeamWrightApp {
             | FileMode::ImportFile
             | FileMode::RelinkImage
             | FileMode::ImportProfiles
-            | FileMode::ImportMachines => builder.pick_file(),
+            | FileMode::ImportMachines
+            | FileMode::PreviewGcode => builder.pick_file(),
             _ => builder.save_file(),
         };
         let Some(path) = chosen else {
@@ -1057,6 +1063,7 @@ impl BeamWrightApp {
                     | FileMode::RelinkImage
                     | FileMode::ImportProfiles
                     | FileMode::ImportMachines
+                    | FileMode::PreviewGcode
             )
         {
             self.pending_file = Some((mode, path));
@@ -1082,6 +1089,7 @@ impl BeamWrightApp {
         };
         match mode {
             FileMode::OpenProject | FileMode::ImportFile => self.start_import(path),
+            FileMode::PreviewGcode => self.preview_external_gcode(path),
             FileMode::ImportProfiles => {
                 match crate::profiles::library::import_into(&mut self.profiles, path) {
                     Ok(count) => {
@@ -2083,6 +2091,11 @@ impl BeamWrightApp {
                     ui.separator();
                     if icons::button(ui, Icon::Import, "Import SVG or DXF...").clicked() {
                         self.open_dialog(FileMode::ImportFile);
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Toolpaths, "Preview external G-code...").clicked()
+                    {
+                        self.open_dialog(FileMode::PreviewGcode);
                         ui.close();
                     }
                     if icons::button(ui, Icon::Export, "Export SVG...").clicked() {
@@ -5165,6 +5178,119 @@ impl BeamWrightApp {
         self.image_test_open = open;
     }
 
+    fn external_gcode_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.external_gcode_open;
+        egui::Window::new("External G-code")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([640.0, 470.0])
+            .show(ctx, |ui| {
+                let Some((path, program)) = &self.external_gcode else {
+                    return;
+                };
+                egui::Grid::new("external_gcode_summary")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("File");
+                        ui.label(path.display().to_string());
+                        ui.end_row();
+                        ui.label("Lines");
+                        ui.label(program.lines.to_string());
+                        ui.end_row();
+                        ui.label("Cut moves");
+                        ui.label(program.cut_points().to_string());
+                        ui.end_row();
+                        ui.label("Cut length");
+                        ui.label(format!("{:.1} mm", program.cut_length_mm));
+                        ui.end_row();
+                        ui.label("Travel length");
+                        ui.label(format!("{:.1} mm", program.travel_length_mm));
+                        ui.end_row();
+                        ui.label("Estimated time");
+                        ui.label(
+                            program
+                                .estimated_seconds
+                                .map_or_else(|| "unknown".to_string(), format_seconds),
+                        );
+                        ui.end_row();
+                        ui.label("Power");
+                        ui.label(match (program.power_min, program.power_max) {
+                            (Some(min), Some(max)) => format!("{min:.0} to {max:.0}"),
+                            _ => "not set".to_string(),
+                        });
+                        ui.end_row();
+                        ui.label("Feed rate");
+                        ui.label(match (program.feed_min, program.feed_max) {
+                            (Some(min), Some(max)) => format!("{min:.0} to {max:.0} mm/min"),
+                            _ => "not set".to_string(),
+                        });
+                        ui.end_row();
+                        ui.label("Size");
+                        ui.label(match program.bounds() {
+                            Some((min, max)) => {
+                                format!("{:.1} x {:.1} mm", max.x - min.x, max.y - min.y)
+                            }
+                            None => "no motion".to_string(),
+                        });
+                        ui.end_row();
+                    });
+                if !program.warnings.is_empty() {
+                    ui.separator();
+                    ui.strong("Notes");
+                    egui::ScrollArea::vertical()
+                        .id_salt("external_gcode_warnings")
+                        .max_height(90.0)
+                        .show(ui, |ui| {
+                            for warning in &program.warnings {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(210, 140, 60),
+                                    format!("- {warning}"),
+                                );
+                            }
+                        });
+                }
+                ui.separator();
+                let size = egui::vec2(ui.available_width(), ui.available_height().max(200.0));
+                let (response, painter) = ui.allocate_painter(size, egui::Sense::hover());
+                painter.rect_filled(response.rect, 6.0, egui::Color32::from_rgb(16, 17, 19));
+                let Some((min, max)) = program.bounds() else {
+                    return;
+                };
+                let width = (max.x - min.x).max(1e-6);
+                let height = (max.y - min.y).max(1e-6);
+                let available = response.rect.shrink(12.0);
+                let scale = (f64::from(available.width()) / width)
+                    .min(f64::from(available.height()) / height);
+                let to_screen = |point: crate::geometry::Point2| {
+                    egui::Pos2::new(
+                        available.left() + ((point.x - min.x) * scale) as f32,
+                        available.bottom() - ((point.y - min.y) * scale) as f32,
+                    )
+                };
+                for polyline in &program.travels {
+                    let points: Vec<egui::Pos2> =
+                        polyline.iter().map(|point| to_screen(*point)).collect();
+                    painter.add(egui::Shape::line(
+                        points,
+                        egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                    ));
+                }
+                for polyline in &program.cuts {
+                    let points: Vec<egui::Pos2> =
+                        polyline.iter().map(|point| to_screen(*point)).collect();
+                    painter.add(egui::Shape::line(
+                        points,
+                        egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 122, 26)),
+                    ));
+                }
+            });
+        self.external_gcode_open = open;
+    }
+
     fn open_cuts(&mut self) {
         self.cuts_snapshot = Some(self.editor.document.clone());
         if self.active_operation.is_none() {
@@ -5926,6 +6052,21 @@ impl BeamWrightApp {
             self.editor.selection.add(new_id.clone());
         }
         self.status = format!("Traced {} centerline(s)", created.len());
+    }
+
+    fn preview_external_gcode(&mut self, path: &Path) {
+        match crate::gcode::external::parse_file(path) {
+            Ok(program) => {
+                self.status = format!(
+                    "External G-code: {} cut move(s) in {} line(s)",
+                    program.cut_points(),
+                    program.lines
+                );
+                self.external_gcode = Some((path.to_path_buf(), program));
+                self.external_gcode_open = true;
+            }
+            Err(error) => self.status = format!("Cannot read the G-code: {error}"),
+        }
     }
 
     fn open_image_adjust(&mut self) {
@@ -9127,6 +9268,9 @@ impl BeamWrightApp {
         if self.image_test_open {
             self.image_test_window(ctx);
         }
+        if self.external_gcode_open {
+            self.external_gcode_window(ctx);
+        }
         if let Some(dialog) = &mut self.dialog {
             let result = dialog.show(ctx);
             match result {
@@ -9389,6 +9533,11 @@ impl eframe::App for BeamWrightApp {
 }
 
 /// Font picker shared by the text properties and the preferences window.
+fn format_seconds(seconds: f64) -> String {
+    let total = seconds.round().max(0.0) as u64;
+    format!("{}:{:02}", total / 60, total % 60)
+}
+
 fn section_icon(section: crate::config::preferences::Section) -> Icon {
     use crate::config::preferences::Section;
     match section {

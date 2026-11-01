@@ -14,6 +14,7 @@ pub enum FileMode {
     ExportProfiles,
     ImportMachines,
     ExportMachines,
+    PreviewGcode,
 }
 
 impl FileMode {
@@ -31,12 +32,13 @@ impl FileMode {
             FileMode::ExportProfiles => "Export profiles",
             FileMode::ImportMachines => "Import machine profiles",
             FileMode::ExportMachines => "Export machine profiles",
+            FileMode::PreviewGcode => "Preview external G-code",
         }
     }
 
     fn action_label(self) -> &'static str {
         match self {
-            FileMode::OpenProject | FileMode::ImportFile => "Open",
+            FileMode::OpenProject | FileMode::ImportFile | FileMode::PreviewGcode => "Open",
             FileMode::SaveProject => "Save",
             FileMode::ExportSvg
             | FileMode::ExportDxf
@@ -52,7 +54,7 @@ impl FileMode {
     fn default_extension(self) -> &'static str {
         match self {
             FileMode::SaveProject => "bwp",
-            FileMode::ExportGcode => "nc",
+            FileMode::ExportGcode | FileMode::PreviewGcode => "nc",
             FileMode::ExportDxf => "dxf",
             FileMode::ExportPng | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
@@ -80,6 +82,9 @@ impl FileMode {
                 "Saves .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
             }
             FileMode::RelinkImage => "Shows .png, .jpg, .jpeg, .bmp, .tif and .tiff files",
+            FileMode::PreviewGcode => {
+                "Shows .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
+            }
         }
     }
 
@@ -110,6 +115,10 @@ impl FileMode {
                     "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
                 )
             }
+            FileMode::PreviewGcode => matches!(
+                extension.as_str(),
+                "nc" | "gcode" | "gco" | "gc" | "ngc" | "tap" | "cnc" | "mpf" | "txt"
+            ),
             FileMode::ImportProfiles
             | FileMode::ExportProfiles
             | FileMode::ImportMachines
@@ -328,7 +337,8 @@ impl FileDialog {
             | FileMode::ImportFile
             | FileMode::RelinkImage
             | FileMode::ImportProfiles
-            | FileMode::ImportMachines => {
+            | FileMode::ImportMachines
+            | FileMode::PreviewGcode => {
                 if !path.is_file() {
                     return Err(format!("File not found: {}", path.display()));
                 }
@@ -382,6 +392,27 @@ mod tests {
             path.extension().and_then(|value| value.to_str()),
             Some("bwp")
         );
+    }
+
+    #[test]
+    fn external_gcode_preview_accepts_the_common_extensions() {
+        for name in [
+            "job.nc",
+            "job.gcode",
+            "job.gco",
+            "job.gc",
+            "job.ngc",
+            "job.tap",
+            "job.cnc",
+            "job.mpf",
+            "job.txt",
+        ] {
+            let path = std::path::Path::new(name);
+            assert!(FileMode::PreviewGcode.accepts(path), "{name} was rejected");
+        }
+        assert!(!FileMode::PreviewGcode.accepts(std::path::Path::new("job.bwp")));
+        assert!(!FileMode::PreviewGcode.accepts(std::path::Path::new("job.svg")));
+        assert_eq!(FileMode::PreviewGcode.action_label(), "Open");
     }
 
     #[test]
