@@ -459,6 +459,8 @@ pub struct BeamWrightApp {
     offset_distance: f64,
     star_points: usize,
     star_inner: f64,
+    line_angle_snap: bool,
+    text_size_mm: f64,
     repeat_open: bool,
     repeat_options: crate::editor::RepeatOptions,
     clipboard: Vec<crate::document::Object>,
@@ -1062,6 +1064,8 @@ impl BeamWrightApp {
             offset_distance: 1.0,
             star_points: 5,
             star_inner: 0.5,
+            line_angle_snap: false,
+            text_size_mm: 10.0,
             repeat_open: false,
             repeat_options: crate::editor::RepeatOptions::default(),
             clipboard: Vec::new(),
@@ -1242,8 +1246,8 @@ impl BeamWrightApp {
                 builder = builder.add_filter(
                     "Drawing or image",
                     &[
-                        "svg", "dxf", "plt", "hpgl", "png", "jpg", "jpeg", "bmp", "tif", "tiff",
-                        "webp", "gif",
+                        "svg", "dxf", "plt", "hpgl", "pdf", "png", "jpg", "jpeg", "bmp", "tif",
+                        "tiff", "webp", "gif",
                     ],
                 );
             }
@@ -3326,6 +3330,32 @@ impl BeamWrightApp {
                 if matches!(self.editor.tool, Tool::Rect | Tool::Ellipse | Tool::Line) {
                     ui.weak("Shift: square/circle or 45° steps");
                 }
+                if self.editor.tool == Tool::Line {
+                    ui.checkbox(&mut self.line_angle_snap, "Snap 45°")
+                        .on_hover_text("Constrain every line to 45° steps without holding Shift");
+                }
+                if self.editor.tool == Tool::Text {
+                    ui.add(
+                        egui::DragValue::new(&mut self.text_size_mm)
+                            .speed(0.5)
+                            .range(1.0..=500.0)
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text("Font size of new text objects");
+                    ui.label("text size");
+                }
+                match self.editor.tool {
+                    Tool::Bezier => {
+                        ui.weak("Click to add nodes; Enter finishes; Escape cancels");
+                    }
+                    Tool::Measure => {
+                        ui.weak("Drag to measure; Shift constrains the angle");
+                    }
+                    Tool::Pencil => {
+                        ui.weak("Drag to draw; Arrange → Simplify path smooths it");
+                    }
+                    _ => {}
+                }
                 if self.editor.tool == Tool::Star {
                     ui.add(
                         egui::DragValue::new(&mut self.star_points)
@@ -4720,6 +4750,8 @@ impl BeamWrightApp {
                                 | Tool::Text
                                 | Tool::Measure
                                 | Tool::Pencil => {
+                                    let constrain = shift
+                                        || (self.editor.tool == Tool::Line && self.line_angle_snap);
                                     if self.editor.layer_locked(&self.editor.active_layer_id)
                                         || !self.editor.layer_visible(&self.editor.active_layer_id)
                                     {
@@ -4734,7 +4766,7 @@ impl BeamWrightApp {
                                             tool: self.editor.tool,
                                             start: point,
                                             end: point,
-                                            constrain: shift,
+                                            constrain,
                                         });
                                     }
                                 }
@@ -7602,6 +7634,7 @@ impl BeamWrightApp {
                             {
                                 if let Shape::Text(text) = &mut object.shape {
                                     text.font = font;
+                                    text.size = self.text_size_mm.clamp(1.0, 500.0);
                                 }
                             }
                         }

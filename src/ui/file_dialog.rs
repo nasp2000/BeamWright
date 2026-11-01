@@ -100,7 +100,7 @@ impl FileMode {
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::SaveArchive => "Saves .bwpz files with the images inside",
             FileMode::ImportFile => {
-                "Shows .svg, .dxf, .plt, .hpgl, .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
+                "Shows .svg, .dxf, .plt, .hpgl, .pdf, .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
             }
             FileMode::ExportSvg => "Saves .svg files",
             FileMode::ExportDxf => "Saves .dxf files",
@@ -138,6 +138,7 @@ impl FileMode {
                         | "dxf"
                         | "plt"
                         | "hpgl"
+                        | "pdf"
                         | "png"
                         | "jpg"
                         | "jpeg"

@@ -517,6 +517,7 @@ dependencies = [
  "clap",
  "eframe",
  "egui",
+ "flate2",
  "image",
  "kurbo",
  "quick-xml 0.38.4",

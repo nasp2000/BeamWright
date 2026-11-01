@@ -115,6 +115,81 @@ pub fn to_path(contour: &[Point2]) -> Path {
     }
 }
 
+/// Build a closed path where gentle runs use cubic curves and sharp corners
+/// stay straight.
+///
+/// Every contour point is a knot; the control points follow the local tangent,
+/// except at corners (turns wider than `corner_degrees`), where the control
+/// point lies on the edge so the corner is not rounded. This turns the fine
+/// polyline left by the tracer into a small number of curves without moving the
+/// traced outline.
+pub fn to_curved_path(contour: &[Point2], corner_degrees: f64) -> Path {
+    let count = contour.len();
+    if count < 4 {
+        return to_path(contour);
+    }
+    let corner_limit = corner_degrees.max(1.0);
+    let is_corner = |index: usize| {
+        let previous = contour[(index + count - 1) % count];
+        let current = contour[index];
+        let next = contour[(index + 1) % count];
+        let incoming = (current.x - previous.x, current.y - previous.y);
+        let outgoing = (next.x - current.x, next.y - current.y);
+        let dot = incoming.0 * outgoing.0 + incoming.1 * outgoing.1;
+        let cross = incoming.0 * outgoing.1 - incoming.1 * outgoing.0;
+        dot <= 0.0 || cross.abs().atan2(dot).to_degrees() > corner_limit
+    };
+    let tangent = |index: usize| {
+        let current = contour[index];
+        let (dx, dy) = if is_corner(index) {
+            let next = contour[(index + 1) % count];
+            (next.x - current.x, next.y - current.y)
+        } else {
+            let previous = contour[(index + count - 1) % count];
+            let next = contour[(index + 1) % count];
+            (next.x - previous.x, next.y - previous.y)
+        };
+        let length = dx.hypot(dy);
+        if length <= 1e-9 {
+            (0.0, 0.0)
+        } else {
+            (dx / length, dy / length)
+        }
+    };
+    let mut path = Path::new();
+    path.closed = true;
+    for index in 0..count {
+        let from = contour[index];
+        let to = contour[(index + 1) % count];
+        let next = (index + 1) % count;
+        if is_corner(index) && is_corner(next) {
+            path.push(Segment::Line { from, to });
+            continue;
+        }
+        let chord = from.distance(to);
+        if chord <= 1e-9 {
+            continue;
+        }
+        let start_tangent = tangent(index);
+        let end_tangent = tangent(next);
+        let control_1 = Point2::new(
+            from.x + start_tangent.0 * chord / 3.0,
+            from.y + start_tangent.1 * chord / 3.0,
+        );
+        let control_2 = Point2::new(
+            to.x - end_tangent.0 * chord / 3.0,
+            to.y - end_tangent.1 * chord / 3.0,
+        );
+        path.push(Segment::Cubic(crate::geometry::bezier::CubicBezier {
+            p0: from,
+            p1: control_1,
+            p2: control_2,
+            p3: to,
+        }));
+    }
+    path
+}
+
 fn simplify(points: &[Point2], tolerance: f64) -> Vec<Point2> {
     if points.len() <= 3 || tolerance <= 0.0 {
         return points.to_vec();
@@ -169,7 +244,8 @@ fn distance_to_line(point: Point2, a: Point2, b: Point2) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_path, trace};
+    use super::{to_curved_path, to_path, trace};
+    use crate::geometry::{Point2, path::Segment};
     use crate::raster::RasterBitmap;
 
     fn bitmap(width: usize, height: usize, burn: &[bool]) -> RasterBitmap {
@@ -208,6 +284,67 @@ mod tests {
     fn an_empty_bitmap_has_no_contours() {
         let image = bitmap(4, 4, &[false; 16]);
         assert!(trace(&image, 4.0, 4.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn a_square_keeps_its_corners_straight() {
+        let square = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(0.0, 10.0),
+        ];
+        let path = to_curved_path(&square, 40.0);
+        assert!(path.closed);
+        assert_eq!(path.segments.len(), 4);
+        assert!(
+            path.segments
+                .iter()
+                .all(|segment| matches!(segment, Segment::Line { .. }))
+        );
+    }
+
+    #[test]
+    fn a_smooth_circle_becomes_cubic_segments() {
+        let circle: Vec<Point2> = (0..16)
+            .map(|index| {
+                let angle = std::f64::consts::TAU * f64::from(index) / 16.0;
+                Point2::new(10.0 * angle.cos(), 10.0 * angle.sin())
+            })
+            .collect();
+        let path = to_curved_path(&circle, 40.0);
+        assert!(path.closed);
+        assert_eq!(path.segments.len(), 16);
+        assert!(
+            path.segments
+                .iter()
+                .all(|segment| matches!(segment, Segment::Cubic(_)))
+        );
+        // Every knot is preserved exactly.
+        for (index, segment) in path.segments.iter().enumerate() {
+            let Segment::Cubic(curve) = segment else {
+                panic!("expected a cubic");
+            };
+            assert!(curve.p0.distance(circle[index]) < 1e-9);
+            assert!(curve.p3.distance(circle[(index + 1) % 16]) < 1e-9);
+        }
+    }
+
+    #[test]
+    fn short_contours_fall_back_to_lines() {
+        let triangle = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0),
+            Point2::new(5.0, 8.0),
+        ];
+        let path = to_curved_path(&triangle, 40.0);
+        assert!(path.closed);
+        assert_eq!(path.segments.len(), 3);
+        assert!(
+            path.segments
+                .iter()
+                .all(|segment| matches!(segment, Segment::Line { .. }))
+        );
     }
 
     #[test]
