@@ -46,6 +46,7 @@ enum PaletteAction {
     Open,
     Save,
     SaveAs,
+    SaveArchive,
     Undo,
     Redo,
     Cut,
@@ -95,6 +96,7 @@ fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
         (Action::Open, "Open project..."),
         (Action::Save, "Save"),
         (Action::SaveAs, "Save as..."),
+        (Action::SaveArchive, "Save project with images..."),
         (Action::Undo, "Undo"),
         (Action::Redo, "Redo"),
         (Action::Cut, "Cut"),
@@ -1169,6 +1171,7 @@ impl BeamWrightApp {
             FileMode::ImportProfiles | FileMode::ExportProfiles => "profiles.json".to_string(),
             FileMode::ImportMachines | FileMode::ExportMachines => "machines.json".to_string(),
             FileMode::OpenProject | FileMode::SaveProject => format!("{stem}.bwp"),
+            FileMode::SaveArchive => format!("{stem}.bwpz"),
         };
         let default_directory = self.preferences.general.default_directory.trim();
         let start = self.current_path.clone().or_else(|| {
@@ -1191,7 +1194,7 @@ impl BeamWrightApp {
         }
         match mode {
             FileMode::OpenProject => {
-                builder = builder.add_filter("BeamWright or SVG", &["bwp", "svg"]);
+                builder = builder.add_filter("BeamWright, archive or SVG", &["bwp", "bwpz", "svg"]);
             }
             FileMode::ImportFile => {
                 builder = builder.add_filter(
@@ -1221,6 +1224,9 @@ impl BeamWrightApp {
             | FileMode::ImportProfiles
             | FileMode::ImportMachines => builder = builder.add_filter("JSON", &["json"]),
             FileMode::SaveProject => builder = builder.add_filter("BeamWright", &["bwp"]),
+            FileMode::SaveArchive => {
+                builder = builder.add_filter("BeamWright archive", &["bwpz"]);
+            }
         }
         let chosen = match mode {
             FileMode::OpenProject
@@ -1308,6 +1314,7 @@ impl BeamWrightApp {
                 Err(error) => self.status = format!("Machine export failed: {error}"),
             },
             FileMode::SaveProject => self.save_to(path),
+            FileMode::SaveArchive => self.save_archive(path),
             FileMode::ExportPng
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
@@ -1915,7 +1922,9 @@ impl BeamWrightApp {
         let is_project = path
             .extension()
             .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("bwp"));
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("bwp") || value.eq_ignore_ascii_case("bwpz")
+            });
         if !is_project {
             if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
                 document.name = stem.to_string();
@@ -1976,6 +1985,32 @@ impl BeamWrightApp {
                 self.toast(self.status.clone());
             }
             Err(error) => self.status = format!("Save failed: {error}"),
+        }
+    }
+
+    fn save_archive(&mut self, path: &Path) {
+        match crate::project_archive::write_archive(&self.editor.document, path) {
+            Ok(report) => {
+                self.status = format!(
+                    "Saved archive {} with {} image(s)",
+                    path.display(),
+                    report.images
+                );
+                self.toast(self.status.clone());
+                if !report.missing.is_empty() {
+                    let message = format!(
+                        "{} image(s) could not be embedded: {}",
+                        report.missing.len(),
+                        report.missing.join(", ")
+                    );
+                    self.status = format!("{}; {message}", self.status);
+                    self.toast_error(message);
+                }
+            }
+            Err(error) => {
+                self.status = format!("Archive failed: {error}");
+                self.toast_error(self.status.clone());
+            }
         }
     }
 
@@ -2228,6 +2263,10 @@ impl BeamWrightApp {
                     }
                     if icons::button(ui, Icon::Save, "Save as...").clicked() {
                         self.open_dialog(FileMode::SaveProject);
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Save, "Save project with images...").clicked() {
+                        self.open_dialog(FileMode::SaveArchive);
                         ui.close();
                     }
                     ui.separator();
@@ -8532,6 +8571,7 @@ impl BeamWrightApp {
             Action::Open => self.request(PendingAction::Open),
             Action::Save => self.save(),
             Action::SaveAs => self.open_dialog(FileMode::SaveProject),
+            Action::SaveArchive => self.open_dialog(FileMode::SaveArchive),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::Cut => self.cut(),

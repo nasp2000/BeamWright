@@ -29,6 +29,7 @@ pub mod mcp_http;
 pub mod objects;
 pub mod operations;
 pub mod profiles;
+pub mod project_archive;
 pub mod raster;
 pub mod regmarks;
 pub mod report;

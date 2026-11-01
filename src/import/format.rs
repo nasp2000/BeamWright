@@ -15,6 +15,7 @@ pub fn detect_format(path: &Path) -> &'static str {
         Some("dxf") => "dxf",
         Some("png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff") => "raster",
         Some("bwp") => "bwp",
+        Some("bwpz") => "archive",
         _ => "unknown",
     }
 }
@@ -67,13 +68,22 @@ pub fn import_with_report_cancellable(
                 warnings: note.into_iter().collect(),
             }
         }
+        "archive" => {
+            let directory = crate::project_archive::image_directory(path);
+            let document = crate::project_archive::read_archive(path, &directory)
+                .map_err(BeamError::InvalidInput)?;
+            ImportOutcome {
+                document,
+                warnings: Vec::new(),
+            }
+        }
         "raster" => ImportOutcome {
             document: crate::import::raster::import_raster_with_limit(path, max_pixels)?,
             warnings: Vec::new(),
         },
         other => {
             return Err(BeamError::Unsupported(format!(
-                "cannot import '{other}' files; supported formats: .svg, .dxf, raster images and .bwp"
+                "cannot import '{other}' files; supported formats: .svg, .dxf, raster images, .bwp and .bwpz"
             )));
         }
     };

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 pub enum FileMode {
     OpenProject,
     SaveProject,
+    SaveArchive,
     ImportFile,
     ExportSvg,
     ExportDxf,
@@ -24,6 +25,7 @@ impl FileMode {
         match self {
             FileMode::OpenProject => "Open project or SVG",
             FileMode::SaveProject => "Save project",
+            FileMode::SaveArchive => "Save project with images",
             FileMode::ImportFile => "Import SVG, DXF or image",
             FileMode::ExportSvg => "Export SVG",
             FileMode::ExportDxf => "Export DXF",
@@ -43,7 +45,7 @@ impl FileMode {
     fn action_label(self) -> &'static str {
         match self {
             FileMode::OpenProject | FileMode::ImportFile | FileMode::PreviewGcode => "Open",
-            FileMode::SaveProject => "Save",
+            FileMode::SaveProject | FileMode::SaveArchive => "Save",
             FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
@@ -60,6 +62,7 @@ impl FileMode {
     fn default_extension(self) -> &'static str {
         match self {
             FileMode::SaveProject => "bwp",
+            FileMode::SaveArchive => "bwpz",
             FileMode::ExportGcode | FileMode::PreviewGcode => "nc",
             FileMode::ExportDxf => "dxf",
             FileMode::ExportHpgl => "plt",
@@ -80,6 +83,7 @@ impl FileMode {
             FileMode::ImportProfiles | FileMode::ExportProfiles => "Shows .json profile libraries",
             FileMode::ImportMachines | FileMode::ExportMachines => "Shows .json machine libraries",
             FileMode::SaveProject => "Saves .bwp files",
+            FileMode::SaveArchive => "Saves .bwpz files with the images inside",
             FileMode::ImportFile => {
                 "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif and .tiff files"
             }
@@ -104,8 +108,11 @@ impl FileMode {
         };
         let extension = extension.to_ascii_lowercase();
         match self {
-            FileMode::OpenProject => extension == "bwp" || extension == "svg",
+            FileMode::OpenProject => {
+                extension == "bwp" || extension == "bwpz" || extension == "svg"
+            }
             FileMode::SaveProject => extension == "bwp",
+            FileMode::SaveArchive => extension == "bwpz",
             FileMode::ImportFile => {
                 matches!(
                     extension.as_str(),
@@ -356,6 +363,7 @@ impl FileDialog {
                 }
             }
             FileMode::SaveProject
+            | FileMode::SaveArchive
             | FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
