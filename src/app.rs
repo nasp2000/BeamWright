@@ -705,12 +705,13 @@ fn profile_meta_editor(
 }
 
 struct ImagePreview {
+    /// Black burns on white paper, used by the canvas and the normal preview.
     texture: egui::TextureHandle,
+    /// The same preview in the burn-map palette, used only by Adjust image.
+    burn_texture: egui::TextureHandle,
     path: String,
     settings: crate::objects::ImageSettings,
     crop: Option<crate::objects::ImageCrop>,
-    /// The preview was built with the burn map palette instead of black/white.
-    burn_map: bool,
 }
 
 impl Default for BeamWrightApp {
@@ -6127,10 +6128,13 @@ impl BeamWrightApp {
         let mut target_dpi = self.image_target_dpi;
         let mut target_width_mm = self.image_target_width_mm;
         let original_texture = self.original_image_texture(ctx, &image);
-        let processed_texture = self
-            .image_previews
-            .get(&id)
-            .map(|preview| preview.texture.clone());
+        let processed_texture = self.image_previews.get(&id).map(|preview| {
+            if burn_map {
+                preview.burn_texture.clone()
+            } else {
+                preview.texture.clone()
+            }
+        });
 
         let mut close = false;
         let mut cancel = false;
@@ -6570,7 +6574,6 @@ impl BeamWrightApp {
                     && preview.path == image.path
                     && preview.settings == image.settings
                     && preview.crop == image.crop
-                    && preview.burn_map == self.image_burn_map
             })
         });
         for (id, image) in needed {
@@ -6585,24 +6588,24 @@ impl BeamWrightApp {
             let path = image.path.clone();
             let settings = image.settings;
             let crop = image.crop;
-            let burn_map = self.image_burn_map;
-            let color = preview_color_image(&bitmap, burn_map);
             let texture = ctx.load_texture(
-                format!(
-                    "image-preview-{id}{}",
-                    if burn_map { "-burn-map" } else { "" }
-                ),
-                color,
+                format!("image-preview-{id}"),
+                preview_color_image(&bitmap, false),
+                egui::TextureOptions::NEAREST,
+            );
+            let burn_texture = ctx.load_texture(
+                format!("image-preview-{id}-burn-map"),
+                preview_color_image(&bitmap, true),
                 egui::TextureOptions::NEAREST,
             );
             self.image_previews.insert(
                 id,
                 ImagePreview {
                     texture,
+                    burn_texture,
                     path,
                     settings,
                     crop,
-                    burn_map,
                 },
             );
         }
