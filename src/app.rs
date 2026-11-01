@@ -1452,7 +1452,12 @@ impl BeamWrightApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .max_height(520.0)
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("document_properties_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 egui::Grid::new("document_properties_window")
                     .num_columns(2)
                     .spacing([12.0, 4.0])
@@ -1674,6 +1679,7 @@ impl BeamWrightApp {
                     );
                     changed = true;
                 }
+                    });
             });
         if changed {
             self.needs_fit = true;
@@ -1699,33 +1705,43 @@ impl BeamWrightApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(520.0)
+            .default_size([560.0, 340.0])
+            .max_height(480.0)
             .show(ctx, |ui| {
                 if self.editor.document.operations.is_empty() {
                     ui.weak("No operations yet.");
                     return;
                 }
-                egui::Grid::new("operations_compare")
-                    .num_columns(7)
-                    .striped(true)
-                    .spacing([10.0, 4.0])
+                egui::ScrollArea::both()
+                    .id_salt("operations_compare_scroll")
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for heading in [
-                            "Name", "Type", "Speed", "Power", "Passes", "Interval", "Enabled",
-                        ] {
-                            ui.strong(heading);
-                        }
-                        ui.end_row();
-                        for operation in &self.editor.document.operations {
-                            ui.label(&operation.name);
-                            ui.label(operation.op_type.label());
-                            ui.label(format!("{:.0} mm/min", operation.params.speed));
-                            ui.label(format!("{:.0} %", operation.params.power));
-                            ui.label(operation.params.passes.to_string());
-                            ui.label(format!("{:.2} mm", operation.params.line_interval_mm));
-                            ui.label(if operation.enabled { "yes" } else { "no" });
-                            ui.end_row();
-                        }
+                        egui::Grid::new("operations_compare")
+                            .num_columns(7)
+                            .striped(true)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                for heading in [
+                                    "Name", "Type", "Speed", "Power", "Passes", "Interval",
+                                    "Enabled",
+                                ] {
+                                    ui.strong(heading);
+                                }
+                                ui.end_row();
+                                for operation in &self.editor.document.operations {
+                                    ui.label(&operation.name);
+                                    ui.label(operation.op_type.label());
+                                    ui.label(format!("{:.0} mm/min", operation.params.speed));
+                                    ui.label(format!("{:.0} %", operation.params.power));
+                                    ui.label(operation.params.passes.to_string());
+                                    ui.label(format!(
+                                        "{:.2} mm",
+                                        operation.params.line_interval_mm
+                                    ));
+                                    ui.label(if operation.enabled { "yes" } else { "no" });
+                                    ui.end_row();
+                                }
+                            });
                     });
             });
         self.operations_compare_open = open;
@@ -5737,6 +5753,7 @@ impl BeamWrightApp {
             .collapsible(false)
             .resizable(true)
             .default_size([760.0, 560.0])
+            .max_height(640.0)
             .show(ctx, |ui| {
                 ui.label("One row per cut. Output controls the job, Show controls the preview, Air emits M8/M9.");
                 ui.horizontal(|ui| {
@@ -6224,7 +6241,8 @@ impl BeamWrightApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(520.0)
+            .default_size([560.0, 440.0])
+            .max_height(560.0)
             .show(ctx, |ui| {
                 ui.label(
                     "Work areas used to prepare projects. No connection or controller settings are stored.",
@@ -6244,6 +6262,10 @@ impl BeamWrightApp {
                 });
                 ui.separator();
                 let machines = self.machines.machines.clone();
+                egui::ScrollArea::vertical()
+                    .id_salt("machines_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.heading("Saved");
@@ -6381,6 +6403,7 @@ impl BeamWrightApp {
                         });
                     });
                 });
+                    });
             });
         self.machines_open = open;
     }
@@ -6686,7 +6709,8 @@ impl BeamWrightApp {
             .default_pos(ctx.content_rect().center())
             .collapsible(false)
             .resizable(true)
-            .default_width(900.0)
+            .default_size([880.0, 600.0])
+            .max_height(640.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
@@ -6694,7 +6718,7 @@ impl BeamWrightApp {
                         if let Some(texture) = &original_texture {
                             ui.add(
                                 egui::Image::new(texture)
-                                    .max_size(egui::vec2(410.0, 300.0))
+                                    .max_size(egui::vec2(320.0, 220.0))
                                     .shrink_to_fit(),
                             );
                         } else {
@@ -6712,7 +6736,7 @@ impl BeamWrightApp {
                         {
                             ui.add(
                                 egui::Image::new(texture)
-                                    .max_size(egui::vec2(410.0, 300.0))
+                                    .max_size(egui::vec2(320.0, 220.0))
                                     .shrink_to_fit(),
                             );
                         } else {
@@ -6732,255 +6756,280 @@ impl BeamWrightApp {
                     });
                 });
                 ui.separator();
-                ui.horizontal(|ui| {
-                    egui::Grid::new("image_target_resolution")
-                        .num_columns(2)
-                        .spacing([12.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("Target DPI");
-                            ui.add(
-                                egui::DragValue::new(&mut target_dpi)
-                                    .speed(1.0)
-                                    .range(50.0..=1000.0)
-                                    .fixed_decimals(0),
-                            );
-                            ui.end_row();
-                            ui.label("Target width (mm)");
-                            ui.add(
-                                egui::DragValue::new(&mut target_width_mm)
-                                    .speed(0.5)
-                                    .range(1.0..=10000.0)
-                                    .fixed_decimals(1)
-                                    .suffix(" mm"),
-                            );
-                            ui.end_row();
-                        });
-                    let current_px = image.effective_size_px().0;
-                    match crate::objects::target_resolution(target_width_mm, target_dpi, current_px)
-                    {
-                        Some(target) => {
-                            ui.weak(format!(
+                egui::ScrollArea::vertical()
+                    .id_salt("image_adjust_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            egui::Grid::new("image_target_resolution")
+                                .num_columns(2)
+                                .spacing([12.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("Target DPI");
+                                    ui.add(
+                                        egui::DragValue::new(&mut target_dpi)
+                                            .speed(1.0)
+                                            .range(50.0..=1000.0)
+                                            .fixed_decimals(0),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Target width (mm)");
+                                    ui.add(
+                                        egui::DragValue::new(&mut target_width_mm)
+                                            .speed(0.5)
+                                            .range(1.0..=10000.0)
+                                            .fixed_decimals(1)
+                                            .suffix(" mm"),
+                                    );
+                                    ui.end_row();
+                                });
+                            let current_px = image.effective_size_px().0;
+                            match crate::objects::target_resolution(
+                                target_width_mm,
+                                target_dpi,
+                                current_px,
+                            ) {
+                                Some(target) => {
+                                    ui.weak(format!(
                                 "Needs {} px wide; the current {} px reach {:.0} dpi at {:.1} mm",
                                 target.required_width_px,
                                 current_px,
                                 target.effective_dpi,
                                 target_width_mm
                             ));
-                            if target.low_resolution {
-                                let warning = ui.visuals().warn_fg_color;
-                                ui.colored_label(
-                                    warning,
-                                    format!(
-                                        "Below {:.0} dpi: detail may be lost.",
-                                        crate::objects::LOW_DPI_THRESHOLD
-                                    ),
-                                );
-                            }
-                        }
-                        None => {
-                            ui.weak("Enter a positive width and DPI");
-                        }
-                    }
-                });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    egui::Grid::new("image_adjust_layers")
-                        .num_columns(2)
-                        .spacing([12.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("Image mode");
-                            let mut mode = image.settings.mode;
-                            egui::ComboBox::from_id_salt("image_adjust_mode")
-                                .selected_text(mode.label())
-                                .show_ui(ui, |ui| {
-                                    for candidate in crate::objects::ImageMode::all() {
-                                        ui.selectable_value(
-                                            &mut mode,
-                                            candidate,
-                                            candidate.label(),
+                                    if target.low_resolution {
+                                        let warning = ui.visuals().warn_fg_color;
+                                        ui.colored_label(
+                                            warning,
+                                            format!(
+                                                "Below {:.0} dpi: detail may be lost.",
+                                                crate::objects::LOW_DPI_THRESHOLD
+                                            ),
                                         );
                                     }
-                                });
-                            image.settings.mode = mode;
-                            ui.end_row();
-                            ui.label("Negative image");
-                            ui.checkbox(&mut image.settings.invert, "");
-                            ui.end_row();
-                            ui.label("Cells per inch");
-                            ui.weak(format!(
-                                "{:.1}",
-                                25.4 / image.settings.line_interval_mm.max(0.001)
-                            ));
-                            ui.end_row();
-                            ui.label("Line interval (mm)");
-                            ui.add(
-                                egui::DragValue::new(&mut image.settings.line_interval_mm)
-                                    .speed(0.01)
-                                    .range(0.01..=2.0),
-                            );
-                            ui.end_row();
-                            ui.label("Halftone angle");
-                            ui.add(
-                                egui::DragValue::new(&mut image.settings.halftone_angle_degrees)
-                                    .speed(0.5)
-                                    .range(-360.0..=360.0)
-                                    .suffix(" deg"),
-                            );
-                            ui.end_row();
-                            ui.label("DPI");
-                            ui.weak(format!("{:.0}", image.effective_dpi()));
-                            ui.end_row();
-                        });
-                    ui.separator();
-                    egui::Grid::new("image_adjust_settings")
-                        .num_columns(2)
-                        .spacing([12.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("Contrast");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.contrast, 0.25..=3.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                            ui.label("Brightness");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.brightness, -100..=100)
-                                    .fixed_decimals(0),
-                            );
-                            ui.end_row();
-                            ui.label("Shadows");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.shadow_lift, -1.0..=1.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                            ui.label("Midtones");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.midtone_shift, -1.0..=1.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                            ui.label("Highlights");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.highlight_lift, -1.0..=1.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                            ui.label("Tone curve");
-                            if ui.button("Reset curve").clicked() {
-                                image.settings.shadow_lift = 0.0;
-                                image.settings.midtone_shift = 0.0;
-                                image.settings.highlight_lift = 0.0;
-                            }
-                            ui.end_row();
-                            ui.label("Gamma");
-                            ui.add(
-                                egui::Slider::new(&mut image.settings.gamma, 0.2..=3.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                            ui.label("Enhance radius");
-                            ui.add(
-                                egui::DragValue::new(&mut image.settings.enhance_radius_px)
-                                    .range(0..=32)
-                                    .suffix(" px"),
-                            );
-                            ui.end_row();
-                            ui.label("Black / white clip");
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut image.settings.black_clip)
-                                        .range(0..=254),
-                                );
-                                ui.add(
-                                    egui::DragValue::new(&mut image.settings.white_clip)
-                                        .range(1..=255),
-                                );
-                            });
-                            ui.end_row();
-                            ui.label("Enhance amount");
-                            ui.add(
-                                egui::DragValue::new(&mut image.settings.enhance_amount)
-                                    .speed(0.05)
-                                    .range(0.0..=5.0)
-                                    .fixed_decimals(2),
-                            );
-                            ui.end_row();
-                        });
-                });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("image_adjust_presets")
-                        .selected_text("Presets")
-                        .width(180.0)
-                        .show_ui(ui, |ui| {
-                            for profile in &self.profiles.images {
-                                if ui.selectable_label(false, &profile.name).clicked() {
-                                    preset = Some(profile.settings);
+                                }
+                                None => {
+                                    ui.weak("Enter a positive width and DPI");
                                 }
                             }
                         });
-                    if ui.button("Reset all").clicked() {
-                        reset = true;
-                    }
-                    if ui.button("Export prepared PNG").clicked() {
-                        export_prepared = true;
-                    }
-                    if ui.button("Test grid...").clicked() {
-                        open_test_grid = true;
-                    }
-                    if ui.button("Apply to selected images").clicked() {
-                        apply_all = true;
-                    }
-                    ui.checkbox(&mut compare, "Compare with original");
-                    if ui.button("Photo").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::Jarvis,
-                            contrast: 1.15,
-                            gamma: 0.9,
-                            enhance_radius_px: 1,
-                            enhance_amount: 0.6,
-                            ..crate::objects::ImageSettings::default()
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            egui::Grid::new("image_adjust_layers")
+                                .num_columns(2)
+                                .spacing([12.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("Image mode");
+                                    let mut mode = image.settings.mode;
+                                    egui::ComboBox::from_id_salt("image_adjust_mode")
+                                        .selected_text(mode.label())
+                                        .show_ui(ui, |ui| {
+                                            for candidate in crate::objects::ImageMode::all() {
+                                                ui.selectable_value(
+                                                    &mut mode,
+                                                    candidate,
+                                                    candidate.label(),
+                                                );
+                                            }
+                                        });
+                                    image.settings.mode = mode;
+                                    ui.end_row();
+                                    ui.label("Negative image");
+                                    ui.checkbox(&mut image.settings.invert, "");
+                                    ui.end_row();
+                                    ui.label("Cells per inch");
+                                    ui.weak(format!(
+                                        "{:.1}",
+                                        25.4 / image.settings.line_interval_mm.max(0.001)
+                                    ));
+                                    ui.end_row();
+                                    ui.label("Line interval (mm)");
+                                    ui.add(
+                                        egui::DragValue::new(&mut image.settings.line_interval_mm)
+                                            .speed(0.01)
+                                            .range(0.01..=2.0),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Halftone angle");
+                                    ui.add(
+                                        egui::DragValue::new(
+                                            &mut image.settings.halftone_angle_degrees,
+                                        )
+                                        .speed(0.5)
+                                        .range(-360.0..=360.0)
+                                        .suffix(" deg"),
+                                    );
+                                    ui.end_row();
+                                    ui.label("DPI");
+                                    ui.weak(format!("{:.0}", image.effective_dpi()));
+                                    ui.end_row();
+                                });
+                            ui.separator();
+                            egui::Grid::new("image_adjust_settings")
+                                .num_columns(2)
+                                .spacing([12.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("Contrast");
+                                    ui.add(
+                                        egui::Slider::new(&mut image.settings.contrast, 0.25..=3.0)
+                                            .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Brightness");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut image.settings.brightness,
+                                            -100..=100,
+                                        )
+                                        .fixed_decimals(0),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Shadows");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut image.settings.shadow_lift,
+                                            -1.0..=1.0,
+                                        )
+                                        .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Midtones");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut image.settings.midtone_shift,
+                                            -1.0..=1.0,
+                                        )
+                                        .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Highlights");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut image.settings.highlight_lift,
+                                            -1.0..=1.0,
+                                        )
+                                        .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Tone curve");
+                                    if ui.button("Reset curve").clicked() {
+                                        image.settings.shadow_lift = 0.0;
+                                        image.settings.midtone_shift = 0.0;
+                                        image.settings.highlight_lift = 0.0;
+                                    }
+                                    ui.end_row();
+                                    ui.label("Gamma");
+                                    ui.add(
+                                        egui::Slider::new(&mut image.settings.gamma, 0.2..=3.0)
+                                            .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Enhance radius");
+                                    ui.add(
+                                        egui::DragValue::new(&mut image.settings.enhance_radius_px)
+                                            .range(0..=32)
+                                            .suffix(" px"),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Black / white clip");
+                                    ui.horizontal(|ui| {
+                                        ui.add(
+                                            egui::DragValue::new(&mut image.settings.black_clip)
+                                                .range(0..=254),
+                                        );
+                                        ui.add(
+                                            egui::DragValue::new(&mut image.settings.white_clip)
+                                                .range(1..=255),
+                                        );
+                                    });
+                                    ui.end_row();
+                                    ui.label("Enhance amount");
+                                    ui.add(
+                                        egui::DragValue::new(&mut image.settings.enhance_amount)
+                                            .speed(0.05)
+                                            .range(0.0..=5.0)
+                                            .fixed_decimals(2),
+                                    );
+                                    ui.end_row();
+                                });
                         });
-                    }
-                    if ui.button("Wood").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::Stucki,
-                            contrast: 1.25,
-                            gamma: 1.1,
-                            ..crate::objects::ImageSettings::default()
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("image_adjust_presets")
+                                .selected_text("Presets")
+                                .width(180.0)
+                                .show_ui(ui, |ui| {
+                                    for profile in &self.profiles.images {
+                                        if ui.selectable_label(false, &profile.name).clicked() {
+                                            preset = Some(profile.settings);
+                                        }
+                                    }
+                                });
+                            if ui.button("Reset all").clicked() {
+                                reset = true;
+                            }
+                            if ui.button("Export prepared PNG").clicked() {
+                                export_prepared = true;
+                            }
+                            if ui.button("Test grid...").clicked() {
+                                open_test_grid = true;
+                            }
+                            if ui.button("Apply to selected images").clicked() {
+                                apply_all = true;
+                            }
+                            ui.checkbox(&mut compare, "Compare with original");
+                            if ui.button("Photo").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::Jarvis,
+                                    contrast: 1.15,
+                                    gamma: 0.9,
+                                    enhance_radius_px: 1,
+                                    enhance_amount: 0.6,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
+                            if ui.button("Wood").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::Stucki,
+                                    contrast: 1.25,
+                                    gamma: 1.1,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
+                            if ui.button("Metal").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::Atkinson,
+                                    contrast: 1.4,
+                                    gamma: 1.2,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
+                            if ui.button("Acrylic").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::FloydSteinberg,
+                                    contrast: 1.1,
+                                    gamma: 0.95,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
+                            if ui.button("Newsprint").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::Newsprint,
+                                    contrast: 1.2,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
+                            if ui.button("Sketch").clicked() {
+                                preset = Some(crate::objects::ImageSettings {
+                                    mode: crate::objects::ImageMode::Sketch,
+                                    contrast: 1.3,
+                                    ..crate::objects::ImageSettings::default()
+                                });
+                            }
                         });
-                    }
-                    if ui.button("Metal").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::Atkinson,
-                            contrast: 1.4,
-                            gamma: 1.2,
-                            ..crate::objects::ImageSettings::default()
-                        });
-                    }
-                    if ui.button("Acrylic").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::FloydSteinberg,
-                            contrast: 1.1,
-                            gamma: 0.95,
-                            ..crate::objects::ImageSettings::default()
-                        });
-                    }
-                    if ui.button("Newsprint").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::Newsprint,
-                            contrast: 1.2,
-                            ..crate::objects::ImageSettings::default()
-                        });
-                    }
-                    if ui.button("Sketch").clicked() {
-                        preset = Some(crate::objects::ImageSettings {
-                            mode: crate::objects::ImageMode::Sketch,
-                            contrast: 1.3,
-                            ..crate::objects::ImageSettings::default()
-                        });
-                    }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("OK").clicked() {
                             close = true;
@@ -9685,7 +9734,8 @@ impl BeamWrightApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .open(&mut open)
-            .default_size([560.0, 520.0])
+            .default_size([560.0, 460.0])
+            .max_height(560.0)
             .show(ctx, |ui| {
                 ui.label(
                     "Values are reference starting points, not guarantees. Test on your own material.",
@@ -9736,6 +9786,10 @@ impl BeamWrightApp {
                     sort_by_date: self.profile_sort_by_date,
                 };
                 ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("profiles_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.heading("Materials");
                 let materials = profile_rows(
                     &self.profiles.materials,
@@ -10387,6 +10441,7 @@ impl BeamWrightApp {
                 if !self.profile_message.is_empty() {
                     ui.weak(&self.profile_message);
                 }
+                    });
             });
         self.profiles_open = open;
         if changed {
