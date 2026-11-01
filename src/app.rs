@@ -4741,6 +4741,35 @@ impl BeamWrightApp {
                 };
                 paint_canvas(&painter, rect, &self.editor, theme, preview, &overlays);
 
+                if let Some(text) = drag_measurement(self.drag.as_ref()) {
+                    if let Some(DragState::Draw { end, .. } | DragState::Marquee { end, .. }) =
+                        self.drag.as_ref()
+                    {
+                        let anchor = crate::editor::renderer::screen_pos(rect, &self.editor, *end);
+                        let anchor = egui::pos2(anchor.x + 14.0, anchor.y - 14.0);
+                        let font = egui::FontId::monospace(12.0);
+                        let galley = painter.layout_no_wrap(
+                            text,
+                            font,
+                            egui::Color32::from_rgb(235, 235, 235),
+                        );
+                        let box_rect = egui::Rect::from_min_size(
+                            egui::pos2(anchor.x - 5.0, anchor.y - galley.size().y - 3.0),
+                            galley.size() + egui::vec2(10.0, 6.0),
+                        );
+                        painter.rect_filled(
+                            box_rect,
+                            4.0,
+                            egui::Color32::from_rgba_unmultiplied(20, 22, 25, 220),
+                        );
+                        painter.galley(
+                            egui::pos2(anchor.x, anchor.y - galley.size().y),
+                            galley,
+                            egui::Color32::from_rgb(235, 235, 235),
+                        );
+                    }
+                }
+
                 if pointer_in_canvas {
                     let cursor = match self.editor.tool {
                         Tool::Pan => egui::CursorIcon::Grab,
@@ -10150,6 +10179,34 @@ impl eframe::App for BeamWrightApp {
 }
 
 /// Font picker shared by the text properties and the preferences window.
+/// Live values shown next to the cursor while drawing or measuring.
+fn drag_measurement(drag: Option<&DragState>) -> Option<String> {
+    match drag? {
+        DragState::Draw {
+            tool, start, end, ..
+        } => match tool {
+            Tool::Measure | Tool::Line => {
+                let distance = start.distance(*end);
+                let angle = (end.y - start.y).atan2(end.x - start.x).to_degrees();
+                Some(format!("{distance:.2} mm   {angle:.1}°"))
+            }
+            Tool::Rect | Tool::Ellipse => Some(format!(
+                "{:.2} × {:.2} mm",
+                (end.x - start.x).abs(),
+                (end.y - start.y).abs()
+            )),
+            Tool::Polygon | Tool::Star => Some(format!("r {:.2} mm", start.distance(*end))),
+            _ => None,
+        },
+        DragState::Marquee { start, end, .. } => Some(format!(
+            "{:.2} × {:.2} mm",
+            (end.x - start.x).abs(),
+            (end.y - start.y).abs()
+        )),
+        _ => None,
+    }
+}
+
 fn format_seconds(seconds: f64) -> String {
     let total = seconds.round().max(0.0) as u64;
     format!("{}:{:02}", total / 60, total % 60)
@@ -10345,6 +10402,52 @@ mod tests {
             burn_image.pixels[0],
             egui::Color32::from_rgb(0xFF, 0x7A, 0x1A)
         );
+    }
+
+    #[test]
+    fn the_measurement_hud_formats_draw_and_marquee_values() {
+        let measure = DragState::Draw {
+            tool: Tool::Measure,
+            start: Point2::new(0.0, 0.0),
+            end: Point2::new(3.0, 4.0),
+            constrain: false,
+        };
+        let text = drag_measurement(Some(&measure)).unwrap();
+        assert!(text.contains("5.00 mm"), "{text}");
+        assert!(text.contains("53.1"), "{text}");
+
+        let rectangle = DragState::Draw {
+            tool: Tool::Rect,
+            start: Point2::new(10.0, 5.0),
+            end: Point2::new(0.0, 0.0),
+            constrain: false,
+        };
+        assert_eq!(
+            drag_measurement(Some(&rectangle)).unwrap(),
+            "10.00 × 5.00 mm"
+        );
+
+        let polygon = DragState::Draw {
+            tool: Tool::Polygon,
+            start: Point2::new(0.0, 0.0),
+            end: Point2::new(0.0, 2.5),
+            constrain: false,
+        };
+        assert_eq!(drag_measurement(Some(&polygon)).unwrap(), "r 2.50 mm");
+
+        let marquee = DragState::Marquee {
+            start: Point2::new(0.0, 0.0),
+            end: Point2::new(2.0, 1.5),
+            additive: false,
+        };
+        assert_eq!(drag_measurement(Some(&marquee)).unwrap(), "2.00 × 1.50 mm");
+
+        assert!(drag_measurement(None).is_none());
+        let moving = DragState::Move {
+            last: Point2::new(1.0, 1.0),
+            recorded: true,
+        };
+        assert!(drag_measurement(Some(&moving)).is_none());
     }
 
     #[test]
