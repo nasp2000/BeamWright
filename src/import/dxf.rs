@@ -11,13 +11,14 @@ pub struct DxfImport {
 }
 
 /// Supported entity types.
-const SUPPORTED: [&str; 4] = ["LINE", "CIRCLE", "ARC", "LWPOLYLINE"];
+const SUPPORTED: [&str; 6] = ["LINE", "CIRCLE", "ARC", "LWPOLYLINE", "ELLIPSE", "SPLINE"];
 
 /// Import a DXF document into the native model.
 ///
-/// Supported entities: `LINE`, `CIRCLE`, `ARC` and `LWPOLYLINE`. Layer names and
-/// entity colours are preserved when present. Other entity types are skipped and
-/// reported in [`DxfImport::warnings`]; see `docs/formats.md`.
+/// Supported entities: `LINE`, `CIRCLE`, `ARC`, `LWPOLYLINE`, `ELLIPSE` and
+/// `SPLINE` (sampled as a B-spline). Layer names and entity colours are preserved
+/// when present. Other entity types are skipped and reported in
+/// [`DxfImport::warnings`]; see `docs/formats.md`.
 pub fn import_dxf(src: &str) -> Result<Document> {
     Ok(import_dxf_report(src)?.document)
 }
@@ -53,7 +54,9 @@ pub fn import_dxf_report(src: &str) -> Result<DxfImport> {
             "SECTION" | "ENDSEC" | "EOF" | "TABLE" | "ENDTAB" | "BLOCK" | "ENDBLK"
         ) {
             if SUPPORTED.contains(&entity_type.as_str()) {
-                if let Some(object) = entity_to_object(&entity_type, fields, &mut document) {
+                if let Some(object) =
+                    entity_to_object(&entity_type, fields, &mut document, &mut warnings)
+                {
                     document.objects.push(object);
                 } else {
                     warnings.push(format!(
@@ -72,10 +75,12 @@ pub fn import_dxf_report(src: &str) -> Result<DxfImport> {
     Ok(DxfImport { document, warnings })
 }
 
+#[allow(clippy::too_many_lines)]
 fn entity_to_object(
     entity_type: &str,
     fields: &[(i32, String)],
     document: &mut Document,
+    warnings: &mut Vec<String>,
 ) -> Option<Object> {
     let layer_id = layer_for(fields, document);
     let object = match entity_type {
@@ -131,9 +136,162 @@ fn entity_to_object(
             }
             Object::new(layer_id, Shape::Path(Path::from_points(&vertices, closed)))
         }
+        "ELLIPSE" => {
+            let centre = Point2::new(number(fields, 10)?, number(fields, 20)?);
+            let major = Point2::new(number(fields, 11)?, number(fields, 21)?);
+            let ratio = number(fields, 40).unwrap_or(1.0).abs();
+            if major.x.hypot(major.y) <= 1e-9 || ratio <= 1e-9 {
+                return None;
+            }
+            let start = number(fields, 41).unwrap_or(0.0);
+            let mut end = number(fields, 42).unwrap_or(std::f64::consts::TAU);
+            if (end - start).abs() < 1e-9 {
+                end = start + std::f64::consts::TAU;
+            }
+            let sweep = end - start;
+            let closed = (sweep.abs() - std::f64::consts::TAU).abs() < 1e-6;
+            let minor = Point2::new(-major.y * ratio, major.x * ratio);
+            let steps = ((sweep.abs() / std::f64::consts::TAU) * 64.0)
+                .ceil()
+                .max(8.0);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let steps = steps as usize;
+            let mut points = Vec::with_capacity(steps + 1);
+            for step in 0..=steps {
+                #[allow(clippy::cast_precision_loss)]
+                let t = start + sweep * step as f64 / steps as f64;
+                points.push((
+                    centre.x + major.x * t.cos() + minor.x * t.sin(),
+                    centre.y + major.y * t.cos() + minor.y * t.sin(),
+                ));
+            }
+            if closed && points.len() > 1 {
+                points.pop();
+            }
+            Object::new(layer_id, Shape::Path(Path::from_points(&points, closed)))
+        }
+        "SPLINE" => {
+            let xs: Vec<f64> = fields
+                .iter()
+                .filter(|(code, _)| *code == 10)
+                .filter_map(|(_, value)| value.trim().parse().ok())
+                .collect();
+            let ys: Vec<f64> = fields
+                .iter()
+                .filter(|(code, _)| *code == 20)
+                .filter_map(|(_, value)| value.trim().parse().ok())
+                .collect();
+            let control: Vec<Point2> = xs
+                .iter()
+                .zip(&ys)
+                .map(|(x, y)| Point2::new(*x, *y))
+                .collect();
+            if control.len() < 2 {
+                return None;
+            }
+            let degree = fields
+                .iter()
+                .find(|(code, _)| *code == 71)
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                .unwrap_or(3)
+                .clamp(1, control.len() - 1);
+            let knots: Vec<f64> = fields
+                .iter()
+                .filter(|(code, _)| *code == 40)
+                .filter_map(|(_, value)| value.trim().parse().ok())
+                .collect();
+            if fields.iter().any(|(code, value)| {
+                *code == 41
+                    && value
+                        .trim()
+                        .parse::<f64>()
+                        .is_ok_and(|weight| (weight - 1.0).abs() > 1e-9)
+            }) {
+                warnings.push(
+                    "SPLINE control-point weights are ignored; the curve is not rational"
+                        .to_string(),
+                );
+            }
+            let points = sample_spline(&control, degree, &knots, 64);
+            Object::new(layer_id, Shape::Path(Path::from_points(&points, false)))
+        }
         _ => return None,
     };
     Some(object)
+}
+
+/// Sample a B-spline through `control`, clamped to its end points.
+fn sample_spline(
+    control: &[Point2],
+    degree: usize,
+    knots: &[f64],
+    steps: usize,
+) -> Vec<(f64, f64)> {
+    let count = control.len();
+    let degree = degree.clamp(1, count - 1);
+    let knots = normalized_knots(count, degree, knots);
+    #[allow(clippy::cast_precision_loss)]
+    let start = knots[degree];
+    let end = knots[count];
+    let mut points = Vec::with_capacity(steps + 1);
+    for step in 0..=steps {
+        #[allow(clippy::cast_precision_loss)]
+        let u = start + (end - start) * step as f64 / steps as f64;
+        points.push(de_boor(control, degree, &knots, u.min(end - 1e-12)));
+    }
+    points[0] = (control[0].x, control[0].y);
+    points[steps] = (control[count - 1].x, control[count - 1].y);
+    points
+}
+
+/// A valid, non-decreasing knot vector, clamped at both ends.
+fn normalized_knots(count: usize, degree: usize, knots: &[f64]) -> Vec<f64> {
+    if knots.len() == count + degree + 1 && knots.windows(2).all(|pair| pair[0] <= pair[1]) {
+        return knots.to_vec();
+    }
+    let spans = count - degree;
+    let mut result = vec![0.0; degree + 1];
+    for span in 1..spans {
+        #[allow(clippy::cast_precision_loss)]
+        result.push(span as f64);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    result.extend(std::iter::repeat_n(spans as f64, degree + 1));
+    result
+}
+
+/// One point on a B-spline, evaluated with de Boor's algorithm.
+fn de_boor(control: &[Point2], degree: usize, knots: &[f64], u: f64) -> (f64, f64) {
+    let count = control.len();
+    let mut span = degree;
+    while span < count - 1 && u >= knots[span + 1] {
+        span += 1;
+    }
+    let mut points: Vec<(f64, f64)> = (0..=degree)
+        .map(|offset| {
+            (
+                control[span - degree + offset].x,
+                control[span - degree + offset].y,
+            )
+        })
+        .collect();
+    for level in 1..=degree {
+        for index in (level..=degree).rev() {
+            let left = knots[span + index - degree];
+            let right = knots[span + 1 + index - level];
+            let denominator = right - left;
+            let alpha = if denominator.abs() < 1e-12 {
+                0.0
+            } else {
+                (u - left) / denominator
+            };
+            points[index] = (
+                points[index - 1].0 * (1.0 - alpha) + points[index].0 * alpha,
+                points[index - 1].1 * (1.0 - alpha) + points[index].1 * alpha,
+            );
+        }
+    }
+    points[degree]
 }
 
 fn layer_for(fields: &[(i32, String)], document: &mut Document) -> String {
@@ -312,6 +470,127 @@ mod tests {
             }
             other => panic!("unexpected shape: {other:?}"),
         }
+    }
+
+    #[test]
+    fn ellipse_entity_becomes_a_sampled_path() {
+        let report = import_dxf_report(&dxf("0
+ELLIPSE
+10
+0
+20
+0
+11
+10
+21
+0
+40
+0.5
+"))
+        .unwrap();
+        assert_eq!(report.document.objects.len(), 1);
+        assert_eq!(report.warnings.len(), 0);
+        let Shape::Path(path) = &report.document.objects[0].shape else {
+            panic!("expected a path");
+        };
+        assert!(path.closed);
+        let points = path.to_points();
+        // The major axis is 10 mm and the minor axis 5 mm.
+        let max_x = points.iter().map(|(x, _)| *x).fold(f64::MIN, f64::max);
+        let max_y = points.iter().map(|(_, y)| *y).fold(f64::MIN, f64::max);
+        assert!((max_x - 10.0).abs() < 0.1, "{max_x}");
+        assert!((max_y - 5.0).abs() < 0.1, "{max_y}");
+    }
+
+    #[test]
+    fn spline_entity_is_sampled_between_its_end_points() {
+        let report = import_dxf_report(&dxf("0
+SPLINE
+71
+3
+10
+0
+20
+0
+10
+10
+20
+0
+10
+10
+20
+10
+10
+0
+20
+10
+"))
+        .unwrap();
+        assert_eq!(report.document.objects.len(), 1);
+        assert_eq!(report.warnings.len(), 0);
+        let Shape::Path(path) = &report.document.objects[0].shape else {
+            panic!("expected a path");
+        };
+        let points = path.to_points();
+        assert!((points[0].0).abs() < 1e-9 && (points[0].1).abs() < 1e-9);
+        let last = points[points.len() - 1];
+        assert!((last.0).abs() < 1e-9 && (last.1 - 10.0).abs() < 1e-9);
+        // The curve stays inside the control polygon.
+        for (x, y) in &points {
+            assert!((0.0..=10.0).contains(x), "{x}");
+            assert!((0.0..=10.0).contains(y), "{y}");
+        }
+    }
+
+    #[test]
+    fn spline_weights_are_reported_as_ignored() {
+        let report = import_dxf_report(&dxf("0
+SPLINE
+71
+3
+10
+0
+20
+0
+10
+10
+20
+0
+10
+10
+20
+10
+10
+0
+20
+10
+41
+2
+"))
+        .unwrap();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("weights")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn a_single_cubic_spline_matches_its_bezier() {
+        // Four control points with a clamped cubic knot vector form a Bézier.
+        let control = [
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 10.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(10.0, 0.0),
+        ];
+        let points = sample_spline(&control, 3, &[], 8);
+        // At t = 0.5 the curve is the midpoint of the middle control points.
+        assert!(points[4].0 > 4.9 && points[4].0 < 5.1, "{:?}", points[4]);
+        assert!(points[4].1 > 7.0, "{:?}", points[4]);
     }
 
     #[test]
