@@ -98,6 +98,9 @@ pub struct OperationParams {
     /// Extra cut distance after the contour, in millimetres.
     #[serde(default)]
     pub lead_out_mm: f64,
+    /// Enter and leave along a quarter-circle arc instead of a straight line.
+    #[serde(default)]
+    pub curved_leads: bool,
 }
 
 fn default_tab_width() -> f64 {
@@ -121,6 +124,7 @@ impl OperationParams {
     ///
     /// Floating-point fields are compared with a small tolerance so a value that
     /// is unchanged does not appear in the list.
+    #[allow(clippy::too_many_lines)]
     pub fn changes_to(&self, target: &Self) -> Vec<ParamChange> {
         fn changed(current: &str, next: &str) -> bool {
             current != next
@@ -205,6 +209,11 @@ impl OperationParams {
             format!("{:.2} mm", target.lead_out_mm),
         );
         push(
+            "Curved leads",
+            if self.curved_leads { "yes" } else { "no" }.to_string(),
+            if target.curved_leads { "yes" } else { "no" }.to_string(),
+        );
+        push(
             "Tab width",
             format!("{:.2} mm", self.tab_width_mm),
             format!("{:.2} mm", target.tab_width_mm),
@@ -246,6 +255,7 @@ impl Default for OperationParams {
             tab_spacing_mm: 0.0,
             lead_in_mm: 0.0,
             lead_out_mm: 0.0,
+            curved_leads: false,
         }
     }
 }

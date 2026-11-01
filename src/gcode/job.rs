@@ -65,6 +65,7 @@ struct Resolved {
     tab_spacing_mm: f64,
     lead_in_mm: f64,
     lead_out_mm: f64,
+    curved_leads: bool,
     cross_hatch: bool,
     air_assist: bool,
     constant_power: bool,
@@ -96,6 +97,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             tab_spacing_mm: operation.params.tab_spacing_mm.max(0.0),
             lead_in_mm: operation.params.lead_in_mm.max(0.0),
             lead_out_mm: operation.params.lead_out_mm.max(0.0),
+            curved_leads: operation.params.curved_leads,
             cross_hatch: operation.params.cross_hatch,
             air_assist: operation.params.air_assist,
             constant_power: operation.params.constant_power,
@@ -121,6 +123,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 tab_spacing_mm: params.tab_spacing_mm.max(0.0),
                 lead_in_mm: params.lead_in_mm.max(0.0),
                 lead_out_mm: params.lead_out_mm.max(0.0),
+                curved_leads: params.curved_leads,
                 cross_hatch: params.cross_hatch,
                 air_assist: params.air_assist,
                 constant_power: params.constant_power,
@@ -207,11 +210,7 @@ pub fn build_toolpaths_cancellable(
                         append_contour(
                             &mut toolpath,
                             &points,
-                            resolved.tabs,
-                            resolved.tab_width_mm,
-                            resolved.tab_spacing_mm,
-                            resolved.lead_in_mm,
-                            resolved.lead_out_mm,
+                            ContourOptions::from_resolved(&resolved),
                         );
                         let mut toolpath = toolpath
                             .with_operation(object.operation_id.as_deref())
@@ -683,11 +682,7 @@ fn push_fill_toolpath(
         append_contour(
             &mut toolpath,
             &points,
-            resolved.tabs,
-            resolved.tab_width_mm,
-            resolved.tab_spacing_mm,
-            resolved.lead_in_mm,
-            resolved.lead_out_mm,
+            ContourOptions::from_resolved(resolved),
         );
     }
     if !toolpath.is_empty() {
@@ -728,7 +723,7 @@ fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval:
             break;
         }
         let points: Vec<Point2> = offset.iter().map(|(x, y)| Point2::new(*x, *y)).collect();
-        append_contour(toolpath, &points, 0, 0.0, 0.0, 0.0, 0.0);
+        append_contour(toolpath, &points, ContourOptions::NONE);
         loops += 1;
     }
     loops
@@ -757,16 +752,99 @@ fn tab_count(total: f64, tabs: u32, tab_spacing: f64) -> u32 {
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn append_contour(
-    toolpath: &mut Toolpath,
-    points: &[Point2],
+/// Contour settings shared by every call that closes a loop.
+#[derive(Debug, Clone, Copy)]
+struct ContourOptions {
     tabs: u32,
     tab_width: f64,
     tab_spacing: f64,
     lead_in: f64,
     lead_out: f64,
+    curved_leads: bool,
+}
+
+impl ContourOptions {
+    const NONE: Self = Self {
+        tabs: 0,
+        tab_width: 0.0,
+        tab_spacing: 0.0,
+        lead_in: 0.0,
+        lead_out: 0.0,
+        curved_leads: false,
+    };
+
+    fn from_resolved(resolved: &Resolved) -> Self {
+        Self {
+            tabs: resolved.tabs,
+            tab_width: resolved.tab_width_mm,
+            tab_spacing: resolved.tab_spacing_mm,
+            lead_in: resolved.lead_in_mm,
+            lead_out: resolved.lead_out_mm,
+            curved_leads: resolved.curved_leads,
+        }
+    }
+}
+
+/// Emit a quarter-circle lead that arrives tangent to `point` and leaves it
+/// tangent to the contour.
+///
+/// `forward` is the contour direction and `outward` its normal, so the arc stays
+/// outside the part. An incoming lead travels to the arc start; an outgoing one
+/// starts where the laser already is.
+#[allow(clippy::cast_precision_loss)]
+fn push_lead_arc(
+    toolpath: &mut Toolpath,
+    point: Point2,
+    forward: (f64, f64),
+    outward: (f64, f64),
+    radius: f64,
+    incoming: bool,
 ) {
+    const STEPS: u32 = 8;
+    let centre = Point2::new(point.x + outward.0 * radius, point.y + outward.1 * radius);
+    let (start_angle, end_angle) = if incoming {
+        (
+            (-forward.1).atan2(-forward.0),
+            (-outward.1).atan2(-outward.0),
+        )
+    } else {
+        ((-outward.1).atan2(-outward.0), forward.1.atan2(forward.0))
+    };
+    let mut delta = end_angle - start_angle;
+    while delta <= -std::f64::consts::PI {
+        delta += std::f64::consts::TAU;
+    }
+    while delta > std::f64::consts::PI {
+        delta -= std::f64::consts::TAU;
+    }
+    if incoming {
+        let entry = Point2::new(
+            centre.x + radius * start_angle.cos(),
+            centre.y + radius * start_angle.sin(),
+        );
+        toolpath.push(MoveKind::Travel, entry.x, entry.y);
+    }
+    for step in 1..=STEPS {
+        let angle = start_angle + delta * f64::from(step) / f64::from(STEPS);
+        toolpath.push(
+            MoveKind::Cut,
+            centre.x + radius * angle.cos(),
+            centre.y + radius * angle.sin(),
+        );
+    }
+}
+
+/// The outward normal of a closed contour at `forward`.
+fn outward_normal(forward: (f64, f64), counter_clockwise: bool) -> (f64, f64) {
+    if counter_clockwise {
+        (forward.1, -forward.0)
+    } else {
+        (-forward.1, forward.0)
+    }
+}
+
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
+fn append_contour(toolpath: &mut Toolpath, points: &[Point2], options: ContourOptions) {
     let mut closed = points.to_vec();
     if closed.len() > 2 && closed[0].distance(closed[closed.len() - 1]) > 1e-9 {
         closed.push(closed[0]);
@@ -781,24 +859,34 @@ fn append_contour(
         lengths.push(length);
         total += length;
     }
-    let count = tab_count(total, tabs, tab_spacing);
+    let count = tab_count(total, options.tabs, options.tab_spacing);
     let mut gaps = Vec::new();
-    if count > 0 && tab_width > 0.0 && total > tab_width * f64::from(count) {
+    if count > 0 && options.tab_width > 0.0 && total > options.tab_width * f64::from(count) {
         for index in 0..count {
             let center = total * (f64::from(index) + 0.5) / f64::from(count);
-            gaps.push((center - tab_width / 2.0, center + tab_width / 2.0));
+            gaps.push((
+                center - options.tab_width / 2.0,
+                center + options.tab_width / 2.0,
+            ));
         }
     }
+    let polygon: Vec<(f64, f64)> = closed.iter().map(|point| (point.x, point.y)).collect();
+    let counter_clockwise = crate::geometry::boolean::polygon_area(&polygon) >= 0.0;
     let first = closed[0];
     let second = closed[1];
-    let direction = normalized(second, first);
-    let entry = Point2::new(
-        first.x + direction.0 * lead_in,
-        first.y + direction.1 * lead_in,
-    );
-    toolpath.push(MoveKind::Travel, entry.x, entry.y);
-    if lead_in > 0.0 {
-        toolpath.push(MoveKind::Cut, first.x, first.y);
+    let forward = normalized(first, second);
+    let outward = outward_normal(forward, counter_clockwise);
+    if options.lead_in > 0.0 && options.curved_leads {
+        push_lead_arc(toolpath, first, forward, outward, options.lead_in, true);
+    } else {
+        let entry = Point2::new(
+            first.x - forward.0 * options.lead_in,
+            first.y - forward.1 * options.lead_in,
+        );
+        toolpath.push(MoveKind::Travel, entry.x, entry.y);
+        if options.lead_in > 0.0 {
+            toolpath.push(MoveKind::Cut, first.x, first.y);
+        }
     }
     let mut travelled = 0.0;
     for (index, pair) in closed.windows(2).enumerate() {
@@ -827,15 +915,26 @@ fn append_contour(
         }
         travelled += length;
     }
-    if lead_out > 0.0 {
+    if options.lead_out > 0.0 {
         let last = closed[closed.len() - 1];
         let before = closed[closed.len() - 2];
-        let direction = normalized(last, before);
-        let exit = Point2::new(
-            last.x + direction.0 * lead_out,
-            last.y + direction.1 * lead_out,
-        );
-        toolpath.push(MoveKind::Cut, exit.x, exit.y);
+        let forward = normalized(before, last);
+        if options.curved_leads {
+            push_lead_arc(
+                toolpath,
+                last,
+                forward,
+                outward_normal(forward, counter_clockwise),
+                options.lead_out,
+                false,
+            );
+        } else {
+            let exit = Point2::new(
+                last.x - forward.0 * options.lead_out,
+                last.y - forward.1 * options.lead_out,
+            );
+            toolpath.push(MoveKind::Cut, exit.x, exit.y);
+        }
     }
 }
 
@@ -1799,7 +1898,15 @@ mod tests {
     fn tab_spacing_derives_the_count_from_the_perimeter() {
         let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
         // 40 mm perimeter with a 2 mm tab every 10 mm gives four tabs.
-        append_contour(&mut toolpath, &square_contour(), 0, 2.0, 10.0, 0.0, 0.0);
+        append_contour(
+            &mut toolpath,
+            &square_contour(),
+            ContourOptions {
+                tab_width: 2.0,
+                tab_spacing: 10.0,
+                ..ContourOptions::NONE
+            },
+        );
         let travels = toolpath
             .moves
             .iter()
@@ -1812,6 +1919,74 @@ mod tests {
             .count();
         assert_eq!(travels, 5, "one entry and four tab crossings");
         assert_eq!(cuts, 8, "a cut before and after each tab");
+    }
+
+    #[test]
+    fn a_curved_lead_in_starts_outside_and_arrives_tangent() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        append_contour(
+            &mut toolpath,
+            &square_contour(),
+            ContourOptions {
+                lead_in: 2.0,
+                curved_leads: true,
+                ..ContourOptions::NONE
+            },
+        );
+        let first = toolpath.moves[0];
+        assert_eq!(first.kind, MoveKind::Travel);
+        assert!((first.x + 2.0).abs() < 1e-6, "{first:?}");
+        assert!((first.y + 2.0).abs() < 1e-6, "{first:?}");
+        let arc = &toolpath.moves[1..9];
+        assert!(arc.iter().all(|movement| movement.kind == MoveKind::Cut));
+        // The arc ends exactly at the contour start.
+        assert!(
+            arc[7].x.abs() < 1e-6 && arc[7].y.abs() < 1e-6,
+            "{:?}",
+            arc[7]
+        );
+        // It stays outside the square, which begins at the origin.
+        for movement in arc {
+            assert!(movement.x <= 1e-6 && movement.y <= 1e-6, "{movement:?}");
+        }
+    }
+
+    #[test]
+    fn a_curved_lead_out_leaves_outside() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        append_contour(
+            &mut toolpath,
+            &square_contour(),
+            ContourOptions {
+                lead_out: 2.0,
+                curved_leads: true,
+                ..ContourOptions::NONE
+            },
+        );
+        let last = toolpath.moves[toolpath.moves.len() - 1];
+        assert_eq!(last.kind, MoveKind::Cut);
+        assert!((last.x + 2.0).abs() < 1e-6, "{last:?}");
+        assert!((last.y + 2.0).abs() < 1e-6, "{last:?}");
+        for movement in &toolpath.moves[toolpath.moves.len() - 8..] {
+            assert!(movement.x <= 1e-6 && movement.y <= 1e-6, "{movement:?}");
+        }
+    }
+
+    #[test]
+    fn a_straight_lead_in_stays_linear() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        append_contour(
+            &mut toolpath,
+            &square_contour(),
+            ContourOptions {
+                lead_in: 2.0,
+                ..ContourOptions::NONE
+            },
+        );
+        let entry = toolpath.moves[0];
+        assert_eq!(entry.kind, MoveKind::Travel);
+        assert!((entry.x + 2.0).abs() < 1e-6, "{entry:?}");
+        assert!(entry.y.abs() < 1e-6, "{entry:?}");
     }
 
     #[test]

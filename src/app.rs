@@ -5704,6 +5704,12 @@ impl BeamWrightApp {
                                     );
                                 });
                                 ui.end_row();
+                                ui.label("Curved leads");
+                                ui.checkbox(
+                                    &mut operation.params.curved_leads,
+                                    "Quarter-circle entry and exit",
+                                );
+                                ui.end_row();
                                 ui.label("Constant power mode");
                                 ui.checkbox(&mut operation.params.constant_power, "");
                                 ui.end_row();
