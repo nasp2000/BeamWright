@@ -39,6 +39,111 @@ enum PendingAction {
     Quit,
 }
 
+/// A command offered by the Ctrl+K palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaletteAction {
+    New,
+    Open,
+    Save,
+    SaveAs,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    Duplicate,
+    Delete,
+    SelectAll,
+    ZoomIn,
+    ZoomOut,
+    FitPage,
+    ToggleGrid,
+    ToggleSnap,
+    ToggleToolpaths,
+    ToolSelect,
+    ToolLine,
+    ToolRectangle,
+    ToolEllipse,
+    ToolStar,
+    ToolText,
+    ToolPolygon,
+    ToolPencil,
+    Import,
+    ExportSvg,
+    ExportDxf,
+    ExportPng,
+    ExportGcode,
+    Cuts,
+    Preview,
+    MaterialTest,
+    DocumentProperties,
+    Preferences,
+    Workspaces,
+    InterfacePresets,
+    MachineProfiles,
+    Materials,
+    KeyboardShortcuts,
+}
+
+/// Every palette entry, in the order shown before a search.
+fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
+    use PaletteAction as Action;
+    &[
+        (Action::New, "New project"),
+        (Action::Open, "Open project..."),
+        (Action::Save, "Save"),
+        (Action::SaveAs, "Save as..."),
+        (Action::Undo, "Undo"),
+        (Action::Redo, "Redo"),
+        (Action::Cut, "Cut"),
+        (Action::Copy, "Copy"),
+        (Action::Paste, "Paste"),
+        (Action::Duplicate, "Duplicate"),
+        (Action::Delete, "Delete selection"),
+        (Action::SelectAll, "Select all"),
+        (Action::ZoomIn, "Zoom in"),
+        (Action::ZoomOut, "Zoom out"),
+        (Action::FitPage, "Fit page"),
+        (Action::ToggleGrid, "Toggle grid"),
+        (Action::ToggleSnap, "Toggle snapping"),
+        (Action::ToggleToolpaths, "Toggle toolpaths"),
+        (Action::ToolSelect, "Tool: Select"),
+        (Action::ToolLine, "Tool: Line"),
+        (Action::ToolRectangle, "Tool: Rectangle"),
+        (Action::ToolEllipse, "Tool: Ellipse"),
+        (Action::ToolStar, "Tool: Star"),
+        (Action::ToolText, "Tool: Text"),
+        (Action::ToolPolygon, "Tool: Polygon"),
+        (Action::ToolPencil, "Tool: Freehand"),
+        (Action::Import, "Import SVG, DXF or image..."),
+        (Action::ExportSvg, "Export SVG..."),
+        (Action::ExportDxf, "Export DXF..."),
+        (Action::ExportPng, "Export PNG..."),
+        (Action::ExportGcode, "Export G-code..."),
+        (Action::Cuts, "Cuts and layers..."),
+        (Action::Preview, "Preview and G-code..."),
+        (Action::MaterialTest, "Material test..."),
+        (Action::DocumentProperties, "Document properties..."),
+        (Action::Preferences, "Preferences..."),
+        (Action::Workspaces, "Workspaces..."),
+        (Action::InterfacePresets, "Interface presets..."),
+        (Action::MachineProfiles, "Machine profiles..."),
+        (Action::Materials, "Materials and operations..."),
+        (Action::KeyboardShortcuts, "Keyboard shortcuts"),
+    ]
+}
+
+/// Indices of the entries whose label contains `query`, ignoring case.
+fn filter_palette(entries: &[(PaletteAction, &'static str)], query: &str) -> Vec<usize> {
+    let query = query.trim().to_lowercase();
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, label))| query.is_empty() || label.to_lowercase().contains(&query))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Entry offered by the canvas context menus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextAction {
@@ -314,6 +419,9 @@ pub struct BeamWrightApp {
     preferences_open: bool,
     workspaces_open: bool,
     workspace_name: String,
+    palette_open: bool,
+    palette_query: String,
+    palette_focus: bool,
     interface_presets_open: bool,
     interface_preset_name: String,
     shortcut_capture: Option<crate::config::shortcuts::Command>,
@@ -846,6 +954,9 @@ impl BeamWrightApp {
             preferences_open: false,
             workspaces_open: false,
             workspace_name: String::new(),
+            palette_open: false,
+            palette_query: String::new(),
+            palette_focus: false,
             interface_presets_open: false,
             interface_preset_name: String::new(),
             shortcut_capture: None,
@@ -1842,6 +1953,7 @@ impl BeamWrightApp {
             || self.workspaces_open
             || self.interface_presets_open
             || self.external_gcode_open
+            || self.palette_open
         {
             return;
         }
@@ -1866,6 +1978,11 @@ impl BeamWrightApp {
                 pressed.insert(Command::Redo);
             }
         });
+        if pressed.contains(&Command::CommandPalette) {
+            self.palette_open = true;
+            self.palette_focus = true;
+            self.palette_query.clear();
+        }
         if pressed.contains(&Command::New) {
             self.request(PendingAction::New);
         }
@@ -2822,6 +2939,12 @@ impl BeamWrightApp {
                     }
                     if icons::button(ui, Icon::Palette, "Interface presets...").clicked() {
                         self.interface_presets_open = true;
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Search, "Command palette...").clicked() {
+                        self.palette_open = true;
+                        self.palette_focus = true;
+                        self.palette_query.clear();
                         ui.close();
                     }
                     if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
@@ -8040,6 +8163,135 @@ impl BeamWrightApp {
         self.preferences.drawing.guides_visible = workspace.guides;
     }
 
+    fn run_palette_action(&mut self, action: PaletteAction) {
+        use PaletteAction as Action;
+        self.palette_query.clear();
+        match action {
+            Action::New => self.request(PendingAction::New),
+            Action::Open => self.request(PendingAction::Open),
+            Action::Save => self.save(),
+            Action::SaveAs => self.open_dialog(FileMode::SaveProject),
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
+            Action::Cut => self.cut(),
+            Action::Copy => self.copy(),
+            Action::Paste => self.paste_from_clipboard(),
+            Action::Duplicate => self.editor.duplicate_selection(),
+            Action::Delete => {
+                if self.editor.is_editing_nodes() && !self.editor.node_selection.is_empty() {
+                    let removed = self.editor.delete_selected_nodes();
+                    self.status = format!("Deleted {removed} node(s)");
+                } else {
+                    self.editor.delete_selection();
+                }
+            }
+            Action::SelectAll => self.editor.select_all(),
+            Action::ZoomIn => self.editor.zoom_in(),
+            Action::ZoomOut => self.editor.zoom_out(),
+            Action::FitPage => self.needs_fit = true,
+            Action::ToggleGrid => {
+                self.editor.canvas.grid_visible = !self.editor.canvas.grid_visible;
+            }
+            Action::ToggleSnap => self.editor.snap_enabled = !self.editor.snap_enabled,
+            Action::ToggleToolpaths => self.preview_toolpaths = !self.preview_toolpaths,
+            Action::ToolSelect => self.editor.tool = Tool::Select,
+            Action::ToolLine => self.editor.tool = Tool::Line,
+            Action::ToolRectangle => self.editor.tool = Tool::Rect,
+            Action::ToolEllipse => self.editor.tool = Tool::Ellipse,
+            Action::ToolStar => self.editor.tool = Tool::Star,
+            Action::ToolText => self.editor.tool = Tool::Text,
+            Action::ToolPolygon => self.editor.tool = Tool::Polygon,
+            Action::ToolPencil => self.editor.tool = Tool::Pencil,
+            Action::Import => self.open_dialog(FileMode::ImportFile),
+            Action::ExportSvg => self.open_dialog(FileMode::ExportSvg),
+            Action::ExportDxf => self.open_dialog(FileMode::ExportDxf),
+            Action::ExportPng => self.open_dialog(FileMode::ExportPng),
+            Action::ExportGcode => self.open_dialog(FileMode::ExportGcode),
+            Action::Cuts => self.open_cuts(),
+            Action::Preview => self.open_preview(),
+            Action::MaterialTest => self.material_test_open = true,
+            Action::DocumentProperties => {
+                self.doc_properties_snapshot = Some(self.editor.document.clone());
+                self.doc_properties_open = true;
+            }
+            Action::Preferences => self.preferences_open = true,
+            Action::Workspaces => self.workspaces_open = true,
+            Action::InterfacePresets => self.interface_presets_open = true,
+            Action::MachineProfiles => self.machines_open = true,
+            Action::Materials => self.profiles_open = true,
+            Action::KeyboardShortcuts => self.help_shortcuts_open = true,
+        }
+    }
+
+    fn palette_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.palette_open;
+        let mut chosen: Option<PaletteAction> = None;
+        let mut close_requested = false;
+        egui::Window::new("Command palette")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.palette_query)
+                        .hint_text("Type a command, then press Enter")
+                        .desired_width(f32::INFINITY),
+                );
+                if self.palette_focus {
+                    response.request_focus();
+                    self.palette_focus = false;
+                }
+                let entries = palette_entries();
+                let matches = filter_palette(entries, &self.palette_query);
+                if ui.input(|input| input.key_pressed(Key::Enter)) {
+                    if let Some(index) = matches.first() {
+                        chosen = Some(entries[*index].0);
+                    }
+                }
+                if ui.input(|input| input.key_pressed(Key::Escape))
+                    || ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::K))
+                {
+                    close_requested = true;
+                }
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("palette_results")
+                    .max_height(340.0)
+                    .show(ui, |ui| {
+                        if matches.is_empty() {
+                            ui.weak("No command matches.");
+                        }
+                        for index in &matches {
+                            let (action, label) = entries[*index];
+                            if ui
+                                .add(
+                                    egui::Button::new(label)
+                                        .frame(false)
+                                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                )
+                                .clicked()
+                            {
+                                chosen = Some(action);
+                            }
+                        }
+                    });
+            });
+        if close_requested {
+            open = false;
+        }
+        if let Some(action) = chosen {
+            self.run_palette_action(action);
+            open = false;
+        }
+        if !open {
+            self.palette_query.clear();
+        }
+        self.palette_open = open;
+    }
+
     fn workspaces_window(&mut self, ctx: &egui::Context) {
         let mut open = self.workspaces_open;
         let mut save = false;
@@ -9690,6 +9942,9 @@ impl BeamWrightApp {
         if self.workspaces_open {
             self.workspaces_window(ctx);
         }
+        if self.palette_open {
+            self.palette_window(ctx);
+        }
         if self.interface_presets_open {
             self.interface_presets_window(ctx);
         }
@@ -10019,6 +10274,29 @@ mod tests {
             burn_image.pixels[0],
             egui::Color32::from_rgb(0xFF, 0x7A, 0x1A)
         );
+    }
+
+    #[test]
+    fn the_palette_filters_entries_case_insensitively() {
+        let entries = palette_entries();
+        assert_eq!(filter_palette(entries, "").len(), entries.len());
+        assert_eq!(filter_palette(entries, "   ").len(), entries.len());
+        let labels = |query: &str| -> Vec<&'static str> {
+            filter_palette(entries, query)
+                .into_iter()
+                .map(|index| entries[index].1)
+                .collect()
+        };
+        assert!(labels("undo").contains(&"Undo"));
+        assert!(labels("UNDO").contains(&"Undo"));
+        assert!(labels("g-code").contains(&"Export G-code..."));
+        assert!(labels("preferences").contains(&"Preferences..."));
+        assert_eq!(labels("zzzzzz").len(), 0);
+        let mut seen = std::collections::HashSet::new();
+        for (_, label) in entries {
+            assert_ne!(*label, "");
+            assert!(seen.insert(*label), "duplicate palette label {label}");
+        }
     }
 
     #[test]

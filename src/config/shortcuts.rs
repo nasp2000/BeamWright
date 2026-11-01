@@ -48,11 +48,12 @@ pub enum Command {
     ToggleLayers,
     ToggleProperties,
     Enter,
+    CommandPalette,
 }
 
 impl Command {
     /// Every remappable command, in the order shown in the preferences.
-    pub const ALL: [Command; 35] = [
+    pub const ALL: [Command; 36] = [
         Command::New,
         Command::Open,
         Command::Save,
@@ -88,6 +89,7 @@ impl Command {
         Command::ToggleLayers,
         Command::ToggleProperties,
         Command::Enter,
+        Command::CommandPalette,
     ];
 
     /// Stable identifier used in the preference file.
@@ -128,6 +130,7 @@ impl Command {
             Command::ToggleLayers => "toggle_layers",
             Command::ToggleProperties => "toggle_properties",
             Command::Enter => "enter",
+            Command::CommandPalette => "command_palette",
         }
     }
 
@@ -168,6 +171,7 @@ impl Command {
             Command::ToggleLayers => "Layers panel",
             Command::ToggleProperties => "Properties panel",
             Command::Enter => "Enter / finish",
+            Command::CommandPalette => "Command palette",
         }
     }
 
@@ -209,6 +213,7 @@ impl Command {
             Command::ToggleLayers => "F9",
             Command::ToggleProperties => "F10",
             Command::Enter => "Enter",
+            Command::CommandPalette => "Ctrl+K",
         }
     }
 }
