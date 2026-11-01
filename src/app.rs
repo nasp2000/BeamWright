@@ -6521,33 +6521,60 @@ impl BeamWrightApp {
             return;
         }
         self.editor.record_action("Vectorize image");
+        let groups = crate::vectorize::group_contours(&contours);
         let mut created = Vec::new();
-        for contour in &contours {
-            let mut object = crate::document::Object::new(
+        let mut holes = 0;
+        for group in &groups {
+            let Some(outer_index) = group.first() else {
+                continue;
+            };
+            let operation_id = self
+                .editor
+                .document
+                .objects
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .and_then(|candidate| candidate.operation_id.clone());
+            let mut outline = crate::document::Object::new(
                 object.layer_id.clone(),
-                crate::document::Shape::Path(crate::vectorize::to_path(contour)),
+                crate::document::Shape::Path(crate::vectorize::to_curved_path(
+                    &contours[*outer_index],
+                    40.0,
+                )),
             );
-            object.name = "Vectorized contour".to_string();
-            object.transform = crate::geometry::Transform2::translate(min.x, min.y);
-            object.operation_id.clone_from(
-                &self
-                    .editor
-                    .document
-                    .objects
-                    .iter()
-                    .find(|candidate| candidate.id == id)
-                    .and_then(|candidate| candidate.operation_id.clone()),
-            );
-            object.style.stroke = Some("#000000".to_string());
-            object.style.fill = None;
-            let new_id = self.editor.document.add_object(object).id.clone();
-            created.push(new_id);
+            outline.name = "Vectorized contour".to_string();
+            outline.transform = crate::geometry::Transform2::translate(min.x, min.y);
+            outline.operation_id.clone_from(&operation_id);
+            outline.style.stroke = Some("#000000".to_string());
+            outline.style.fill = None;
+            let outer_id = self.editor.document.add_object(outline).id.clone();
+            created.push(outer_id.clone());
+            for hole_index in &group[1..] {
+                let mut hole = crate::document::Object::new(
+                    object.layer_id.clone(),
+                    crate::document::Shape::Path(crate::vectorize::to_curved_path(
+                        &contours[*hole_index],
+                        40.0,
+                    )),
+                );
+                hole.name = "Vectorized hole".to_string();
+                hole.transform = crate::geometry::Transform2::translate(min.x, min.y);
+                hole.operation_id.clone_from(&operation_id);
+                hole.hole_of = Some(outer_id.clone());
+                hole.style.stroke = Some("#000000".to_string());
+                hole.style.fill = None;
+                created.push(self.editor.document.add_object(hole).id.clone());
+                holes += 1;
+            }
         }
         self.editor.selection.clear();
         for new_id in &created {
             self.editor.selection.add(new_id.clone());
         }
-        self.status = format!("Vectorized into {} contour(s)", created.len());
+        self.status = format!(
+            "Vectorized into {} contour(s) with {holes} hole(s)",
+            created.len() - holes
+        );
     }
 
     fn centerline_selected_image(&mut self) {

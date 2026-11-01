@@ -147,6 +147,7 @@ fn cancelled() -> BeamError {
 }
 
 /// Build toolpaths, checking `cancel` between objects and inside long fills.
+#[allow(clippy::too_many_lines)]
 pub fn build_toolpaths_cancellable(
     document: &Document,
     cancel: &dyn Fn() -> bool,
@@ -189,17 +190,36 @@ pub fn build_toolpaths_cancellable(
                         warnings.push(format!("'{}' has no usable geometry", object.name));
                         continue;
                     }
-                    if matches!(
-                        resolved.op_type,
-                        OperationType::Fill
-                            | OperationType::FillWithOutline
-                            | OperationType::FillWithOffset
-                    ) {
+                    let is_hole = object.hole_of.is_some();
+                    let holes: Vec<Vec<Point2>> = if is_hole {
+                        Vec::new()
+                    } else {
+                        document
+                            .objects
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.hole_of.as_deref() == Some(object.id.as_str())
+                            })
+                            .filter_map(|candidate| {
+                                let outline = candidate.world_path().flatten(0.2);
+                                (outline.len() >= 3).then_some(outline)
+                            })
+                            .collect()
+                    };
+                    if !is_hole
+                        && matches!(
+                            resolved.op_type,
+                            OperationType::Fill
+                                | OperationType::FillWithOutline
+                                | OperationType::FillWithOffset
+                        )
+                    {
                         push_fill_toolpath(
                             &mut toolpaths,
                             object,
                             &resolved,
                             &points,
+                            &holes,
                             &mut warnings,
                             cancel,
                         )?;
@@ -554,6 +574,91 @@ impl TransformBake {
     }
 }
 
+/// The parts of a segment that are outside every hole polygon.
+fn free_polygon_intervals(from: Point2, to: Point2, holes: &[Vec<Point2>]) -> Vec<(f64, f64)> {
+    if holes.is_empty() {
+        return vec![(0.0, 1.0)];
+    }
+    let mut blocked: Vec<(f64, f64)> = Vec::new();
+    for hole in holes {
+        if hole.len() < 3 {
+            continue;
+        }
+        let polygon: Vec<(f64, f64)> = hole.iter().map(|point| (point.x, point.y)).collect();
+        blocked.extend(polygon_intervals(from, to, &polygon));
+    }
+    if blocked.is_empty() {
+        return vec![(0.0, 1.0)];
+    }
+    blocked.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (start, end) in blocked {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 + 1e-9 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    let mut allowed = Vec::new();
+    let mut cursor = 0.0;
+    for (start, end) in merged {
+        if start > cursor {
+            allowed.push((cursor, start.min(1.0)));
+        }
+        cursor = cursor.max(end);
+    }
+    if cursor < 1.0 {
+        allowed.push((cursor, 1.0));
+    }
+    allowed.retain(|(start, end)| end - start > 1e-12);
+    allowed
+}
+
+/// Parameters along a segment where it lies inside a polygon.
+#[allow(clippy::cast_precision_loss)]
+fn polygon_intervals(from: Point2, to: Point2, polygon: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    if dx.abs() < 1e-12 && dy.abs() < 1e-12 {
+        return Vec::new();
+    }
+    let mut cuts = vec![0.0, 1.0];
+    for index in 0..polygon.len() {
+        let a = polygon[index];
+        let b = polygon[(index + 1) % polygon.len()];
+        let ex = b.0 - a.0;
+        let ey = b.1 - a.1;
+        let path_cross_edge = dx * ey - dy * ex;
+        if path_cross_edge.abs() < 1e-12 {
+            continue;
+        }
+        let t = ((a.0 - from.x) * ey - (a.1 - from.y) * ex) / path_cross_edge;
+        let s = ((a.0 - from.x) * dy - (a.1 - from.y) * dx) / path_cross_edge;
+        if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&s) {
+            cuts.push(t);
+        }
+    }
+    cuts.sort_by(f64::total_cmp);
+    cuts.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+    let mut intervals: Vec<(f64, f64)> = Vec::new();
+    for window in cuts.windows(2) {
+        let middle = f64::midpoint(window[0], window[1]);
+        let point = Point2::new(from.x + dx * middle, from.y + dy * middle);
+        if crate::geometry::boolean::point_in_polygon(point.x, point.y, polygon) {
+            if let Some(last) = intervals.last_mut() {
+                if (last.1 - window[0]).abs() < 1e-9 {
+                    last.1 = window[1];
+                    continue;
+                }
+            }
+            intervals.push((window[0], window[1]));
+        }
+    }
+    intervals
+}
+
 /// Build the fill toolpath for one object.
 ///
 /// Handles linear, outlined and offset fills, including the margin, angle,
@@ -564,6 +669,7 @@ fn push_fill_toolpath(
     object: &Object,
     resolved: &Resolved,
     points: &[Point2],
+    holes: &[Vec<Point2>],
     warnings: &mut Vec<String>,
     cancel: &dyn Fn() -> bool,
 ) -> Result<()> {
@@ -678,8 +784,14 @@ fn push_fill_toolpath(
         if index % 512 == 0 && cancel() {
             return Err(cancelled());
         }
-        toolpath.push(MoveKind::Travel, x0, y0);
-        toolpath.push(MoveKind::Cut, x1, y1);
+        let from = Point2::new(x0, y0);
+        let to = Point2::new(x1, y1);
+        for (start, end) in free_polygon_intervals(from, to, holes) {
+            let entry = lerp(from, to, start);
+            let exit = lerp(from, to, end);
+            toolpath.push(MoveKind::Travel, entry.x, entry.y);
+            toolpath.push(MoveKind::Cut, exit.x, exit.y);
+        }
     }
     if resolved.op_type == OperationType::FillWithOutline {
         let points = kerfed(points, resolved.kerf_mm);
@@ -2014,6 +2126,92 @@ mod tests {
             Point2::new(0.0, 10.0),
             Point2::new(0.0, 0.0),
         ]
+    }
+
+    #[test]
+    fn a_segment_is_split_by_a_hole_polygon() {
+        let hole = vec![
+            Point2::new(4.0, 4.0),
+            Point2::new(6.0, 4.0),
+            Point2::new(6.0, 6.0),
+            Point2::new(4.0, 6.0),
+        ];
+        let intervals =
+            free_polygon_intervals(Point2::new(0.0, 5.0), Point2::new(10.0, 5.0), &[hole]);
+        assert_eq!(intervals.len(), 2);
+        assert!((intervals[0].1 - 0.4).abs() < 1e-9);
+        assert!((intervals[1].0 - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fill_jobs_subtract_holes_and_cut_their_outline() {
+        let mut document = Document::default();
+        document.operations.push(Operation {
+            id: "fill".to_string(),
+            name: "Fill".to_string(),
+            op_type: OperationType::Fill,
+            params: OperationParams {
+                speed: 1000.0,
+                power: 20.0,
+                passes: 1,
+                line_interval_mm: 1.0,
+                ..OperationParams::default()
+            },
+            enabled: true,
+            depends_on: Vec::new(),
+        });
+        let layer_id = document.layers[0].id.clone();
+        let mut outer = Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 20.0,
+                height: 20.0,
+                corner_radius: 0.0,
+            },
+        );
+        outer.name = "Outer".to_string();
+        outer.operation_id = Some("fill".to_string());
+        document.add_object(outer);
+        let outer_id = document.objects[0].id.clone();
+        let mut hole = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 6.0,
+                height: 6.0,
+                corner_radius: 0.0,
+            },
+        );
+        hole.name = "Hole".to_string();
+        hole.transform = crate::geometry::Transform2::translate(7.0, 7.0);
+        hole.operation_id = Some("fill".to_string());
+        hole.hole_of = Some(outer_id);
+        document.add_object(hole);
+
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(warnings.len(), 0);
+        assert_eq!(toolpaths.len(), 2);
+        let fill = toolpaths
+            .iter()
+            .find(|toolpath| toolpath.name == "Outer")
+            .unwrap();
+        let hole_path = toolpaths
+            .iter()
+            .find(|toolpath| toolpath.name == "Hole")
+            .unwrap();
+        let hole_cuts = hole_path
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .count();
+        assert!(hole_cuts >= 4, "the hole was not cut: {hole_cuts}");
+        for movement in &fill.moves {
+            if movement.kind != MoveKind::Cut {
+                continue;
+            }
+            let inside =
+                movement.x > 7.05 && movement.x < 12.95 && movement.y > 7.05 && movement.y < 12.95;
+            assert!(!inside, "fill entered the hole at {movement:?}");
+        }
     }
 
     #[test]

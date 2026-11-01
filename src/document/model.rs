@@ -33,6 +33,12 @@ pub struct Object {
     /// Objects grouped together share this identifier.
     #[serde(default)]
     pub group_id: Option<String>,
+    /// When set, this object is a hole inside the object with that id.
+    ///
+    /// Fill jobs subtract the hole and cut its outline; the outer object keeps
+    /// the relationship in the project so the preview and exports stay honest.
+    #[serde(default)]
+    pub hole_of: Option<String>,
     pub visible: bool,
     pub locked: bool,
 }
@@ -49,6 +55,7 @@ impl Object {
             style: Style::default(),
             operation_id: None,
             group_id: None,
+            hole_of: None,
             visible: true,
             locked: false,
         }
@@ -95,6 +102,14 @@ impl Object {
         if let Some(operation_id) = &self.operation_id {
             if operation_id.trim().is_empty() {
                 return Err(format!("object {} has an empty operation id", self.id));
+            }
+        }
+        if let Some(hole_of) = &self.hole_of {
+            if hole_of.trim().is_empty() {
+                return Err(format!("object {} has an empty hole reference", self.id));
+            }
+            if *hole_of == self.id {
+                return Err(format!("object {} cannot be a hole of itself", self.id));
             }
         }
         Ok(())
@@ -619,6 +634,40 @@ mod tests {
             document.stock = Some(zone);
             assert!(document.validate().is_err(), "{zone:?} was accepted");
         }
+    }
+
+    #[test]
+    fn hole_references_round_trip_and_validate() {
+        let mut document = Document::default();
+        let layer_id = document.layers[0].id.clone();
+        let outer = Object::new(
+            layer_id.clone(),
+            Shape::Rect {
+                width: 20.0,
+                height: 20.0,
+                corner_radius: 0.0,
+            },
+        );
+        let outer_id = outer.id.clone();
+        document.add_object(outer);
+        let mut hole = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 5.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        hole.hole_of = Some(outer_id);
+        document.add_object(hole);
+        assert!(document.validate().is_ok());
+        let json = serde_json::to_string(&document).unwrap();
+        let loaded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.objects[1].hole_of, document.objects[1].hole_of);
+
+        let own = document.objects[1].id.clone();
+        document.objects[1].hole_of = Some(own);
+        assert!(document.validate().is_err());
     }
 
     #[test]

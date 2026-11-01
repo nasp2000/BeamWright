@@ -99,6 +99,59 @@ pub fn trace(
     loops
 }
 
+/// Group traced contours into outers and the holes directly inside them.
+///
+/// Each group starts with the outer loop and continues with every contour
+/// contained by it. A contour inside a hole is treated as a new island and gets
+/// its own group, so no contour is lost.
+pub fn group_contours(contours: &[Vec<Point2>]) -> Vec<Vec<usize>> {
+    if contours.is_empty() {
+        return Vec::new();
+    }
+    let polygons: Vec<Vec<(f64, f64)>> = contours
+        .iter()
+        .map(|contour| contour.iter().map(|point| (point.x, point.y)).collect())
+        .collect();
+    let areas: Vec<f64> = polygons
+        .iter()
+        .map(|polygon| crate::geometry::boolean::polygon_area(polygon).abs())
+        .collect();
+    let mut parent: Vec<Option<usize>> = vec![None; contours.len()];
+    for (index, contour) in contours.iter().enumerate() {
+        let point = contour[0];
+        let mut best: Option<usize> = None;
+        for (candidate, polygon) in polygons.iter().enumerate() {
+            if candidate == index || areas[candidate] <= areas[index] {
+                continue;
+            }
+            if crate::geometry::boolean::point_in_polygon(point.x, point.y, polygon)
+                && best.is_none_or(|current| areas[candidate] < areas[current])
+            {
+                best = Some(candidate);
+            }
+        }
+        parent[index] = best;
+    }
+
+    let mut order: Vec<usize> = (0..contours.len()).collect();
+    order.sort_by(|left, right| areas[*right].total_cmp(&areas[*left]).then(left.cmp(right)));
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut group_of: Vec<Option<usize>> = vec![None; contours.len()];
+    for index in order {
+        match parent[index] {
+            Some(parent) if group_of[parent].is_some() => {
+                let group = group_of[parent].expect("checked above");
+                groups[group].push(index);
+            }
+            _ => {
+                group_of[index] = Some(groups.len());
+                groups.push(vec![index]);
+            }
+        }
+    }
+    groups
+}
+
 /// Build a closed path from a traced contour.
 pub fn to_path(contour: &[Point2]) -> Path {
     let mut segments = Vec::new();
@@ -284,6 +337,40 @@ mod tests {
     fn an_empty_bitmap_has_no_contours() {
         let image = bitmap(4, 4, &[false; 16]);
         assert!(trace(&image, 4.0, 4.0, 0.0).is_empty());
+    }
+
+    fn square(left: f64, bottom: f64, size: f64) -> Vec<Point2> {
+        vec![
+            Point2::new(left, bottom),
+            Point2::new(left + size, bottom),
+            Point2::new(left + size, bottom + size),
+            Point2::new(left, bottom + size),
+        ]
+    }
+
+    #[test]
+    fn nested_contours_become_one_outer_with_a_hole() {
+        let groups = super::group_contours(&[square(0.0, 0.0, 20.0), square(5.0, 5.0, 10.0)]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![0, 1]);
+    }
+
+    #[test]
+    fn separate_contours_stay_separate() {
+        let groups = super::group_contours(&[square(0.0, 0.0, 5.0), square(20.0, 20.0, 5.0)]);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn an_island_inside_a_hole_is_its_own_group() {
+        let groups = super::group_contours(&[
+            square(0.0, 0.0, 30.0),
+            square(5.0, 5.0, 20.0),
+            square(10.0, 10.0, 5.0),
+        ]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], vec![0, 1]);
+        assert_eq!(groups[1], vec![2]);
     }
 
     #[test]
