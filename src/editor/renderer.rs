@@ -114,7 +114,7 @@ pub fn paint_canvas(
 ) {
     painter.rect_filled(rect, 0.0, theme.canvas_background());
     paint_page(painter, rect, editor, theme);
-    paint_material_area(painter, rect, editor, theme);
+    paint_material_limits(painter, rect, editor, theme);
     if editor.canvas.grid_visible {
         paint_grid(painter, rect, editor, theme);
     }
@@ -464,24 +464,44 @@ fn paint_page(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme)
     }
 }
 
-/// Draw the material rectangle the job is clipped to, over the page.
-fn paint_material_area(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
-    let Some(stock) = editor.document.stock else {
-        return;
-    };
+/// Draw the material rectangle and the restricted areas over the page.
+fn paint_material_limits(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
+    if let Some(stock) = editor.document.stock {
+        paint_limit(painter, rect, editor, stock, theme.material(), 18);
+    }
+    for area in &editor.document.restricted_areas {
+        paint_limit(
+            painter,
+            rect,
+            editor,
+            *area,
+            Color32::from_rgb(200, 60, 60),
+            26,
+        );
+    }
+}
+
+/// Draw one rectangle in document coordinates, clipped to the canvas.
+fn paint_limit(
+    painter: &Painter,
+    rect: Rect,
+    editor: &EditorState,
+    zone: crate::document::MaterialZone,
+    color: Color32,
+    fill_alpha: u8,
+) {
     let area = Rect::from_two_pos(
-        screen_pos(rect, editor, Point2::new(stock.x_mm, stock.max_y())),
-        screen_pos(rect, editor, Point2::new(stock.max_x(), stock.y_mm)),
+        screen_pos(rect, editor, Point2::new(zone.x_mm, zone.max_y())),
+        screen_pos(rect, editor, Point2::new(zone.max_x(), zone.y_mm)),
     )
     .intersect(rect);
     if !area.is_positive() {
         return;
     }
-    let color = theme.material();
     painter.rect_filled(
         area,
         0.0,
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 18),
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), fill_alpha),
     );
     painter.rect_stroke(area, 0.0, Stroke::new(1.5, color), egui::StrokeKind::Inside);
 }

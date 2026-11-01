@@ -228,6 +228,14 @@ pub fn build_toolpaths_cancellable(
             ));
         }
     }
+    if !document.restricted_areas.is_empty() {
+        let removed = avoid_restricted_areas(&mut toolpaths, &document.restricted_areas);
+        if removed > 0 {
+            warnings.push(format!(
+                "{removed} cut segment(s) were kept out of restricted areas"
+            ));
+        }
+    }
     Ok((toolpaths, warnings))
 }
 
@@ -238,6 +246,34 @@ pub fn build_toolpaths_cancellable(
 /// head can reach the next part. Returns the number of cut moves that were
 /// shortened or removed.
 pub fn clip_to_stock(toolpaths: &mut [Toolpath], stock: crate::document::MaterialZone) -> usize {
+    rewrite_cuts(toolpaths, &|from, to| {
+        clip_segment(from, to, stock)
+            .map(|interval| vec![interval])
+            .unwrap_or_default()
+    })
+}
+
+/// Remove the parts of every cut that enter a restricted area.
+///
+/// A cut that crosses a restricted area is split into the parts outside it; a
+/// cut entirely inside is removed. Returns the number of cut moves that were
+/// changed.
+pub fn avoid_restricted_areas(
+    toolpaths: &mut [Toolpath],
+    areas: &[crate::document::MaterialZone],
+) -> usize {
+    rewrite_cuts(toolpaths, &|from, to| free_intervals(from, to, areas))
+}
+
+/// Rebuild every toolpath, keeping only the parts returned by `allowed`.
+///
+/// The callback receives the start and end of a cut move and returns the
+/// visible intervals along it, in order. Between two intervals the laser is
+/// switched off and the head travels to the next entry point.
+fn rewrite_cuts(
+    toolpaths: &mut [Toolpath],
+    allowed: &dyn Fn(Point2, Point2) -> Vec<(f64, f64)>,
+) -> usize {
     let mut affected = 0;
     for toolpath in toolpaths.iter_mut() {
         let mut output = toolpath.clone();
@@ -259,7 +295,8 @@ pub fn clip_to_stock(toolpaths: &mut [Toolpath], stock: crate::document::Materia
                 continue;
             };
             path_point = Some(point);
-            let Some((start, end)) = clip_segment(from, point, stock) else {
+            let intervals = allowed(from, point);
+            if intervals.is_empty() {
                 affected += 1;
                 if laser_on {
                     output.push(MoveKind::Travel, from.x, from.y);
@@ -267,34 +304,68 @@ pub fn clip_to_stock(toolpaths: &mut [Toolpath], stock: crate::document::Materia
                     laser_on = false;
                 }
                 continue;
-            };
-            if start > 0.0 || end < 1.0 {
+            }
+            let whole =
+                intervals.len() == 1 && intervals[0].0 <= 1e-12 && intervals[0].1 >= 1.0 - 1e-12;
+            if !whole {
                 affected += 1;
             }
-            let entry = lerp(from, point, start);
-            let exit = lerp(from, point, end);
-            if !laser_on || start > 0.0 {
-                // A travel also switches the laser off before the new part.
-                if !head.is_some_and(|point| point.distance(entry) <= 1e-9) {
-                    output.push(MoveKind::Travel, entry.x, entry.y);
+            for (start, end) in intervals {
+                let entry = lerp(from, point, start);
+                let exit = lerp(from, point, end);
+                if !laser_on || start > 0.0 {
+                    // A travel also switches the laser off before the new part.
+                    if !head.is_some_and(|position| position.distance(entry) <= 1e-9) {
+                        output.push(MoveKind::Travel, entry.x, entry.y);
+                    }
                 }
-            }
-            if let Some(power) = movement.power {
-                output.push_powered(MoveKind::Cut, exit.x, exit.y, power);
-            } else {
-                output.push(MoveKind::Cut, exit.x, exit.y);
-            }
-            head = Some(exit);
-            laser_on = true;
-            if end < 1.0 {
-                // Stop the cut at the border; the rest of the segment is outside.
-                output.push(MoveKind::Travel, exit.x, exit.y);
-                laser_on = false;
+                if let Some(power) = movement.power {
+                    output.push_powered(MoveKind::Cut, exit.x, exit.y, power);
+                } else {
+                    output.push(MoveKind::Cut, exit.x, exit.y);
+                }
+                head = Some(exit);
+                laser_on = true;
+                if end < 1.0 {
+                    // Stop the cut here; the path continues outside the region.
+                    output.push(MoveKind::Travel, exit.x, exit.y);
+                    laser_on = false;
+                }
             }
         }
         *toolpath = output;
     }
     affected
+}
+
+/// The parts of a segment that are outside every restricted area.
+fn free_intervals(
+    from: Point2,
+    to: Point2,
+    areas: &[crate::document::MaterialZone],
+) -> Vec<(f64, f64)> {
+    let mut blocked: Vec<(f64, f64)> = areas
+        .iter()
+        .filter_map(|area| clip_segment(from, to, *area))
+        .collect();
+    if blocked.is_empty() {
+        return vec![(0.0, 1.0)];
+    }
+    blocked.retain(|(start, end)| end > start);
+    blocked.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut intervals = Vec::new();
+    let mut cursor = 0.0_f64;
+    for (start, end) in blocked {
+        if start > cursor {
+            intervals.push((cursor, start.min(1.0)));
+        }
+        cursor = cursor.max(end);
+    }
+    if cursor < 1.0 {
+        intervals.push((cursor, 1.0));
+    }
+    intervals.retain(|(start, end)| end - start > 1e-12);
+    intervals
 }
 
 /// Liang–Barsky clip of one segment against a rectangle.
@@ -1762,6 +1833,93 @@ mod tests {
             .find(|movement| movement.kind == MoveKind::Cut)
             .unwrap();
         assert_eq!(cut.power, Some(125.0));
+    }
+
+    #[test]
+    fn a_cut_through_a_restricted_area_is_split_in_two() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 5.0);
+        toolpath.push(MoveKind::Cut, 20.0, 5.0);
+        let mut toolpaths = vec![toolpath];
+        let affected = avoid_restricted_areas(
+            &mut toolpaths,
+            &[crate::document::MaterialZone::new(8.0, 0.0, 4.0, 10.0)],
+        );
+        assert_eq!(affected, 1);
+        let cuts: Vec<(f64, f64)> = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .map(|movement| (movement.x, movement.y))
+            .collect();
+        assert_eq!(cuts.len(), 2, "{:?}", toolpaths[0].moves);
+        assert!((cuts[0].0 - 8.0).abs() < 1e-9);
+        assert!((cuts[1].0 - 20.0).abs() < 1e-9);
+        // The head crosses the area with the laser off.
+        let travels: Vec<f64> = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Travel)
+            .map(|movement| movement.x)
+            .collect();
+        assert!(travels.contains(&12.0), "{travels:?}");
+    }
+
+    #[test]
+    fn a_cut_inside_a_restricted_area_is_removed() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 10.0, 10.0);
+        toolpath.push(MoveKind::Cut, 15.0, 10.0);
+        let mut toolpaths = vec![toolpath];
+        let affected = avoid_restricted_areas(
+            &mut toolpaths,
+            &[crate::document::MaterialZone::new(8.0, 5.0, 10.0, 10.0)],
+        );
+        assert_eq!(affected, 1);
+        assert!(toolpaths[0].is_empty());
+    }
+
+    #[test]
+    fn cuts_outside_the_restricted_areas_are_untouched() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push(MoveKind::Cut, 5.0, 0.0);
+        let mut toolpaths = vec![toolpath.clone()];
+        let affected = avoid_restricted_areas(
+            &mut toolpaths,
+            &[crate::document::MaterialZone::new(8.0, 5.0, 10.0, 10.0)],
+        );
+        assert_eq!(affected, 0);
+        assert_eq!(toolpaths[0].moves.len(), 2);
+    }
+
+    #[test]
+    fn a_job_avoids_restricted_areas_and_reports_it() {
+        let mut document = Document {
+            width_mm: 100.0,
+            height_mm: 100.0,
+            ..Document::default()
+        };
+        // Crosses the left edge of the 20 × 10 rectangle.
+        document.restricted_areas = vec![crate::document::MaterialZone::new(-1.0, 4.0, 2.0, 2.0)];
+        let layer_id = document.layers[0].id.clone();
+        let object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 20.0,
+                height: 10.0,
+                corner_radius: 0.0,
+            },
+        );
+        document.add_object(object);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_ne!(toolpaths.len(), 0);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("restricted")),
+            "the restriction was not reported: {warnings:?}"
+        );
     }
 
     #[test]

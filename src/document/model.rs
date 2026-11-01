@@ -189,6 +189,9 @@ pub struct Document {
     /// Material rectangle; when set, jobs are clipped to it.
     #[serde(default)]
     pub stock: Option<MaterialZone>,
+    /// Areas a job must not enter; cuts that reach them are removed.
+    #[serde(default)]
+    pub restricted_areas: Vec<MaterialZone>,
     pub format_version: u32,
 }
 
@@ -268,6 +271,20 @@ impl Document {
         Ok(report)
     }
 
+    /// Validate the optional material area and every restricted area.
+    fn validate_material_limits(&self) -> Result<(), String> {
+        if let Some(stock) = self.stock {
+            stock
+                .validate()
+                .map_err(|error| format!("material area: {error}"))?;
+        }
+        for area in &self.restricted_areas {
+            area.validate()
+                .map_err(|error| format!("restricted area: {error}"))?;
+        }
+        Ok(())
+    }
+
     /// Clone this document keeping only the objects whose identifiers are listed.
     ///
     /// Layers and operations are preserved so styles and assignments stay valid.
@@ -293,6 +310,7 @@ impl Default for Document {
             operations: Vec::new(),
             guides: Vec::new(),
             stock: None,
+            restricted_areas: Vec::new(),
             format_version: CURRENT_FORMAT_VERSION,
         }
     }
@@ -334,11 +352,7 @@ impl Document {
         if self.format_version == 0 {
             return Err("format version must be >= 1".to_string());
         }
-        if let Some(stock) = self.stock {
-            stock
-                .validate()
-                .map_err(|error| format!("material area: {error}"))?;
-        }
+        self.validate_material_limits()?;
         if self.layers.is_empty() {
             return Err("document must have at least one layer".to_string());
         }
@@ -605,6 +619,21 @@ mod tests {
             document.stock = Some(zone);
             assert!(document.validate().is_err(), "{zone:?} was accepted");
         }
+    }
+
+    #[test]
+    fn restricted_areas_round_trip_and_validate() {
+        let mut document = Document {
+            restricted_areas: vec![MaterialZone::new(1.0, 2.0, 3.0, 4.0)],
+            ..Document::default()
+        };
+        assert!(document.validate().is_ok());
+        let json = serde_json::to_string(&document).unwrap();
+        let loaded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.restricted_areas, document.restricted_areas);
+
+        document.restricted_areas[0].width_mm = 0.0;
+        assert!(document.validate().is_err());
     }
 
     #[test]

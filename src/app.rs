@@ -1390,6 +1390,70 @@ impl BeamWrightApp {
                         }
                     });
                 }
+                ui.separator();
+                ui.strong("Restricted areas");
+                ui.weak("Cuts that enter these rectangles are removed from the job.");
+                let mut remove_area: Option<usize> = None;
+                for (index, area) in self.editor.document.restricted_areas.iter_mut().enumerate()
+                {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("#{}", index + 1));
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut area.x_mm)
+                                    .speed(1.0)
+                                    .prefix("x ")
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut area.y_mm)
+                                    .speed(1.0)
+                                    .prefix("y ")
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut area.width_mm)
+                                    .speed(1.0)
+                                    .range(0.1..=100_000.0)
+                                    .prefix("w ")
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut area.height_mm)
+                                    .speed(1.0)
+                                    .range(0.1..=100_000.0)
+                                    .prefix("h ")
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        if ui.button("Remove").clicked() {
+                            remove_area = Some(index);
+                        }
+                    });
+                }
+                if let Some(index) = remove_area {
+                    if index < self.editor.document.restricted_areas.len() {
+                        self.editor.document.restricted_areas.remove(index);
+                        changed = true;
+                    }
+                }
+                if ui.button("Add restricted area").clicked() {
+                    self.editor.document.restricted_areas.push(
+                        crate::document::MaterialZone::new(
+                            page_width * 0.25,
+                            page_height * 0.25,
+                            page_width * 0.5,
+                            page_height * 0.5,
+                        ),
+                    );
+                    changed = true;
+                }
             });
         if changed {
             self.needs_fit = true;
