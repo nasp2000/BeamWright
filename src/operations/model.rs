@@ -86,6 +86,12 @@ pub struct OperationParams {
     /// Width of each holding tab, in millimetres.
     #[serde(default = "default_tab_width")]
     pub tab_width_mm: f64,
+    /// Distance between tabs, in millimetres.
+    ///
+    /// Zero uses the tab count; a positive value derives the count from the
+    /// perimeter of each contour.
+    #[serde(default)]
+    pub tab_spacing_mm: f64,
     /// Extra cut distance before the contour, in millimetres.
     #[serde(default)]
     pub lead_in_mm: f64,
@@ -204,6 +210,11 @@ impl OperationParams {
             format!("{:.2} mm", target.tab_width_mm),
         );
         push(
+            "Tab spacing",
+            format!("{:.2} mm", self.tab_spacing_mm),
+            format!("{:.2} mm", target.tab_spacing_mm),
+        );
+        push(
             "Kerf",
             format!("{:.2} mm", self.kerf_mm),
             format!("{:.2} mm", target.kerf_mm),
@@ -232,6 +243,7 @@ impl Default for OperationParams {
             kerf_mm: 0.0,
             tabs: 0,
             tab_width_mm: default_tab_width(),
+            tab_spacing_mm: 0.0,
             lead_in_mm: 0.0,
             lead_out_mm: 0.0,
         }

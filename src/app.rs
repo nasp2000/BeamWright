@@ -5674,6 +5674,18 @@ impl BeamWrightApp {
                                     .range(0.0..=20.0),
                                 );
                                 ui.end_row();
+                                ui.label("Tab spacing (mm)");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut operation.params.tab_spacing_mm,
+                                    )
+                                    .speed(0.5)
+                                    .range(0.0..=1000.0),
+                                )
+                                .on_hover_text(
+                                    "Distance between tabs along each contour; zero uses the tab count above",
+                                );
+                                ui.end_row();
                                 ui.label("Lead-in / out (mm)");
                                 ui.horizontal(|ui| {
                                     ui.add(

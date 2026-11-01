@@ -62,6 +62,7 @@ struct Resolved {
     kerf_mm: f64,
     tabs: u32,
     tab_width_mm: f64,
+    tab_spacing_mm: f64,
     lead_in_mm: f64,
     lead_out_mm: f64,
     cross_hatch: bool,
@@ -92,6 +93,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
             kerf_mm: operation.params.kerf_mm.max(0.0),
             tabs: operation.params.tabs,
             tab_width_mm: operation.params.tab_width_mm.max(0.0),
+            tab_spacing_mm: operation.params.tab_spacing_mm.max(0.0),
             lead_in_mm: operation.params.lead_in_mm.max(0.0),
             lead_out_mm: operation.params.lead_out_mm.max(0.0),
             cross_hatch: operation.params.cross_hatch,
@@ -116,6 +118,7 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 kerf_mm: params.kerf_mm.max(0.0),
                 tabs: params.tabs,
                 tab_width_mm: params.tab_width_mm.max(0.0),
+                tab_spacing_mm: params.tab_spacing_mm.max(0.0),
                 lead_in_mm: params.lead_in_mm.max(0.0),
                 lead_out_mm: params.lead_out_mm.max(0.0),
                 cross_hatch: params.cross_hatch,
@@ -206,6 +209,7 @@ pub fn build_toolpaths_cancellable(
                             &points,
                             resolved.tabs,
                             resolved.tab_width_mm,
+                            resolved.tab_spacing_mm,
                             resolved.lead_in_mm,
                             resolved.lead_out_mm,
                         );
@@ -681,6 +685,7 @@ fn push_fill_toolpath(
             &points,
             resolved.tabs,
             resolved.tab_width_mm,
+            resolved.tab_spacing_mm,
             resolved.lead_in_mm,
             resolved.lead_out_mm,
         );
@@ -723,7 +728,7 @@ fn append_offset_fill(toolpath: &mut Toolpath, polygon: &[(f64, f64)], interval:
             break;
         }
         let points: Vec<Point2> = offset.iter().map(|(x, y)| Point2::new(*x, *y)).collect();
-        append_contour(toolpath, &points, 0, 0.0, 0.0, 0.0);
+        append_contour(toolpath, &points, 0, 0.0, 0.0, 0.0, 0.0);
         loops += 1;
     }
     loops
@@ -742,12 +747,23 @@ fn kerfed(points: &[Point2], kerf_mm: f64) -> Vec<Point2> {
     }
 }
 
+/// Tabs per contour: a spacing derives the count from the perimeter.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tab_count(total: f64, tabs: u32, tab_spacing: f64) -> u32 {
+    if tab_spacing > 0.0 && total > 0.0 {
+        ((total / tab_spacing).round() as u32).clamp(1, 20)
+    } else {
+        tabs
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn append_contour(
     toolpath: &mut Toolpath,
     points: &[Point2],
     tabs: u32,
     tab_width: f64,
+    tab_spacing: f64,
     lead_in: f64,
     lead_out: f64,
 ) {
@@ -765,10 +781,11 @@ fn append_contour(
         lengths.push(length);
         total += length;
     }
+    let count = tab_count(total, tabs, tab_spacing);
     let mut gaps = Vec::new();
-    if tabs > 0 && tab_width > 0.0 && total > tab_width * f64::from(tabs) {
-        for index in 0..tabs {
-            let center = total * (f64::from(index) + 0.5) / f64::from(tabs);
+    if count > 0 && tab_width > 0.0 && total > tab_width * f64::from(count) {
+        for index in 0..count {
+            let center = total * (f64::from(index) + 0.5) / f64::from(count);
             gaps.push((center - tab_width / 2.0, center + tab_width / 2.0));
         }
     }
@@ -1766,6 +1783,45 @@ mod tests {
         assert!((cuts[1] - 150.0).abs() < 1e-9);
         assert!((cuts[2] - 100.0).abs() < 1e-9);
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn square_contour() -> Vec<Point2> {
+        vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(0.0, 10.0),
+            Point2::new(0.0, 0.0),
+        ]
+    }
+
+    #[test]
+    fn tab_spacing_derives_the_count_from_the_perimeter() {
+        let mut toolpath = Toolpath::new("t", 1000.0, 500.0, 1);
+        // 40 mm perimeter with a 2 mm tab every 10 mm gives four tabs.
+        append_contour(&mut toolpath, &square_contour(), 0, 2.0, 10.0, 0.0, 0.0);
+        let travels = toolpath
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Travel)
+            .count();
+        let cuts = toolpath
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .count();
+        assert_eq!(travels, 5, "one entry and four tab crossings");
+        assert_eq!(cuts, 8, "a cut before and after each tab");
+    }
+
+    #[test]
+    fn a_tab_spacing_sets_the_count_and_is_clamped() {
+        assert_eq!(tab_count(40.0, 0, 10.0), 4);
+        assert_eq!(tab_count(40.0, 0, 100.0), 1);
+        assert_eq!(tab_count(40.0, 0, 0.0), 0);
+        assert_eq!(tab_count(40.0, 3, 0.0), 3);
+        assert_eq!(tab_count(0.0, 3, 10.0), 3);
+        assert_eq!(tab_count(4000.0, 0, 1.0), 20);
     }
 
     fn stock(x: f64, y: f64, width: f64, height: f64) -> crate::document::MaterialZone {
