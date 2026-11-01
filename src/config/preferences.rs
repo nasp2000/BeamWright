@@ -1,6 +1,129 @@
 use super::DrawingPrefs;
 use serde::{Deserialize, Serialize};
 
+/// One category of the preferences window.
+///
+/// Every setting is shown exactly once, in the category it belongs to, so the
+/// window never becomes a flat list of unrelated controls. The categories and
+/// their keywords are also the search index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    General,
+    Interface,
+    Drawing,
+    Images,
+    Files,
+    Machines,
+    Advanced,
+}
+
+impl Section {
+    /// Every category, in the order shown in the window.
+    pub const ALL: [Section; 7] = [
+        Section::General,
+        Section::Interface,
+        Section::Drawing,
+        Section::Images,
+        Section::Files,
+        Section::Machines,
+        Section::Advanced,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Section::General => "General",
+            Section::Interface => "Interface",
+            Section::Drawing => "Drawing and snapping",
+            Section::Images => "Images",
+            Section::Files => "Files and backup",
+            Section::Machines => "Machines and profiles",
+            Section::Advanced => "Advanced",
+        }
+    }
+
+    /// A one-line description shown above the category's controls.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Section::General => "Units, text and confirmations.",
+            Section::Interface => "Theme, canvas overlays and navigation.",
+            Section::Drawing => "Grid spacing and every snapping target.",
+            Section::Images => "Limits applied when a raster image is imported.",
+            Section::Files => "Default folder, backups and recent projects.",
+            Section::Machines => "Work areas and material libraries.",
+            Section::Advanced => "Where the preferences are stored.",
+        }
+    }
+
+    /// Extra words that find this category in the search box.
+    pub fn keywords(self) -> &'static [&'static str] {
+        match self {
+            Section::General => &["unit", "font", "text", "confirm", "discard", "language"],
+            Section::Interface => &[
+                "theme",
+                "dark",
+                "light",
+                "rulers",
+                "selection",
+                "handles",
+                "colour",
+                "zoom",
+                "guides",
+                "group",
+            ],
+            Section::Drawing => &[
+                "grid",
+                "snap",
+                "nodes",
+                "endpoints",
+                "centres",
+                "midpoints",
+                "intersections",
+                "bounds",
+                "tolerance",
+            ],
+            Section::Images => &["raster", "pixel", "resolution", "import", "bitmap", "photo"],
+            Section::Files => &[
+                "directory",
+                "folder",
+                "backup",
+                "recent",
+                "autosave",
+                "project",
+            ],
+            Section::Machines => &[
+                "machine",
+                "profile",
+                "material",
+                "work area",
+                "firmware",
+                "preset",
+            ],
+            Section::Advanced => &["data", "path", "reset", "defaults", "storage"],
+        }
+    }
+
+    /// True when the category label or one of its keywords contains `query`.
+    ///
+    /// The comparison ignores case and surrounding whitespace; an empty query
+    /// matches every category.
+    pub fn matches(self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+        self.label().to_lowercase().contains(&query)
+            || self
+                .keywords()
+                .iter()
+                .any(|keyword| keyword.contains(&query))
+    }
+
+    /// The first category matching `query`, or `None` when nothing matches.
+    pub fn first_match(query: &str) -> Option<Section> {
+        Self::ALL.into_iter().find(|section| section.matches(query))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralPrefs {
     pub default_unit: String,
@@ -100,6 +223,68 @@ impl AppPreferences {
         self.general.validate()?;
         self.drawing.validate()?;
         Ok(())
+    }
+
+    /// Restore the defaults of one category, leaving every other category alone.
+    ///
+    /// The recent-project list is history rather than a setting, so even a full
+    /// reset keeps it.
+    pub fn reset_section(&mut self, section: Section) {
+        let defaults = Self::default();
+        match section {
+            Section::General => {
+                self.general
+                    .default_unit
+                    .clone_from(&defaults.general.default_unit);
+                self.general
+                    .text_font
+                    .clone_from(&defaults.general.text_font);
+                self.general.confirm_destructive = defaults.general.confirm_destructive;
+            }
+            Section::Interface => {
+                self.general.theme.clone_from(&defaults.general.theme);
+                self.drawing.show_rulers = defaults.drawing.show_rulers;
+                self.drawing.show_selection = defaults.drawing.show_selection;
+                self.drawing
+                    .selection_color
+                    .clone_from(&defaults.drawing.selection_color);
+                self.drawing
+                    .handle_style
+                    .clone_from(&defaults.drawing.handle_style);
+                self.drawing.zoom_step = defaults.drawing.zoom_step;
+                self.drawing.scroll_zoom_step = defaults.drawing.scroll_zoom_step;
+                self.drawing.select_whole_group = defaults.drawing.select_whole_group;
+                self.drawing.guides_visible = defaults.drawing.guides_visible;
+            }
+            Section::Drawing => {
+                self.drawing.grid_spacing_mm = defaults.drawing.grid_spacing_mm;
+                self.drawing.snap_tolerance_px = defaults.drawing.snap_tolerance_px;
+                self.drawing.snap_step_mm = defaults.drawing.snap_step_mm;
+                self.drawing.snap_enabled = defaults.drawing.snap_enabled;
+                self.drawing.snap_nodes = defaults.drawing.snap_nodes;
+                self.drawing.snap_endpoints = defaults.drawing.snap_endpoints;
+                self.drawing.snap_centers = defaults.drawing.snap_centers;
+                self.drawing.snap_midpoints = defaults.drawing.snap_midpoints;
+                self.drawing.snap_intersections = defaults.drawing.snap_intersections;
+                self.drawing.snap_limits = defaults.drawing.snap_limits;
+                self.drawing.snap_guides = defaults.drawing.snap_guides;
+            }
+            Section::Images => {
+                self.drawing.max_image_pixels = defaults.drawing.max_image_pixels;
+            }
+            Section::Files => {
+                self.general
+                    .default_directory
+                    .clone_from(&defaults.general.default_directory);
+                self.general.backup_enabled = defaults.general.backup_enabled;
+            }
+            Section::Machines => {}
+            Section::Advanced => {
+                let recent = std::mem::take(&mut self.general.recent_projects);
+                *self = defaults;
+                self.general.recent_projects = recent;
+            }
+        }
     }
 }
 
@@ -236,5 +421,126 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         let q: AppPreferences = serde_json::from_str(&s).unwrap();
         assert_eq!(q.general.theme, p.general.theme);
+    }
+
+    #[test]
+    fn every_section_has_a_unique_label_hint_and_keywords() {
+        let mut labels = Vec::new();
+        for section in Section::ALL {
+            assert_ne!(section.label().trim(), "");
+            assert_ne!(section.hint().trim(), "");
+            assert!(matches!(section.keywords(), [_, ..]));
+            assert!(
+                !labels.contains(&section.label()),
+                "duplicate label {}",
+                section.label()
+            );
+            labels.push(section.label());
+            for keyword in section.keywords() {
+                assert_ne!(keyword.trim(), "");
+                assert_eq!(*keyword, keyword.to_lowercase());
+            }
+        }
+        assert_eq!(labels.len(), Section::ALL.len());
+    }
+
+    #[test]
+    fn search_matches_labels_keywords_and_ignores_case() {
+        for section in Section::ALL {
+            assert!(section.matches(""));
+            assert!(section.matches("   "));
+            assert!(section.matches(&section.label().to_lowercase()));
+            assert!(section.matches(&section.label().to_uppercase()));
+            let keyword = section.keywords()[0];
+            assert!(section.matches(keyword));
+            assert!(section.matches(&keyword.to_uppercase()));
+        }
+        assert!(Section::Drawing.matches("snap"));
+        assert!(Section::Drawing.matches("  SNAP  "));
+        assert!(Section::Images.matches("pixel"));
+        assert!(!Section::General.matches("snap"));
+        assert!(!Section::General.matches("nothing-matches-this"));
+    }
+
+    #[test]
+    fn first_match_finds_a_category_or_nothing() {
+        assert_eq!(Section::first_match(""), Some(Section::General));
+        assert_eq!(Section::first_match("pixel"), Some(Section::Images));
+        assert_eq!(Section::first_match("backup"), Some(Section::Files));
+        assert_eq!(Section::first_match("nothing-matches-this"), None);
+    }
+
+    #[test]
+    fn reset_section_only_touches_its_own_category() {
+        let mut preferences = AppPreferences::default();
+        preferences.general.default_unit = "in".to_string();
+        preferences.general.theme = "light".to_string();
+        preferences.general.backup_enabled = false;
+        preferences.drawing.grid_spacing_mm = 2.5;
+        preferences.drawing.snap_enabled = true;
+        preferences.drawing.max_image_pixels = 2_000_000;
+        preferences.drawing.zoom_step = 1.5;
+
+        preferences.reset_section(Section::Drawing);
+        let defaults = AppPreferences::default();
+        assert!(
+            (preferences.drawing.grid_spacing_mm - defaults.drawing.grid_spacing_mm).abs() < 1e-9
+        );
+        assert_eq!(
+            preferences.drawing.snap_enabled,
+            defaults.drawing.snap_enabled
+        );
+        // Other categories are untouched.
+        assert_eq!(preferences.general.default_unit, "in");
+        assert_eq!(preferences.general.theme, "light");
+        assert!(!preferences.general.backup_enabled);
+        assert_eq!(preferences.drawing.max_image_pixels, 2_000_000);
+        assert!((preferences.drawing.zoom_step - 1.5).abs() < 1e-9);
+        assert!(preferences.validate().is_ok());
+    }
+
+    #[test]
+    fn every_category_resets_to_a_valid_state() {
+        for section in Section::ALL {
+            let mut preferences = AppPreferences::default();
+            preferences.general.default_unit = "in".to_string();
+            preferences.general.theme = "light".to_string();
+            preferences.drawing.grid_spacing_mm = 3.0;
+            preferences.drawing.snap_enabled = true;
+            preferences.drawing.max_image_pixels = 2_000_000;
+            preferences.general.backup_enabled = false;
+            preferences.reset_section(section);
+            assert!(
+                preferences.validate().is_ok(),
+                "{} left an invalid state",
+                section.label()
+            );
+        }
+    }
+
+    #[test]
+    fn reset_all_keeps_the_recent_projects() {
+        let mut preferences = AppPreferences::default();
+        preferences.general.recent_projects = vec!["/tmp/a.bwp".to_string()];
+        preferences.general.default_unit = "in".to_string();
+        preferences.drawing.grid_spacing_mm = 4.0;
+        preferences.drawing.snap_nodes = true;
+        preferences.drawing.max_image_pixels = 3_000_000;
+        preferences.reset_section(Section::Advanced);
+        let defaults = AppPreferences::default();
+        assert_eq!(preferences.general.recent_projects.len(), 1);
+        assert_eq!(preferences.general.recent_projects[0], "/tmp/a.bwp");
+        assert_eq!(
+            preferences.general.default_unit,
+            defaults.general.default_unit
+        );
+        assert!(
+            (preferences.drawing.grid_spacing_mm - defaults.drawing.grid_spacing_mm).abs() < 1e-9
+        );
+        assert_eq!(preferences.drawing.snap_nodes, defaults.drawing.snap_nodes);
+        assert_eq!(
+            preferences.drawing.max_image_pixels,
+            defaults.drawing.max_image_pixels
+        );
     }
 }

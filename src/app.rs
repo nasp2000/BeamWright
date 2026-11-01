@@ -307,6 +307,8 @@ pub struct BeamWrightApp {
     preferences: crate::config::preferences::AppPreferences,
     preferences_path: PathBuf,
     preferences_open: bool,
+    preferences_section: crate::config::preferences::Section,
+    preferences_search: String,
     polygon_sides: usize,
     grid_array_open: bool,
     offset_open: bool,
@@ -829,6 +831,8 @@ impl BeamWrightApp {
             preferences: preferences.clone(),
             preferences_path,
             preferences_open: false,
+            preferences_section: crate::config::preferences::Section::General,
+            preferences_search: String::new(),
             polygon_sides: 6,
             grid_array_open: false,
             offset_open: false,
@@ -7695,70 +7699,286 @@ impl BeamWrightApp {
     }
 
     fn preferences_window(&mut self, ctx: &egui::Context) {
+        use crate::config::preferences::Section;
         let mut open = self.preferences_open;
         let mut changed = false;
+        let mut reset_section = false;
+        let mut reset_all = false;
+        let mut close_requested = false;
         egui::Window::new("Preferences")
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
+            .default_size([760.0, 520.0])
+            .min_size([600.0, 420.0])
             .show(ctx, |ui| {
-                ui.heading("Drawing");
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.preferences.drawing.grid_spacing_mm)
-                            .speed(0.5)
-                            .range(0.1..=1000.0)
-                            .suffix(" mm grid"),
-                    )
-                    .changed();
+                ui.horizontal(|ui| {
+                    ui.add(icons::image_at(ui.ctx(), Icon::Search, 16.0));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.preferences_search)
+                            .hint_text("Search settings")
+                            .desired_width(240.0),
+                    );
+                    if !self.preferences_search.is_empty() && ui.button("Clear").clicked() {
+                        self.preferences_search.clear();
+                    }
+                });
+                ui.separator();
+                let content_height = (ui.available_height() - 44.0).max(220.0);
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(190.0, content_height),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("preferences_sections")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for section in Section::ALL {
+                                        if !section.matches(&self.preferences_search) {
+                                            continue;
+                                        }
+                                        if icons::selectable(
+                                            ui,
+                                            self.preferences_section == section,
+                                            section_icon(section),
+                                            section.label(),
+                                        )
+                                        .clicked()
+                                        {
+                                            self.preferences_section = section;
+                                        }
+                                    }
+                                    if Section::first_match(&self.preferences_search).is_none() {
+                                        ui.weak("No settings match that search.");
+                                    }
+                                });
+                        },
+                    );
+                    ui.separator();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), content_height),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("preferences_content")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if Section::first_match(&self.preferences_search).is_some() {
+                                        ui.heading(self.preferences_section.label());
+                                        ui.weak(self.preferences_section.hint());
+                                        ui.add_space(8.0);
+                                        changed |= self.preferences_section_ui(ui);
+                                    } else {
+                                        ui.heading("No match");
+                                        ui.label(
+                                            "No setting matches the search. Clear it to see \
+                                             every category again.",
+                                        );
+                                    }
+                                });
+                        },
+                    );
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let resettable = self.preferences_section != Section::Machines;
+                    if ui
+                        .add_enabled(resettable, egui::Button::new("Reset section"))
+                        .on_hover_text("Restore the defaults of this category only")
+                        .clicked()
+                    {
+                        reset_section = true;
+                    }
+                    if ui
+                        .button("Reset all")
+                        .on_hover_text("Restore every setting except the recent projects")
+                        .clicked()
+                    {
+                        reset_all = true;
+                    }
+                    ui.weak("Changes are saved automatically.");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+            });
+        if close_requested {
+            open = false;
+        }
+        if let Some(first) = Section::first_match(&self.preferences_search) {
+            if !self.preferences_section.matches(&self.preferences_search) {
+                self.preferences_section = first;
+            }
+        }
+        if reset_section {
+            self.preferences.reset_section(self.preferences_section);
+            changed = true;
+        }
+        if reset_all {
+            self.preferences.reset_section(Section::Advanced);
+            changed = true;
+        }
+        if changed {
+            self.apply_preferences();
+            match self.preferences.save(&self.preferences_path) {
+                Ok(()) => self.status = "Preferences saved".to_string(),
+                Err(error) => self.status = format!("Cannot save preferences: {error}"),
+            }
+        }
+        self.preferences_open = open;
+    }
+
+    /// Copy the stored preferences into the live editor state.
+    fn apply_preferences(&mut self) {
+        self.editor.canvas.grid_spacing_mm = self.preferences.drawing.grid_spacing_mm;
+        self.editor.snap_step_mm = self.preferences.drawing.snap_step_mm;
+        self.editor.snap_enabled = self.preferences.drawing.snap_enabled;
+        self.editor.snap_nodes = self.preferences.drawing.snap_nodes;
+        self.editor.snap_endpoints = self.preferences.drawing.snap_endpoints;
+        self.editor.snap_centers = self.preferences.drawing.snap_centers;
+        self.editor.snap_midpoints = self.preferences.drawing.snap_midpoints;
+        self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
+        self.editor.snap_limits = self.preferences.drawing.snap_limits;
+        self.editor.show_rulers = self.preferences.drawing.show_rulers;
+        self.editor.show_selection = self.preferences.drawing.show_selection;
+        self.editor
+            .selection_color
+            .clone_from(&self.preferences.drawing.selection_color);
+        self.editor.handle_style =
+            crate::editor::state::HandleStyle::from_label(&self.preferences.drawing.handle_style);
+        self.editor.zoom_step = self.preferences.drawing.zoom_step;
+        self.editor.scroll_zoom_step = self.preferences.drawing.scroll_zoom_step;
+        self.editor.select_whole_group = self.preferences.drawing.select_whole_group;
+        self.editor.guides_visible = self.preferences.drawing.guides_visible;
+        self.editor.snap_guides = self.preferences.drawing.snap_guides;
+        self.dark_mode = self.preferences.general.theme == "dark";
+    }
+
+    /// Draw the controls of the selected preferences category.
+    fn preferences_section_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        use crate::config::preferences::Section;
+        let mut changed = false;
+        match self.preferences_section {
+            Section::General => {
+                egui::Grid::new("pref_general")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Default unit");
+                        let mut unit = self.preferences.general.default_unit.clone();
+                        egui::ComboBox::from_id_salt("pref_default_unit")
+                            .selected_text(unit.clone())
+                            .show_ui(ui, |ui| {
+                                for candidate in ["mm", "cm", "in", "px"] {
+                                    ui.selectable_value(
+                                        &mut unit,
+                                        candidate.to_string(),
+                                        candidate,
+                                    );
+                                }
+                            });
+                        if unit != self.preferences.general.default_unit {
+                            self.preferences.general.default_unit = unit;
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label("Text font");
+                        changed |= font_picker(
+                            ui,
+                            "preferences_text_font",
+                            &mut self.preferences.general.text_font,
+                        );
+                        ui.end_row();
+                    });
                 changed |= ui
                     .checkbox(
-                        &mut self.preferences.drawing.snap_enabled,
-                        "Snap to grid step",
+                        &mut self.preferences.general.confirm_destructive,
+                        "Confirm before discarding unsaved changes",
                     )
                     .changed();
+            }
+            Section::Interface => {
+                egui::Grid::new("pref_interface")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Theme");
+                        let mut dark = self.preferences.general.theme == "dark";
+                        egui::ComboBox::from_id_salt("pref_theme")
+                            .selected_text(if dark { "Dark" } else { "Light" })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut dark, true, "Dark");
+                                ui.selectable_value(&mut dark, false, "Light");
+                            });
+                        let wanted = if dark { "dark" } else { "light" };
+                        if wanted != self.preferences.general.theme {
+                            self.preferences.general.theme = wanted.to_string();
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label("Selection colour");
+                        let (r, g, b) = parse_hex_color(&self.preferences.drawing.selection_color)
+                            .unwrap_or((255, 122, 26));
+                        let mut rgb = [r, g, b];
+                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                            self.preferences.drawing.selection_color =
+                                to_hex(rgb[0], rgb[1], rgb[2]);
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label("Handle style");
+                        let mut style = self.preferences.drawing.handle_style.clone();
+                        egui::ComboBox::from_id_salt("pref_handle_style")
+                            .selected_text(style.clone())
+                            .show_ui(ui, |ui| {
+                                for candidate in ["square", "circle"] {
+                                    ui.selectable_value(
+                                        &mut style,
+                                        candidate.to_string(),
+                                        candidate,
+                                    );
+                                }
+                            });
+                        if style != self.preferences.drawing.handle_style {
+                            self.preferences.drawing.handle_style = style;
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label("Zoom step");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.preferences.drawing.zoom_step)
+                                    .speed(0.01)
+                                    .range(1.01..=3.0)
+                                    .fixed_decimals(2),
+                            )
+                            .changed();
+                        ui.end_row();
+
+                        ui.label("Wheel zoom step");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(
+                                    &mut self.preferences.drawing.scroll_zoom_step,
+                                )
+                                .speed(0.01)
+                                .range(1.01..=2.0)
+                                .fixed_decimals(2),
+                            )
+                            .changed();
+                        ui.end_row();
+                    });
                 changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.preferences.drawing.snap_step_mm)
-                            .speed(0.1)
-                            .range(0.1..=100.0)
-                            .suffix(" mm snap"),
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut self.preferences.drawing.snap_nodes, "Snap to nodes")
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.preferences.drawing.snap_endpoints,
-                        "Snap to open-path endpoints",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.preferences.drawing.snap_centers,
-                        "Snap to object centres",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.preferences.drawing.snap_midpoints,
-                        "Snap to segment midpoints",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.preferences.drawing.snap_intersections,
-                        "Snap to outline intersections",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut self.preferences.drawing.snap_limits,
-                        "Snap to object bounds",
-                    )
+                    .checkbox(&mut self.preferences.drawing.show_rulers, "Show rulers")
                     .changed();
                 changed |= ui
                     .checkbox(
@@ -7770,89 +7990,184 @@ impl BeamWrightApp {
                     .checkbox(&mut self.preferences.drawing.guides_visible, "Show guides")
                     .changed();
                 changed |= ui
-                    .checkbox(&mut self.preferences.drawing.snap_guides, "Snap to guides")
-                    .changed();
-                ui.separator();
-                ui.heading("General");
-                ui.horizontal(|ui| {
-                    ui.label("Default unit");
-                    let mut unit = self.preferences.general.default_unit.clone();
-                    egui::ComboBox::from_id_salt("pref_default_unit")
-                        .selected_text(unit.clone())
-                        .show_ui(ui, |ui| {
-                            for candidate in ["mm", "cm", "in", "px"] {
-                                ui.selectable_value(&mut unit, candidate.to_string(), candidate);
-                            }
-                        });
-                    if unit != self.preferences.general.default_unit {
-                        self.preferences.general.default_unit = unit;
-                        changed = true;
-                    }
-                });
-                changed |= ui
                     .checkbox(
-                        &mut self.preferences.general.confirm_destructive,
-                        "Confirm before discarding unsaved changes",
+                        &mut self.preferences.drawing.select_whole_group,
+                        "Clicking one object selects the whole group",
                     )
                     .changed();
+            }
+            Section::Drawing => {
+                egui::Grid::new("pref_drawing")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Grid spacing");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.preferences.drawing.grid_spacing_mm)
+                                    .speed(0.5)
+                                    .range(0.1..=1000.0)
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        ui.end_row();
+
+                        ui.label("Snap step");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.preferences.drawing.snap_step_mm)
+                                    .speed(0.1)
+                                    .range(0.1..=100.0)
+                                    .suffix(" mm"),
+                            )
+                            .changed();
+                        ui.end_row();
+
+                        ui.label("Snap tolerance");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(
+                                    &mut self.preferences.drawing.snap_tolerance_px,
+                                )
+                                .speed(0.5)
+                                .range(0.0..=64.0)
+                                .suffix(" px"),
+                            )
+                            .changed();
+                        ui.end_row();
+                    });
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_enabled,
+                        "Snap to the grid step",
+                    )
+                    .changed();
+                ui.add_space(6.0);
+                ui.strong("Snap targets");
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_nodes, "Path nodes")
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_endpoints,
+                        "Open-path endpoints",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_centers, "Object centres")
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_midpoints,
+                        "Segment midpoints",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.preferences.drawing.snap_intersections,
+                        "Outline intersections",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_limits, "Object bounds")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.preferences.drawing.snap_guides, "Guides")
+                    .changed();
+            }
+            Section::Images => {
+                egui::Grid::new("pref_images")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Largest imported image");
+                        let mut megapixels =
+                            self.preferences.drawing.max_image_pixels as f64 / 1_000_000.0;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut megapixels)
+                                    .speed(1.0)
+                                    .range(1.0..=500.0)
+                                    .suffix(" MP"),
+                            )
+                            .changed()
+                        {
+                            self.preferences.drawing.max_image_pixels =
+                                (megapixels * 1_000_000.0).round() as u64;
+                            changed = true;
+                        }
+                        ui.end_row();
+                    });
+                ui.weak(
+                    "Preparation settings (mode, dithering, tone curve, crop) belong to each \
+                     image; open Adjust image from the object context menu.",
+                );
+            }
+            Section::Files => {
+                egui::Grid::new("pref_files")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Default directory");
+                        changed |= ui
+                            .text_edit_singleline(&mut self.preferences.general.default_directory)
+                            .changed();
+                        ui.end_row();
+                    });
                 changed |= ui
                     .checkbox(
                         &mut self.preferences.general.backup_enabled,
                         "Keep a .bak of the previous project version",
                     )
                     .changed();
+                ui.add_space(6.0);
+                ui.strong("Recent projects");
                 ui.horizontal(|ui| {
-                    ui.label("Text font");
-                    changed |= font_picker(
-                        ui,
-                        "preferences_text_font",
-                        &mut self.preferences.general.text_font,
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Default directory");
-                    changed |= ui
-                        .text_edit_singleline(&mut self.preferences.general.default_directory)
-                        .changed();
-                });
-                ui.separator();
-                ui.heading("Appearance");
-                let mut dark = self.preferences.general.theme == "dark";
-                if ui.checkbox(&mut dark, "Dark theme").changed() {
-                    self.preferences.general.theme =
-                        if dark { "dark" } else { "light" }.to_string();
-                    changed = true;
-                }
-                if changed {
-                    self.editor.canvas.grid_spacing_mm = self.preferences.drawing.grid_spacing_mm;
-                    self.editor.snap_step_mm = self.preferences.drawing.snap_step_mm;
-                    self.editor.snap_enabled = self.preferences.drawing.snap_enabled;
-                    self.editor.snap_nodes = self.preferences.drawing.snap_nodes;
-                    self.editor.snap_endpoints = self.preferences.drawing.snap_endpoints;
-                    self.editor.snap_centers = self.preferences.drawing.snap_centers;
-                    self.editor.snap_midpoints = self.preferences.drawing.snap_midpoints;
-                    self.editor.snap_intersections = self.preferences.drawing.snap_intersections;
-                    self.editor.snap_limits = self.preferences.drawing.snap_limits;
-                    self.editor.show_rulers = self.preferences.drawing.show_rulers;
-                    self.editor.show_selection = self.preferences.drawing.show_selection;
-                    self.editor
-                        .selection_color
-                        .clone_from(&self.preferences.drawing.selection_color);
-                    self.editor.handle_style = crate::editor::state::HandleStyle::from_label(
-                        &self.preferences.drawing.handle_style,
-                    );
-                    self.editor.zoom_step = self.preferences.drawing.zoom_step;
-                    self.editor.select_whole_group = self.preferences.drawing.select_whole_group;
-                    self.editor.guides_visible = self.preferences.drawing.guides_visible;
-                    self.editor.snap_guides = self.preferences.drawing.snap_guides;
-                    self.dark_mode = self.preferences.general.theme == "dark";
-                    match self.preferences.save(&self.preferences_path) {
-                        Ok(()) => self.status = "Preferences saved".to_string(),
-                        Err(error) => self.status = format!("Cannot save preferences: {error}"),
+                    ui.weak(format!(
+                        "{} remembered",
+                        self.preferences.general.recent_projects.len()
+                    ));
+                    let enabled = !self.preferences.general.recent_projects.is_empty();
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Clear recent projects"))
+                        .clicked()
+                    {
+                        self.preferences.general.recent_projects.clear();
+                        changed = true;
                     }
+                });
+            }
+            Section::Machines => {
+                ui.weak(
+                    "Profiles hold work areas, firmware labels and reference values. No \
+                     connection, port or controller setting is stored.",
+                );
+                ui.add_space(6.0);
+                if icons::button(ui, Icon::Profiles, "Machine profiles...").clicked() {
+                    self.machines_open = true;
                 }
-            });
-        self.preferences_open = open;
+                if icons::button(ui, Icon::Materials, "Materials and operations...").clicked() {
+                    self.profiles_open = true;
+                }
+            }
+            Section::Advanced => {
+                egui::Grid::new("pref_advanced")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Data directory");
+                        ui.monospace(crate::config::paths::data_dir().display().to_string());
+                        ui.end_row();
+                        ui.label("Preferences file");
+                        ui.monospace(self.preferences_path.display().to_string());
+                        ui.end_row();
+                    });
+                ui.weak(
+                    "Reset all restores every setting above but keeps the recent-project list.",
+                );
+            }
+        }
+        changed
     }
 
     fn profiles_window(&mut self, ctx: &egui::Context) {
@@ -8858,6 +9173,19 @@ impl eframe::App for BeamWrightApp {
 }
 
 /// Font picker shared by the text properties and the preferences window.
+fn section_icon(section: crate::config::preferences::Section) -> Icon {
+    use crate::config::preferences::Section;
+    match section {
+        Section::General => Icon::Gear,
+        Section::Interface => Icon::DarkMode,
+        Section::Drawing => Icon::Snap,
+        Section::Images => Icon::Image,
+        Section::Files => Icon::Save,
+        Section::Machines => Icon::Profiles,
+        Section::Advanced => Icon::Preferences,
+    }
+}
+
 fn font_picker(ui: &mut Ui, id: &str, value: &mut String) -> bool {
     let mut changed = false;
     let choices = crate::textfont::names();

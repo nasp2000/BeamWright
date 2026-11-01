@@ -132,6 +132,7 @@ pub enum Icon {
     Panels,
     DarkMode,
     // Help and misc.
+    Search,
     Info,
     Palette,
     Pencil,
@@ -245,6 +246,7 @@ impl Icon {
         Icon::Toolpaths,
         Icon::Panels,
         Icon::DarkMode,
+        Icon::Search,
         Icon::Info,
         Icon::Palette,
         Icon::Pencil,
@@ -1013,6 +1015,7 @@ fn prims(icon: Icon) -> Vec<Prim> {
             cut_cy: 5.6,
             cut_r: 4.9,
         }],
+        Icon::Search => vec![ring(6.8, 6.8, 4.6, 1.3), line(10.2, 10.2, 14.0, 14.0, 1.5)],
         Icon::Info => vec![
             ring(8.0, 8.0, 5.8, 1.4),
             disc(8.0, 4.8, 0.9),
