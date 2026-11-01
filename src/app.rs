@@ -314,6 +314,8 @@ pub struct BeamWrightApp {
     preferences_open: bool,
     workspaces_open: bool,
     workspace_name: String,
+    interface_presets_open: bool,
+    interface_preset_name: String,
     shortcut_capture: Option<crate::config::shortcuts::Command>,
     external_gcode_open: bool,
     external_gcode: Option<(PathBuf, crate::gcode::external::Program)>,
@@ -843,6 +845,8 @@ impl BeamWrightApp {
             preferences_open: false,
             workspaces_open: false,
             workspace_name: String::new(),
+            interface_presets_open: false,
+            interface_preset_name: String::new(),
             shortcut_capture: None,
             external_gcode_open: false,
             external_gcode: None,
@@ -1835,6 +1839,7 @@ impl BeamWrightApp {
             || self.image_adjust.is_some()
             || self.help_shortcuts_open
             || self.workspaces_open
+            || self.interface_presets_open
             || self.external_gcode_open
         {
             return;
@@ -2812,6 +2817,10 @@ impl BeamWrightApp {
                     icons::checkbox(ui, &mut self.show_properties_panel, Icon::Panels, "Properties panel (F10)");
                     if icons::button(ui, Icon::Panels, "Workspaces...").clicked() {
                         self.workspaces_open = true;
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Palette, "Interface presets...").clicked() {
+                        self.interface_presets_open = true;
                         ui.close();
                     }
                     if icons::button(ui, Icon::Compare, "Compare operations...").clicked() {
@@ -8143,6 +8152,114 @@ impl BeamWrightApp {
         self.workspaces_open = open;
     }
 
+    fn apply_interface_preset(&mut self, preset: &crate::config::preferences::InterfacePreset) {
+        self.preferences.general.theme.clone_from(&preset.theme);
+        self.dark_mode = preset.theme == "dark";
+        self.preferences.shortcuts = preset.shortcuts.clone();
+        self.apply_workspace(&preset.workspace);
+    }
+
+    fn interface_presets_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.interface_presets_open;
+        let mut save = false;
+        let mut apply: Option<String> = None;
+        let mut delete: Option<String> = None;
+        let mut close_requested = false;
+        egui::Window::new("Interface presets")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    "An interface preset stores the theme, the panel layout and every \
+                     keyboard binding together. Applying one replaces all three.",
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.interface_preset_name)
+                            .hint_text("Preset name")
+                            .desired_width(220.0),
+                    );
+                    if ui
+                        .add_enabled(
+                            !self.interface_preset_name.trim().is_empty(),
+                            egui::Button::new("Save current interface"),
+                        )
+                        .on_hover_text("An existing name is replaced")
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                });
+                ui.separator();
+                if self.preferences.interface_presets.saved.is_empty() {
+                    ui.weak("No interface presets saved yet.");
+                }
+                for preset in &self.preferences.interface_presets.saved {
+                    ui.horizontal(|ui| {
+                        ui.label(&preset.name);
+                        ui.weak(preset.theme.clone());
+                        if ui.button("Apply").clicked() {
+                            apply = Some(preset.name.clone());
+                        }
+                        if ui.button("Delete").clicked() {
+                            delete = Some(preset.name.clone());
+                        }
+                    });
+                }
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        let mut stored = false;
+        if save {
+            let name = self.interface_preset_name.trim().to_string();
+            let mut workspace = self.current_workspace(&name);
+            workspace.name.clone_from(&name);
+            let preset = crate::config::preferences::InterfacePreset {
+                name: name.clone(),
+                theme: self.preferences.general.theme.clone(),
+                workspace,
+                shortcuts: self.preferences.shortcuts.clone(),
+            };
+            match self.preferences.interface_presets.upsert(preset) {
+                Ok(()) => {
+                    self.status = format!("Interface preset '{name}' saved");
+                    stored = true;
+                }
+                Err(error) => self.status = error,
+            }
+        }
+        if let Some(name) = apply {
+            if let Some(preset) = self.preferences.interface_presets.find(&name).cloned() {
+                self.apply_interface_preset(&preset);
+                self.status = format!("Interface preset '{name}' applied");
+            }
+        }
+        if let Some(name) = delete {
+            if self.preferences.interface_presets.remove(&name) {
+                self.status = format!("Interface preset '{name}' deleted");
+                stored = true;
+            }
+        }
+        if stored {
+            match self.preferences.save(&self.preferences_path) {
+                Ok(()) => {}
+                Err(error) => self.status = format!("Cannot save preferences: {error}"),
+            }
+        }
+        if close_requested {
+            open = false;
+        }
+        self.interface_presets_open = open;
+    }
+
     fn preferences_window(&mut self, ctx: &egui::Context) {
         use crate::config::preferences::Section;
         let mut open = self.preferences_open;
@@ -9569,6 +9686,9 @@ impl BeamWrightApp {
         }
         if self.workspaces_open {
             self.workspaces_window(ctx);
+        }
+        if self.interface_presets_open {
+            self.interface_presets_window(ctx);
         }
         if self.grid_array_open {
             self.grid_array_window(ctx);

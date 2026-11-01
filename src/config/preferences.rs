@@ -276,6 +276,89 @@ impl WorkspacePrefs {
     }
 }
 
+/// A named interface setup: theme, panel layout and keyboard bindings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfacePreset {
+    pub name: String,
+    pub theme: String,
+    pub workspace: Workspace,
+    pub shortcuts: super::shortcuts::Keymap,
+}
+
+/// Largest number of saved interface presets.
+pub const MAX_INTERFACE_PRESETS: usize = 20;
+
+impl InterfacePreset {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("an interface preset needs a name".to_string());
+        }
+        if self.name.chars().count() > 60 {
+            return Err("an interface preset name is limited to 60 characters".to_string());
+        }
+        if self.theme != "dark" && self.theme != "light" {
+            return Err("an interface preset theme must be dark or light".to_string());
+        }
+        self.workspace.validate()?;
+        self.shortcuts.validate()?;
+        Ok(())
+    }
+}
+
+/// Saved interface presets, in the order they were created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct InterfacePresetPrefs {
+    #[serde(default)]
+    pub saved: Vec<InterfacePreset>,
+}
+
+impl InterfacePresetPrefs {
+    /// Save a preset, replacing the one with the same name.
+    pub fn upsert(&mut self, preset: InterfacePreset) -> Result<(), String> {
+        preset.validate()?;
+        let name = preset.name.trim().to_string();
+        let mut preset = preset;
+        preset.name.clone_from(&name);
+        if let Some(existing) = self.saved.iter_mut().find(|entry| entry.name == name) {
+            *existing = preset;
+            return Ok(());
+        }
+        if self.saved.len() >= MAX_INTERFACE_PRESETS {
+            return Err(format!(
+                "at most {MAX_INTERFACE_PRESETS} interface presets can be saved; delete one first"
+            ));
+        }
+        self.saved.push(preset);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str) -> bool {
+        let before = self.saved.len();
+        self.saved.retain(|preset| preset.name != name);
+        self.saved.len() != before
+    }
+
+    pub fn find(&self, name: &str) -> Option<&InterfacePreset> {
+        self.saved.iter().find(|preset| preset.name == name)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.saved.len() > MAX_INTERFACE_PRESETS {
+            return Err(format!(
+                "at most {MAX_INTERFACE_PRESETS} interface presets can be saved"
+            ));
+        }
+        let mut names = std::collections::HashSet::new();
+        for preset in &self.saved {
+            preset.validate()?;
+            if !names.insert(preset.name.trim()) {
+                return Err(format!("duplicate interface preset name: {}", preset.name));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppPreferences {
     pub general: GeneralPrefs,
@@ -284,6 +367,8 @@ pub struct AppPreferences {
     pub workspaces: WorkspacePrefs,
     #[serde(default)]
     pub shortcuts: super::shortcuts::Keymap,
+    #[serde(default)]
+    pub interface_presets: InterfacePresetPrefs,
 }
 
 fn default_snap_step() -> f64 {
@@ -332,6 +417,7 @@ impl AppPreferences {
         self.drawing.validate()?;
         self.workspaces.validate()?;
         self.shortcuts.validate()?;
+        self.interface_presets.validate()?;
         Ok(())
     }
 
@@ -534,6 +620,67 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         let q: AppPreferences = serde_json::from_str(&s).unwrap();
         assert_eq!(q.general.theme, p.general.theme);
+    }
+
+    fn sample_preset(name: &str) -> InterfacePreset {
+        InterfacePreset {
+            name: name.to_string(),
+            theme: "dark".to_string(),
+            workspace: Workspace::initial(),
+            shortcuts: super::super::shortcuts::Keymap::default(),
+        }
+    }
+
+    #[test]
+    fn interface_presets_are_saved_replaced_and_removed() {
+        let mut presets = InterfacePresetPrefs::default();
+        presets.upsert(sample_preset("Workshop")).unwrap();
+        presets.upsert(sample_preset("Presentation")).unwrap();
+        assert_eq!(presets.saved.len(), 2);
+        let mut changed = sample_preset("Workshop");
+        changed.theme = "light".to_string();
+        presets.upsert(changed).unwrap();
+        assert_eq!(presets.saved.len(), 2);
+        assert_eq!(presets.find("Workshop").unwrap().theme, "light");
+        assert!(presets.remove("Workshop"));
+        assert!(!presets.remove("Workshop"));
+        assert_eq!(presets.saved.len(), 1);
+    }
+
+    #[test]
+    fn interface_presets_are_validated() {
+        let mut presets = InterfacePresetPrefs::default();
+        let mut blank = sample_preset("  ");
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.name = "Bad theme".to_string();
+        blank.theme = "blue".to_string();
+        assert!(presets.upsert(blank.clone()).is_err());
+        blank.theme = "dark".to_string();
+        blank
+            .shortcuts
+            .assign_text(super::super::shortcuts::Command::New, "Ctrl+S")
+            .ok();
+        // A direct duplicate is rejected by the keymap validation.
+        blank
+            .shortcuts
+            .assign_text(super::super::shortcuts::Command::New, "Ctrl+N")
+            .ok();
+        assert!(presets.upsert(blank).is_ok());
+
+        let mut duplicate = InterfacePresetPrefs {
+            saved: vec![sample_preset("Same"), sample_preset("Same")],
+        };
+        assert!(duplicate.validate().is_err());
+        duplicate.saved.pop();
+        assert!(duplicate.validate().is_ok());
+
+        presets.saved.clear();
+        for index in 0..MAX_INTERFACE_PRESETS {
+            presets
+                .upsert(sample_preset(&format!("Preset {index}")))
+                .unwrap();
+        }
+        assert!(presets.upsert(sample_preset("One too many")).is_err());
     }
 
     #[test]
