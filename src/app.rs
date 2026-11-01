@@ -5868,6 +5868,31 @@ impl BeamWrightApp {
                                     .fixed_decimals(0),
                             );
                             ui.end_row();
+                            ui.label("Shadows");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.shadow_lift, -1.0..=1.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                            ui.label("Midtones");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.midtone_shift, -1.0..=1.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                            ui.label("Highlights");
+                            ui.add(
+                                egui::Slider::new(&mut image.settings.highlight_lift, -1.0..=1.0)
+                                    .fixed_decimals(2),
+                            );
+                            ui.end_row();
+                            ui.label("Tone curve");
+                            if ui.button("Reset curve").clicked() {
+                                image.settings.shadow_lift = 0.0;
+                                image.settings.midtone_shift = 0.0;
+                                image.settings.highlight_lift = 0.0;
+                            }
+                            ui.end_row();
                             ui.label("Gamma");
                             ui.add(
                                 egui::Slider::new(&mut image.settings.gamma, 0.2..=3.0)

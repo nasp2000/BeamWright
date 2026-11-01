@@ -108,6 +108,15 @@ pub struct ImageSettings {
     /// Input values at or above this are treated as white.
     #[serde(default = "default_white_clip")]
     pub white_clip: u8,
+    /// Tone-curve lift for dark values, -1.0..=1.0.
+    #[serde(default)]
+    pub shadow_lift: f32,
+    /// Tone-curve shift for midtones, -1.0..=1.0.
+    #[serde(default)]
+    pub midtone_shift: f32,
+    /// Tone-curve lift for bright values, -1.0..=1.0.
+    #[serde(default)]
+    pub highlight_lift: f32,
 }
 
 fn default_white_clip() -> u8 {
@@ -138,6 +147,9 @@ impl Default for ImageSettings {
             enhance_amount: 0.0,
             black_clip: 0,
             white_clip: 255,
+            shadow_lift: 0.0,
+            midtone_shift: 0.0,
+            highlight_lift: 0.0,
         }
     }
 }
@@ -178,8 +190,18 @@ impl ImageSettings {
         if has_width != has_height {
             return Err("working size needs both width and height".to_string());
         }
+        validate_tone_control(self.shadow_lift, "shadow lift")?;
+        validate_tone_control(self.midtone_shift, "midtone shift")?;
+        validate_tone_control(self.highlight_lift, "highlight lift")?;
         Ok(())
     }
+}
+
+fn validate_tone_control(value: f32, name: &str) -> Result<(), String> {
+    if !value.is_finite() || !(-1.0..=1.0).contains(&value) {
+        return Err(format!("{name} must be between -1.0 and 1.0"));
+    }
+    Ok(())
 }
 
 /// A rectangular region of the source image, in source pixels.
@@ -410,7 +432,35 @@ mod tests {
         let image: ImageObject = serde_json::from_str(old).unwrap();
         assert!(image.crop.is_none());
         assert_eq!(image.settings.rotation_degrees, 0.0);
+        assert_eq!(image.settings.shadow_lift, 0.0);
+        assert_eq!(image.settings.midtone_shift, 0.0);
+        assert_eq!(image.settings.highlight_lift, 0.0);
         assert_eq!(image.effective_size_px(), (10, 5));
+    }
+
+    #[test]
+    fn tone_curve_controls_round_trip_and_validate() {
+        let mut settings = ImageSettings {
+            shadow_lift: -0.5,
+            midtone_shift: 0.25,
+            highlight_lift: 1.0,
+            ..ImageSettings::default()
+        };
+        assert!(settings.validate().is_ok());
+        let json = serde_json::to_string(&settings).unwrap();
+        let loaded: ImageSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, settings);
+
+        settings.shadow_lift = 1.5;
+        assert!(settings.validate().is_err());
+        settings.shadow_lift = 0.0;
+        settings.midtone_shift = -1.5;
+        assert!(settings.validate().is_err());
+        settings.midtone_shift = 0.0;
+        settings.highlight_lift = f32::NAN;
+        assert!(settings.validate().is_err());
+        settings.highlight_lift = f32::INFINITY;
+        assert!(settings.validate().is_err());
     }
 
     #[test]

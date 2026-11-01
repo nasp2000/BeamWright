@@ -25,8 +25,11 @@ impl RasterBitmap {
 
 /// Convert a luminance buffer using the image settings.
 ///
-/// Pipeline: brightness, contrast, gamma, enhancement, invert, then threshold or
-/// dithering.
+/// Pipeline: black/white clipping, brightness, contrast, tone curve (shadows,
+/// midtones, highlights), gamma, enhancement, invert, then threshold or
+/// dithering. The tone curve runs before gamma so the three controls shape the
+/// tonal range rather than undoing the gamma correction. With all three at zero
+/// the curve is an exact identity and the pipeline is unchanged.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -312,11 +315,45 @@ fn adjust(value: f32, settings: &ImageSettings) -> f32 {
     let mut value = ((value - black) / (white - black) * 255.0).clamp(0.0, 255.0);
     value += f32::from(settings.brightness) * 2.55;
     value = (value - 128.0) * settings.contrast + 128.0;
+    value = value.clamp(0.0, 255.0);
+    value = tone_curve(value, settings);
     value = 255.0 * (value.clamp(0.0, 255.0) / 255.0).powf(1.0 / settings.gamma);
     if settings.invert {
         value = 255.0 - value;
     }
     value.clamp(0.0, 255.0)
+}
+
+/// Largest shift, in tone levels, that one tone-curve control can apply.
+///
+/// The three smooth weights below sum to one, so with every control at its
+/// limit the offset is still bounded. The value is chosen so the curve remains
+/// strictly increasing even when two controls pull in opposite directions:
+/// the steepest possible slope of the offset is `4 * TONE_LIFT` (192), which is
+/// below the identity slope of 255.
+const TONE_LIFT: f32 = 48.0;
+
+/// Smooth, monotonic tonal correction with shadow, midtone and highlight lifts.
+///
+/// The weights are the quadratic Bernstein basis on the normalised value:
+/// `(1 - t)²` reaches its maximum at black, `2t(1 - t)` at mid-grey and `t²` at
+/// white. They are smooth and sum to one, so a control affects its own range
+/// most and the identity at zero is exact. The offset is added to the value and
+/// clamped to 0..=255.
+fn tone_curve(value: f32, settings: &ImageSettings) -> f32 {
+    let shadow = settings.shadow_lift;
+    let midtone = settings.midtone_shift;
+    let highlight = settings.highlight_lift;
+    if shadow == 0.0 && midtone == 0.0 && highlight == 0.0 {
+        return value;
+    }
+    let t = (value / 255.0).clamp(0.0, 1.0);
+    let dark_weight = (1.0 - t) * (1.0 - t);
+    let mid_weight = 2.0 * t * (1.0 - t);
+    let bright_weight = t * t;
+    let offset =
+        (shadow * dark_weight + midtone * mid_weight + highlight * bright_weight) * TONE_LIFT;
+    (value + offset).clamp(0.0, 255.0)
 }
 
 /// Pixel dimensions of an image file, without decoding all its pixels twice.
@@ -530,6 +567,91 @@ mod tests {
         assert!(process_luma(&luma, 1, 1, &config).unwrap().get(0, 0));
         config.brightness = 20;
         assert!(!process_luma(&luma, 1, 1, &config).unwrap().get(0, 0));
+    }
+
+    #[test]
+    fn zero_tone_curve_leaves_a_gradient_unchanged() {
+        let config = settings(ImageMode::Threshold);
+        for level in 0..=255u8 {
+            let adjusted = adjust(f32::from(level), &config);
+            assert!(
+                (adjusted - f32::from(level)).abs() < 1e-4,
+                "level {level} became {adjusted}"
+            );
+        }
+    }
+
+    #[test]
+    fn positive_shadow_lift_brightens_dark_pixels_more_than_bright_ones() {
+        let mut config = settings(ImageMode::Threshold);
+        config.shadow_lift = 1.0;
+        let dark = adjust(16.0, &config) - 16.0;
+        let bright = adjust(240.0, &config) - 240.0;
+        assert!(dark > 30.0, "dark pixels moved by only {dark}");
+        assert!(bright < 2.0, "bright pixels moved by {bright}");
+        assert!(dark > bright);
+    }
+
+    #[test]
+    fn positive_highlight_lift_brightens_bright_pixels_more_than_dark_ones() {
+        let mut config = settings(ImageMode::Threshold);
+        config.highlight_lift = 1.0;
+        let dark = adjust(16.0, &config) - 16.0;
+        let bright = adjust(200.0, &config) - 200.0;
+        assert!(bright > 20.0, "bright pixels moved by only {bright}");
+        assert!(dark < 2.0, "dark pixels moved by {dark}");
+        assert!(bright > dark);
+    }
+
+    #[test]
+    fn midtone_shift_moves_a_mid_grey() {
+        let mut config = settings(ImageMode::Threshold);
+        config.midtone_shift = 1.0;
+        let lifted = adjust(128.0, &config);
+        assert!((lifted - 152.0).abs() < 0.5, "mid-grey became {lifted}");
+        config.midtone_shift = -1.0;
+        let lowered = adjust(128.0, &config);
+        assert!((lowered - 104.0).abs() < 0.5, "mid-grey became {lowered}");
+        // A midtone shift leaves the absolute black and white ends alone.
+        assert!(adjust(0.0, &config).abs() < 1e-4);
+        assert!((adjust(255.0, &config) - 255.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn tone_curves_stay_monotonic_and_clamped() {
+        let combinations = [
+            (1.0, 1.0, 1.0),
+            (-1.0, -1.0, -1.0),
+            (1.0, -1.0, 1.0),
+            (-1.0, 1.0, -1.0),
+            (1.0, -1.0, -1.0),
+            (-1.0, 1.0, 1.0),
+        ];
+        for (shadow, midtone, highlight) in combinations {
+            let mut config = settings(ImageMode::Threshold);
+            config.shadow_lift = shadow;
+            config.midtone_shift = midtone;
+            config.highlight_lift = highlight;
+            let mut previous = -1.0;
+            for level in 0..=255u8 {
+                let adjusted = adjust(f32::from(level), &config);
+                assert!(
+                    (0.0..=255.0).contains(&adjusted),
+                    "level {level} left the range: {adjusted}"
+                );
+                assert!(
+                    adjusted >= previous - 1e-4,
+                    "curve is not monotonic at level {level}"
+                );
+                previous = adjusted;
+            }
+        }
+        let mut config = settings(ImageMode::Threshold);
+        config.highlight_lift = 1.0;
+        assert!((adjust(255.0, &config) - 255.0).abs() < 1e-4);
+        config.highlight_lift = 0.0;
+        config.shadow_lift = -1.0;
+        assert!(adjust(0.0, &config).abs() < 1e-4);
     }
 
     #[test]
