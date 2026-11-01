@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +41,20 @@ impl OperationType {
         ]
     }
 }
+
+/// Fields that an expression may override.
+pub const EXPRESSION_FIELDS: [&str; 10] = [
+    "speed",
+    "power",
+    "passes",
+    "line_interval_mm",
+    "kerf_mm",
+    "overscan_mm",
+    "fill_margin_mm",
+    "fill_offset_mm",
+    "tabs",
+    "tab_width_mm",
+];
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,6 +117,9 @@ pub struct OperationParams {
     /// Enter and leave along a quarter-circle arc instead of a straight line.
     #[serde(default)]
     pub curved_leads: bool,
+    /// Expressions that override numeric fields, keyed by field name.
+    #[serde(default)]
+    pub expressions: BTreeMap<String, String>,
 }
 
 fn default_tab_width() -> f64 {
@@ -208,6 +227,18 @@ impl OperationParams {
             format!("{:.2} mm", self.lead_out_mm),
             format!("{:.2} mm", target.lead_out_mm),
         );
+        if self.expressions != target.expressions {
+            let keys = |map: &BTreeMap<String, String>| {
+                let mut names: Vec<&str> = map.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                names.join(", ")
+            };
+            push(
+                "Expressions",
+                keys(&self.expressions),
+                keys(&target.expressions),
+            );
+        }
         push(
             "Curved leads",
             if self.curved_leads { "yes" } else { "no" }.to_string(),
@@ -256,6 +287,7 @@ impl Default for OperationParams {
             lead_in_mm: 0.0,
             lead_out_mm: 0.0,
             curved_leads: false,
+            expressions: BTreeMap::new(),
         }
     }
 }
@@ -326,6 +358,14 @@ impl Operation {
         if !self.params.overscan_mm.is_finite() || !(0.0..=50.0).contains(&self.params.overscan_mm)
         {
             return Err("overscan must be between 0 and 50 mm".to_string());
+        }
+        for (field, expression) in &self.params.expressions {
+            if !EXPRESSION_FIELDS.contains(&field.as_str()) {
+                return Err(format!("unknown expression field: {field}"));
+            }
+            if expression.trim().is_empty() {
+                return Err(format!("the expression for '{field}' is empty"));
+            }
         }
         for (index, dependency) in self.depends_on.iter().enumerate() {
             if dependency.trim().is_empty() {

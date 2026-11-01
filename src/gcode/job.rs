@@ -85,29 +85,33 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
     });
     match operation {
         Some(operation) if !operation.enabled => None,
-        Some(operation) => Some(Resolved {
-            speed: operation.params.speed,
-            power: operation.params.power.clamp(0.0, 100.0) * 10.0,
-            passes: operation.params.passes.max(1),
-            line_interval_mm: operation.params.line_interval_mm.max(0.01),
-            op_type: operation.op_type,
-            fill_angle_degrees: operation.params.fill_angle_degrees,
-            fill_alternate: operation.params.fill_alternate,
-            fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
-            overscan_mm: operation.params.overscan_mm.max(0.0),
-            kerf_mm: operation.params.kerf_mm.max(0.0),
-            tabs: operation.params.tabs,
-            tab_width_mm: operation.params.tab_width_mm.max(0.0),
-            tab_spacing_mm: operation.params.tab_spacing_mm.max(0.0),
-            lead_in_mm: operation.params.lead_in_mm.max(0.0),
-            lead_out_mm: operation.params.lead_out_mm.max(0.0),
-            curved_leads: operation.params.curved_leads,
-            cross_hatch: operation.params.cross_hatch,
-            air_assist: operation.params.air_assist,
-            constant_power: operation.params.constant_power,
-            fill_offset_mm: operation.params.fill_offset_mm,
-            operation_name: Some(operation.name.clone()),
-        }),
+        Some(operation) => {
+            let mut resolved = Resolved {
+                speed: operation.params.speed,
+                power: operation.params.power.clamp(0.0, 100.0) * 10.0,
+                passes: operation.params.passes.max(1),
+                line_interval_mm: operation.params.line_interval_mm.max(0.01),
+                op_type: operation.op_type,
+                fill_angle_degrees: operation.params.fill_angle_degrees,
+                fill_alternate: operation.params.fill_alternate,
+                fill_margin_mm: operation.params.fill_margin_mm.max(0.0),
+                overscan_mm: operation.params.overscan_mm.max(0.0),
+                kerf_mm: operation.params.kerf_mm.max(0.0),
+                tabs: operation.params.tabs,
+                tab_width_mm: operation.params.tab_width_mm.max(0.0),
+                tab_spacing_mm: operation.params.tab_spacing_mm.max(0.0),
+                lead_in_mm: operation.params.lead_in_mm.max(0.0),
+                lead_out_mm: operation.params.lead_out_mm.max(0.0),
+                curved_leads: operation.params.curved_leads,
+                cross_hatch: operation.params.cross_hatch,
+                air_assist: operation.params.air_assist,
+                constant_power: operation.params.constant_power,
+                fill_offset_mm: operation.params.fill_offset_mm,
+                operation_name: Some(operation.name.clone()),
+            };
+            apply_expressions(&mut resolved, &operation.params, document);
+            Some(resolved)
+        }
         None => {
             let params = OperationParams::default();
             Some(Resolved {
@@ -134,6 +138,50 @@ fn resolve(object: &Object, document: &Document) -> Option<Resolved> {
                 operation_name: None,
             })
         }
+    }
+}
+
+/// Override numeric fields with the operation's expressions.
+///
+/// An expression that does not evaluate is ignored here; [`Document::validate`]
+/// rejects the document before a job is written, so this only keeps direct
+/// callers safe.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn apply_expressions(resolved: &mut Resolved, params: &OperationParams, document: &Document) {
+    let value = |key: &str| {
+        params.expressions.get(key).and_then(|expression| {
+            crate::parameters::evaluate(expression, &document.parameters).ok()
+        })
+    };
+    if let Some(value) = value("speed") {
+        resolved.speed = value.max(1.0);
+    }
+    if let Some(value) = value("power") {
+        resolved.power = value.clamp(0.0, 100.0) * 10.0;
+    }
+    if let Some(value) = value("passes") {
+        resolved.passes = value.round().max(1.0) as u32;
+    }
+    if let Some(value) = value("line_interval_mm") {
+        resolved.line_interval_mm = value.max(0.01);
+    }
+    if let Some(value) = value("kerf_mm") {
+        resolved.kerf_mm = value.max(0.0);
+    }
+    if let Some(value) = value("overscan_mm") {
+        resolved.overscan_mm = value.max(0.0);
+    }
+    if let Some(value) = value("fill_margin_mm") {
+        resolved.fill_margin_mm = value.max(0.0);
+    }
+    if let Some(value) = value("fill_offset_mm") {
+        resolved.fill_offset_mm = value;
+    }
+    if let Some(value) = value("tabs") {
+        resolved.tabs = value.round().clamp(0.0, 20.0) as u32;
+    }
+    if let Some(value) = value("tab_width_mm") {
+        resolved.tab_width_mm = value.max(0.0);
     }
 }
 
@@ -2126,6 +2174,45 @@ mod tests {
             Point2::new(0.0, 10.0),
             Point2::new(0.0, 0.0),
         ]
+    }
+
+    #[test]
+    fn an_expression_overrides_the_operation_speed() {
+        let mut document = Document {
+            parameters: vec![crate::parameters::Parameter::new("feed", "1200")],
+            ..Document::default()
+        };
+        document.operations.push(Operation {
+            id: "cut".to_string(),
+            name: "Cut".to_string(),
+            op_type: OperationType::OutlineCutting,
+            params: OperationParams {
+                speed: 500.0,
+                power: 20.0,
+                expressions: std::collections::BTreeMap::from([(
+                    "speed".to_string(),
+                    "feed * 2".to_string(),
+                )]),
+                ..OperationParams::default()
+            },
+            enabled: true,
+            depends_on: Vec::new(),
+        });
+        let layer_id = document.layers[0].id.clone();
+        let mut object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 10.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        object.operation_id = Some("cut".to_string());
+        document.add_object(object);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(warnings.len(), 0);
+        assert_eq!(toolpaths.len(), 1);
+        assert!((toolpaths[0].speed - 2400.0).abs() < 1e-9);
     }
 
     #[test]

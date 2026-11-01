@@ -298,6 +298,125 @@ impl McpServer {
                     .collect();
                 Ok(json!({"objects": objects}))
             }
+            "list_parameters" => {
+                let document = &self.editor.document;
+                let values = crate::parameters::resolved(&document.parameters);
+                let parameters: Vec<Value> = document
+                    .parameters
+                    .iter()
+                    .zip(values)
+                    .map(|(parameter, (_, value))| {
+                        let mut entry = json!({
+                            "name": parameter.name,
+                            "expression": parameter.expression,
+                            "unit": parameter.unit,
+                        });
+                        match value {
+                            Ok(value) => entry["value"] = json!(value),
+                            Err(error) => entry["error"] = json!(error),
+                        }
+                        entry
+                    })
+                    .collect();
+                let operations: Vec<Value> = document
+                    .operations
+                    .iter()
+                    .filter(|operation| !operation.params.expressions.is_empty())
+                    .map(|operation| {
+                        let expressions: Vec<Value> = operation
+                            .params
+                            .expressions
+                            .iter()
+                            .map(|(field, expression)| {
+                                match crate::parameters::evaluate(expression, &document.parameters)
+                                {
+                                    Ok(value) => json!({
+                                        "field": field,
+                                        "expression": expression,
+                                        "value": value,
+                                    }),
+                                    Err(error) => json!({
+                                        "field": field,
+                                        "expression": expression,
+                                        "error": error,
+                                    }),
+                                }
+                            })
+                            .collect();
+                        json!({
+                            "id": operation.id,
+                            "name": operation.name,
+                            "expressions": expressions,
+                        })
+                    })
+                    .collect();
+                Ok(json!({"parameters": parameters, "operations": operations}))
+            }
+            "set_parameters" => {
+                let list = arguments
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| missing("parameters"))?;
+                let mut parameters = Vec::with_capacity(list.len());
+                for entry in list {
+                    let name = entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| missing("name"))?;
+                    let expression = entry
+                        .get("expression")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| missing("expression"))?;
+                    let mut parameter = crate::parameters::Parameter::new(name, expression);
+                    parameter.unit = entry
+                        .get("unit")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    parameters.push(parameter);
+                }
+                let mut candidate = self.editor.document.clone();
+                candidate.parameters = parameters;
+                candidate.validate().map_err(BeamError::InvalidInput)?;
+                self.editor.record_action("Set parameters");
+                self.editor.document = candidate;
+                Ok(json!({"parameters": self.editor.document.parameters.len()}))
+            }
+            "set_operation_expressions" => {
+                let id = string(arguments, "operation").ok_or_else(|| missing("operation"))?;
+                let entries = arguments
+                    .get("expressions")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| missing("expressions"))?;
+                let mut expressions = std::collections::BTreeMap::new();
+                for (field, value) in entries {
+                    if !crate::operations::model::EXPRESSION_FIELDS.contains(&field.as_str()) {
+                        return Err(BeamError::InvalidInput(format!(
+                            "unknown expression field: {field}"
+                        )));
+                    }
+                    let expression = value.as_str().ok_or_else(|| missing("expression value"))?;
+                    if !expression.trim().is_empty() {
+                        expressions.insert(field.clone(), expression.to_string());
+                    }
+                }
+                let index = self
+                    .editor
+                    .document
+                    .operations
+                    .iter()
+                    .position(|operation| operation.id == id || operation.name == id)
+                    .ok_or_else(|| BeamError::InvalidInput(format!("unknown operation: {id}")))?;
+                let mut candidate = self.editor.document.clone();
+                candidate.operations[index].params.expressions = expressions;
+                candidate.validate().map_err(BeamError::InvalidInput)?;
+                self.editor.record_action("Set expressions");
+                self.editor.document = candidate;
+                Ok(json!({
+                    "operation": self.editor.document.operations[index].id,
+                    "expressions": self.editor.document.operations[index].params.expressions,
+                }))
+            }
             "list_layers" => {
                 let layers: Vec<Value> = self
                     .editor
@@ -1092,6 +1211,29 @@ fn tool_definitions() -> Vec<Value> {
             "list_layers",
             "List layers with visibility, lock and object counts.",
         ),
+        tool(
+            "list_parameters",
+            "List document parameters with their values, plus the operation expressions that use them.",
+        ),
+        tool_with(
+            "set_parameters",
+            "Replace the document parameters; names, expressions and units are validated.",
+            json!({"type": "object", "properties": {
+                "parameters": {"type": "array", "items": {"type": "object", "properties": {
+                    "name": {"type": "string"},
+                    "expression": {"type": "string"},
+                    "unit": {"type": "string"}
+                }, "required": ["name", "expression"]}}
+            }, "required": ["parameters"]}),
+        ),
+        tool_with(
+            "set_operation_expressions",
+            "Set the expressions that override numeric cut fields; an empty string clears a field.",
+            json!({"type": "object", "properties": {
+                "operation": {"type": "string"},
+                "expressions": {"type": "object"}
+            }, "required": ["operation", "expressions"]}),
+        ),
         tool_with(
             "add_layer",
             "Add a layer.",
@@ -1613,6 +1755,86 @@ mod tests {
                 .iter()
                 .any(|issue| issue["code"] == "text-not-outlined")
         );
+    }
+
+    #[test]
+    fn parameters_and_expressions_work_through_tools() {
+        let mut server = McpServer::new();
+        let set = call(
+            &mut server,
+            "set_parameters",
+            json!({"parameters": [
+                {"name": "feed", "expression": "1200", "unit": "mm/min"},
+                {"name": "twice", "expression": "feed * 2"}
+            ]}),
+        );
+        assert_eq!(set["result"]["parameters"], 2);
+        let listed = call(&mut server, "list_parameters", json!({}));
+        let listed = &listed["result"];
+        assert_eq!(listed["parameters"][0]["value"], 1200.0);
+        assert_eq!(listed["parameters"][1]["value"], 2400.0);
+        assert_eq!(listed["parameters"][0]["unit"], "mm/min");
+
+        let operation = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "Fast cut", "type": "outline_cutting"}),
+        );
+        let id = operation["result"]["id"].as_str().unwrap().to_string();
+        let set = call(
+            &mut server,
+            "set_operation_expressions",
+            json!({"operation": id, "expressions": {"speed": "twice"}}),
+        );
+        assert!(set.get("error").is_none(), "{set}");
+        let listed = call(&mut server, "list_parameters", json!({}));
+        let expression = &listed["result"]["operations"][0]["expressions"][0];
+        assert_eq!(expression["field"], "speed");
+        assert_eq!(expression["value"], 2400.0);
+    }
+
+    #[test]
+    fn invalid_parameters_leave_the_document_untouched() {
+        let mut server = McpServer::new();
+        let before = server.editor.document.clone();
+        let rejected = call(
+            &mut server,
+            "set_parameters",
+            json!({"parameters": [
+                {"name": "a", "expression": "b"},
+                {"name": "b", "expression": "a"}
+            ]}),
+        );
+        assert!(rejected.get("error").is_some());
+        assert_eq!(server.editor.document, before);
+        assert_eq!(server.editor.history.undo_len(), 0);
+
+        let unknown = call(
+            &mut server,
+            "set_operation_expressions",
+            json!({"operation": "missing", "expressions": {"speed": "1"}}),
+        );
+        assert!(unknown.get("error").is_some());
+        let id = call(
+            &mut server,
+            "create_operation",
+            json!({"name": "Cut", "type": "outline_cutting"}),
+        )["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let bad_field = call(
+            &mut server,
+            "set_operation_expressions",
+            json!({"operation": id, "expressions": {"unknown": "1"}}),
+        );
+        assert!(bad_field.get("error").is_some());
+        let bad_expression = call(
+            &mut server,
+            "set_operation_expressions",
+            json!({"operation": id, "expressions": {"speed": "missing + 1"}}),
+        );
+        assert!(bad_expression.get("error").is_some());
     }
 
     #[test]

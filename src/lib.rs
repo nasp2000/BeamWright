@@ -28,6 +28,7 @@ pub mod mcp;
 pub mod mcp_http;
 pub mod objects;
 pub mod operations;
+pub mod parameters;
 pub mod preflight;
 pub mod profiles;
 pub mod project_archive;

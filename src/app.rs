@@ -77,6 +77,7 @@ enum PaletteAction {
     ExportImage,
     ExportGcode,
     Cuts,
+    Parameters,
     Preview,
     MaterialTest,
     RegistrationMarks,
@@ -129,6 +130,7 @@ fn palette_entries() -> &'static [(PaletteAction, &'static str)] {
         (Action::ExportImage, "Export image..."),
         (Action::ExportGcode, "Export G-code..."),
         (Action::Cuts, "Cuts and layers..."),
+        (Action::Parameters, "Parameters..."),
         (Action::Preview, "Preview and G-code..."),
         (Action::MaterialTest, "Material test..."),
         (Action::RegistrationMarks, "Registration marks..."),
@@ -413,6 +415,8 @@ pub struct BeamWrightApp {
     doc_properties_snapshot: Option<Document>,
     cuts_open: bool,
     cuts_snapshot: Option<Document>,
+    parameters_open: bool,
+    parameters_snapshot: Option<Document>,
     help_shortcuts_open: bool,
     multi_props_recorded: bool,
     smart_guides: Vec<(bool, f64)>,
@@ -1016,6 +1020,8 @@ impl BeamWrightApp {
             doc_properties_snapshot: None,
             cuts_open: false,
             cuts_snapshot: None,
+            parameters_open: false,
+            parameters_snapshot: None,
             help_shortcuts_open: false,
             multi_props_recorded: false,
             smart_guides: Vec::new(),
@@ -2623,6 +2629,10 @@ impl BeamWrightApp {
                     }
                     if icons::button(ui, Icon::Layers, "Cuts / Layers...").clicked() {
                         self.open_cuts();
+                        ui.close();
+                    }
+                    if icons::button(ui, Icon::Gear, "Parameters...").clicked() {
+                        self.open_parameters();
                         ui.close();
                     }
                     if icons::button(ui, Icon::Plus, "New operation").clicked() {
@@ -5823,6 +5833,13 @@ impl BeamWrightApp {
         self.regmarks_open = open;
     }
 
+    fn open_parameters(&mut self) {
+        if self.parameters_snapshot.is_none() {
+            self.parameters_snapshot = Some(self.editor.document.clone());
+        }
+        self.parameters_open = true;
+    }
+
     fn open_cuts(&mut self) {
         self.cuts_snapshot = Some(self.editor.document.clone());
         if self.active_operation.is_none() {
@@ -6145,6 +6162,66 @@ impl BeamWrightApp {
                                 ui.checkbox(&mut operation.params.constant_power, "");
                                 ui.end_row();
                             });
+                        ui.add_space(4.0);
+                        egui::CollapsingHeader::new("Expressions (optional)")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.weak(
+                                    "Override a numeric field with an expression over the document parameters. Empty fields use the value above.",
+                                );
+                                let environment = self.editor.document.parameters.clone();
+                                egui::Grid::new("cut_expressions")
+                                    .num_columns(3)
+                                    .spacing([10.0, 6.0])
+                                    .show(ui, |ui| {
+                                        for field in crate::operations::model::EXPRESSION_FIELDS {
+                                            let mut expression = operation
+                                                .params
+                                                .expressions
+                                                .get(field)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            ui.label(field);
+                                            let response = ui.add(
+                                                egui::TextEdit::singleline(&mut expression)
+                                                    .desired_width(160.0)
+                                                    .hint_text("number or expression"),
+                                            );
+                                            if response.changed() {
+                                                if expression.trim().is_empty() {
+                                                    operation.params.expressions.remove(field);
+                                                } else {
+                                                    operation.params.expressions.insert(
+                                                        field.to_string(),
+                                                        expression,
+                                                    );
+                                                }
+                                            }
+                                            match operation.params.expressions.get(field) {
+                                                Some(current) => {
+                                                    match crate::parameters::evaluate(
+                                                        current,
+                                                        &environment,
+                                                    ) {
+                                                        Ok(value) => {
+                                                            ui.weak(format!("= {value:.3}"));
+                                                        }
+                                                        Err(error) => {
+                                                            ui.colored_label(
+                                                                Color32::from_rgb(190, 60, 50),
+                                                                error,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                None => {
+                                                    ui.weak("");
+                                                }
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
                     }
                 } else {
                     ui.weak("No cut selected. Add one below.");
@@ -6222,6 +6299,144 @@ impl BeamWrightApp {
                 }
             }
             self.cuts_open = false;
+        }
+    }
+
+    fn parameters_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.parameters_open;
+        let mut close_requested = false;
+        let mut remove: Option<usize> = None;
+        let mut add = false;
+        egui::Window::new("Parameters")
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([560.0, 360.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    "Named values for cut expressions, for example feed = 1200 and twice = feed * 2.",
+                );
+                ui.weak(
+                    "Units are labels for the reader; the arithmetic itself ignores them. Names use letters, digits and underscores.",
+                );
+                ui.separator();
+                let mut parameters = std::mem::take(&mut self.editor.document.parameters);
+                let environment = parameters.clone();
+                egui::Grid::new("parameters_grid")
+                    .num_columns(5)
+                    .spacing([10.0, 6.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("Name");
+                        ui.strong("Expression");
+                        ui.strong("Unit");
+                        ui.strong("Value");
+                        ui.label("");
+                        ui.end_row();
+                        for (index, parameter) in parameters.iter_mut().enumerate() {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut parameter.name)
+                                    .desired_width(120.0),
+                            )
+                            .on_hover_text("Unique name; letters, digits and underscores");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut parameter.expression)
+                                    .desired_width(160.0),
+                            )
+                            .on_hover_text(
+                                "A number, another parameter, or arithmetic with + - * / and parentheses",
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut parameter.unit)
+                                    .desired_width(52.0),
+                            )
+                            .on_hover_text("Label such as mm, mm/min or %; not used in arithmetic");
+                            match crate::parameters::evaluate(&parameter.expression, &environment)
+                            {
+                                Ok(value) => {
+                                    ui.weak(format_parameter_value(value, &parameter.unit));
+                                }
+                                Err(error) => {
+                                    ui.colored_label(
+                                        Color32::from_rgb(190, 60, 50),
+                                        "invalid",
+                                    )
+                                    .on_hover_text(error);
+                                }
+                            }
+                            if ui
+                                .small_button("x")
+                                .on_hover_text("Delete this parameter")
+                                .clicked()
+                            {
+                                remove = Some(index);
+                            }
+                            ui.end_row();
+                        }
+                    });
+                if let Some(index) = remove {
+                    parameters.remove(index);
+                }
+                if let Err(error) = crate::parameters::validate(&parameters) {
+                    ui.colored_label(Color32::from_rgb(190, 60, 50), error);
+                }
+                let environment = parameters.clone();
+                for operation in &self.editor.document.operations {
+                    for (field, expression) in &operation.params.expressions {
+                        if let Err(error) =
+                            crate::parameters::evaluate(expression, &environment)
+                        {
+                            ui.colored_label(
+                                Color32::from_rgb(190, 60, 50),
+                                format!("{} field '{field}': {error}", operation.name),
+                            );
+                        }
+                    }
+                }
+                if add {
+                    let mut index = parameters.len() + 1;
+                    while parameters
+                        .iter()
+                        .any(|parameter| parameter.name == format!("parameter{index}"))
+                    {
+                        index += 1;
+                    }
+                    parameters.push(crate::parameters::Parameter::new(
+                        format!("parameter{index}"),
+                        "1",
+                    ));
+                }
+                self.editor.document.parameters = parameters;
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("+ Parameter")
+                        .on_hover_text("Add a named value")
+                        .clicked()
+                    {
+                        add = true;
+                    }
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this window")
+                        .clicked()
+                    {
+                        close_requested = true;
+                    }
+                });
+            });
+        if close_requested {
+            open = false;
+        }
+        self.parameters_open = open;
+        if !open {
+            if let Some(snapshot) = self.parameters_snapshot.take() {
+                if snapshot != self.editor.document {
+                    self.editor.history.record(&snapshot, "Parameters");
+                }
+            }
         }
     }
 
@@ -8897,6 +9112,7 @@ impl BeamWrightApp {
             Action::ExportImage => self.open_dialog(FileMode::ExportImage),
             Action::ExportGcode => self.open_dialog(FileMode::ExportGcode),
             Action::Cuts => self.open_cuts(),
+            Action::Parameters => self.open_parameters(),
             Action::Preview => self.open_preview(),
             Action::MaterialTest => self.material_test_open = true,
             Action::RegistrationMarks => self.regmarks_open = true,
@@ -10656,6 +10872,9 @@ impl BeamWrightApp {
         if self.cuts_open {
             self.cuts_window(ctx);
         }
+        if self.parameters_open {
+            self.parameters_window(ctx);
+        }
         if self.material_test_open {
             self.material_test_window(ctx);
         }
@@ -11019,6 +11238,17 @@ fn drag_measurement(drag: Option<&DragState>) -> Option<String> {
             (end.y - start.y).abs()
         )),
         _ => None,
+    }
+}
+
+/// Format a parameter value without trailing zeros, with its unit label.
+fn format_parameter_value(value: f64, unit: &str) -> String {
+    let text = format!("{value:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.').to_string();
+    if unit.trim().is_empty() {
+        text
+    } else {
+        format!("{text} {}", unit.trim())
     }
 }
 

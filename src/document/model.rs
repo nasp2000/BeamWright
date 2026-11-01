@@ -207,6 +207,9 @@ pub struct Document {
     /// Areas a job must not enter; cuts that reach them are removed.
     #[serde(default)]
     pub restricted_areas: Vec<MaterialZone>,
+    /// Named values used by operation expressions.
+    #[serde(default)]
+    pub parameters: Vec<crate::parameters::Parameter>,
     pub format_version: u32,
 }
 
@@ -326,6 +329,7 @@ impl Default for Document {
             guides: Vec::new(),
             stock: None,
             restricted_areas: Vec::new(),
+            parameters: Vec::new(),
             format_version: CURRENT_FORMAT_VERSION,
         }
     }
@@ -368,6 +372,7 @@ impl Document {
             return Err("format version must be >= 1".to_string());
         }
         self.validate_material_limits()?;
+        self.validate_parameters()?;
         if self.layers.is_empty() {
             return Err("document must have at least one layer".to_string());
         }
@@ -454,6 +459,19 @@ impl Document {
                         object.id, operation_id
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Check every parameter and the operation expressions that use them.
+    fn validate_parameters(&self) -> Result<(), String> {
+        crate::parameters::validate(&self.parameters)?;
+        for operation in &self.operations {
+            for (field, expression) in &operation.params.expressions {
+                crate::parameters::evaluate(expression, &self.parameters).map_err(|error| {
+                    format!("operation '{}' field '{field}': {error}", operation.name)
+                })?;
             }
         }
         Ok(())
@@ -634,6 +652,46 @@ mod tests {
             document.stock = Some(zone);
             assert!(document.validate().is_err(), "{zone:?} was accepted");
         }
+    }
+
+    #[test]
+    fn parameters_and_expressions_round_trip_and_validate() {
+        use crate::operations::{Operation, OperationParams, OperationType};
+        let mut document = Document {
+            parameters: vec![
+                crate::parameters::Parameter::new("feed", "1200"),
+                crate::parameters::Parameter::new("factor", "2"),
+            ],
+            ..Document::default()
+        };
+        document.operations.push(Operation {
+            id: "cut".to_string(),
+            name: "Cut".to_string(),
+            op_type: OperationType::OutlineCutting,
+            params: OperationParams {
+                expressions: std::collections::BTreeMap::from([(
+                    "speed".to_string(),
+                    "feed * factor".to_string(),
+                )]),
+                ..OperationParams::default()
+            },
+            enabled: true,
+            depends_on: Vec::new(),
+        });
+        assert!(document.validate().is_ok());
+        let json = serde_json::to_string(&document).unwrap();
+        let loaded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.parameters, document.parameters);
+        assert_eq!(loaded.operations[0].params.expressions.len(), 1);
+
+        document.operations[0]
+            .params
+            .expressions
+            .insert("speed".to_string(), "missing + 1".to_string());
+        assert!(document.validate().is_err());
+        document.operations[0].params.expressions.clear();
+        document.parameters[0].expression = "feed +".to_string();
+        assert!(document.validate().is_err());
     }
 
     #[test]
