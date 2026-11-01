@@ -49,6 +49,75 @@ fn cli_list_layers_command() {
 }
 
 #[test]
+fn cli_check_reports_a_project() {
+    let path = temp_dir().join("bw_cli_check.bwp");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &path).unwrap();
+    let cli =
+        Cli::try_parse_from(["BeamWright", "check", path.to_str().unwrap(), "--json"]).unwrap();
+    run(cli).unwrap();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn cli_apply_dry_run_leaves_the_file_untouched() {
+    let project = temp_dir().join("bw_cli_apply.bwp");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let before = fs::read(&project).unwrap();
+    let plan = temp_dir().join("bw_cli_plan.json");
+    fs::write(
+        &plan,
+        r#"{"steps":[{"tool":"add_rectangle","arguments":{"width":10,"height":5}}]}"#,
+    )
+    .unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "apply",
+        project.to_str().unwrap(),
+        "--batch",
+        plan.to_str().unwrap(),
+        "--dry-run",
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    assert_eq!(fs::read(&project).unwrap(), before);
+    let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&plan);
+}
+
+#[test]
+fn cli_apply_writes_the_result() {
+    let project = temp_dir().join("bw_cli_apply_src.bwp");
+    let output = temp_dir().join("bw_cli_apply_out.bwp");
+    let document = beamwright::document::Document::default();
+    beamwright::document::serialization::save_to_file(&document, &project).unwrap();
+    let _ = fs::remove_file(&output);
+    let plan = temp_dir().join("bw_cli_plan_write.json");
+    fs::write(
+        &plan,
+        r#"[{"tool":"add_rectangle","arguments":{"width":10,"height":5}}]"#,
+    )
+    .unwrap();
+    let cli = Cli::try_parse_from([
+        "BeamWright",
+        "apply",
+        project.to_str().unwrap(),
+        "--batch",
+        plan.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+    ])
+    .unwrap();
+    run(cli).unwrap();
+    let saved = beamwright::document::serialization::load_from_file(&output).unwrap();
+    assert_eq!(saved.objects.len(), 1);
+    let _ = fs::remove_file(&project);
+    let _ = fs::remove_file(&output);
+    let _ = fs::remove_file(&plan);
+}
+
+#[test]
 fn cli_import_command() {
     let source = temp_dir().join("bw_cli_import.svg");
     let output = temp_dir().join("bw_cli_import.bwp");

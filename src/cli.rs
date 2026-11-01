@@ -105,6 +105,26 @@ pub enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+    /// Preflight a project or drawing without exporting
+    Check {
+        path: PathBuf,
+        /// Print the full report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply a JSON batch of tool calls and save the project
+    Apply {
+        input: PathBuf,
+        /// JSON plan with a "steps" array (or a bare array)
+        #[arg(long)]
+        batch: PathBuf,
+        /// Write the result here instead of overwriting the input
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Validate and report without saving
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Measure build, export, save and G-code times on a synthetic project
     Bench {
         /// Number of objects to create
@@ -311,6 +331,85 @@ pub fn run(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
+        Some(Commands::Check { path, json }) => {
+            let outcome = crate::import::format::import_with_report(&path)?;
+            let report = crate::preflight::check(&outcome.document);
+            if json {
+                let text = serde_json::to_string_pretty(&report.to_json())
+                    .map_err(|error| BeamError::InvalidInput(error.to_string()))?;
+                println!("{text}");
+            } else {
+                println!(
+                    "{}: {} error(s), {} warning(s)",
+                    if report.is_ok() { "ready" } else { "not ready" },
+                    report.errors.len(),
+                    report.warnings.len()
+                );
+                for issue in &report.errors {
+                    println!("error [{}] {}", issue.code, issue.message);
+                }
+                for issue in &report.warnings {
+                    println!("warning [{}] {}", issue.code, issue.message);
+                }
+            }
+            if !report.is_ok() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Some(Commands::Apply {
+            input,
+            batch,
+            output,
+            dry_run,
+        }) => {
+            let text = std::fs::read_to_string(&batch)?;
+            let plan: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|error| BeamError::InvalidInput(format!("invalid batch JSON: {error}")))?;
+            let steps = plan
+                .get("steps")
+                .and_then(serde_json::Value::as_array)
+                .or_else(|| plan.as_array())
+                .cloned()
+                .ok_or_else(|| {
+                    BeamError::InvalidInput(
+                        "the batch must be an array or an object with a steps array".to_string(),
+                    )
+                })?;
+            let mut server = crate::mcp::McpServer::new();
+            let opened = server.handle(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "open_project",
+                    "arguments": {"path": input.to_string_lossy()}
+                }
+            }));
+            if let Some(message) = response_error(&opened) {
+                return Err(BeamError::InvalidInput(message));
+            }
+            let result = server.apply_batch(&steps)?;
+            if !dry_run {
+                let target = output.unwrap_or_else(|| input.clone());
+                let saved = server.handle(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "save_project",
+                        "arguments": {"path": target.to_string_lossy()}
+                    }
+                }));
+                if let Some(message) = response_error(&saved) {
+                    return Err(BeamError::InvalidInput(message));
+                }
+            }
+            let text = serde_json::to_string_pretty(&result)
+                .map_err(|error| BeamError::InvalidInput(error.to_string()))?;
+            println!("{text}");
+            Ok(())
+        }
         Some(Commands::Bench { objects }) => {
             run_bench(objects);
             Ok(())
@@ -336,6 +435,14 @@ pub fn run(cli: Cli) -> Result<()> {
 ///
 /// This is the measurement tool: run it on the target
 /// hardware to record import, export, save and G-code times.
+fn response_error(response: &serde_json::Value) -> Option<String> {
+    response
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 fn run_bench(count: usize) {
     use std::time::Instant;
 

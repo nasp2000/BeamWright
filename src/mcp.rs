@@ -89,6 +89,81 @@ impl McpServer {
         }
     }
 
+    /// Apply several tools atomically.
+    ///
+    /// The whole editor state is snapshotted; on the first failure it is restored
+    /// and the error names the step. On success the per-step undo entries are
+    /// replaced by one batch entry.
+    pub fn apply_batch(&mut self, steps: &[Value]) -> Result<Value> {
+        if steps.is_empty() {
+            return Err(BeamError::InvalidInput(
+                "the batch has no steps".to_string(),
+            ));
+        }
+        if steps.len() > 200 {
+            return Err(BeamError::InvalidInput(
+                "a batch is limited to 200 steps".to_string(),
+            ));
+        }
+        for step in steps {
+            let tool = step
+                .get("tool")
+                .and_then(Value::as_str)
+                .ok_or_else(|| missing("tool"))?;
+            if matches!(
+                tool,
+                "apply_batch"
+                    | "open_project"
+                    | "save_project"
+                    | "import_file"
+                    | "export_svg"
+                    | "export_dxf"
+                    | "export_gcode"
+            ) {
+                return Err(BeamError::InvalidInput(format!(
+                    "'{tool}' cannot run inside a batch"
+                )));
+            }
+        }
+        let before = self.editor.clone();
+        let before_clipboard = self.clipboard.clone();
+        let before_path = self.path.clone();
+        let mut results = Vec::with_capacity(steps.len());
+        for (index, step) in steps.iter().enumerate() {
+            let tool = step.get("tool").and_then(Value::as_str).unwrap_or_default();
+            let arguments = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            match self.call_tool(tool, &arguments) {
+                Ok(value) => results.push(json!({
+                    "index": index,
+                    "tool": tool,
+                    "result": value,
+                })),
+                Err(error) => {
+                    self.editor = before;
+                    self.clipboard = before_clipboard;
+                    self.path = before_path;
+                    return Err(BeamError::InvalidInput(format!(
+                        "step {index} ({tool}) failed: {error}"
+                    )));
+                }
+            }
+        }
+        let document_before = before.document;
+        self.editor.history = before.history;
+        self.editor.history.record(&document_before, "Agent batch");
+        let ids = self.editor.selection.ids().to_vec();
+        for id in ids {
+            if self.editor.document.object(&id).is_none() {
+                self.editor.selection.remove(&id);
+            }
+        }
+        Ok(json!({
+            "ok": true,
+            "applied": steps.len(),
+            "results": results,
+        }))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn call_tool(&mut self, name: &str, arguments: &Value) -> Result<Value> {
         match name {
@@ -798,6 +873,24 @@ impl McpServer {
                     "warnings": report.warnings
                 }))
             }
+            "check_job" => {
+                let report = match string(arguments, "path") {
+                    Some(path) => {
+                        let outcome =
+                            crate::import::format::import_with_report(std::path::Path::new(&path))?;
+                        crate::preflight::check(&outcome.document)
+                    }
+                    None => crate::preflight::check(&self.editor.document),
+                };
+                Ok(report.to_json())
+            }
+            "apply_batch" => {
+                let steps = arguments
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| missing("steps"))?;
+                self.apply_batch(steps)
+            }
             "estimate" => {
                 let (_, report) = crate::gcode::render_job(
                     &self.editor.document,
@@ -1325,6 +1418,21 @@ fn tool_definitions() -> Vec<Value> {
             json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
         ),
         tool("estimate", "Estimate job paths, lines, bytes and duration."),
+        tool_with(
+            "check_job",
+            "Preflight the document (or a project file): errors and warnings with codes, before exporting.",
+            json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        ),
+        tool_with(
+            "apply_batch",
+            "Apply several tools atomically: all-or-nothing, one undo step, the failing step is named.",
+            json!({"type": "object", "properties": {
+                "steps": {"type": "array", "items": {"type": "object", "properties": {
+                    "tool": {"type": "string"},
+                    "arguments": {"type": "object"}
+                }, "required": ["tool"]}}
+            }, "required": ["steps"]}),
+        ),
     ]
 }
 
@@ -1435,6 +1543,76 @@ mod tests {
         let list = server.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
         let tools = list["result"]["tools"].as_array().unwrap();
         assert!(tools.len() >= 15);
+    }
+
+    #[test]
+    fn a_batch_applies_every_step_as_one_undo_entry() {
+        let mut server = McpServer::new();
+        let steps = json!([
+            {"tool": "add_rectangle", "arguments": {"width": 10.0, "height": 5.0}},
+            {"tool": "add_circle", "arguments": {"radius": 2.0, "x": 20.0}}
+        ]);
+        let result = server.apply_batch(steps.as_array().unwrap()).unwrap();
+        assert_eq!(result["applied"], 2);
+        assert_eq!(server.editor.document.objects.len(), 2);
+        assert_eq!(server.editor.history.undo_len(), 1);
+        assert_eq!(server.editor.history.undo_label(), Some("Agent batch"));
+    }
+
+    #[test]
+    fn a_failed_batch_restores_the_document_and_history() {
+        let mut server = McpServer::new();
+        let steps = json!([
+            {"tool": "add_rectangle", "arguments": {"width": 10.0, "height": 5.0}},
+            {"tool": "add_circle", "arguments": {"radius": -1.0}},
+            {"tool": "add_rectangle", "arguments": {"width": 1.0, "height": 1.0}}
+        ]);
+        let error = server.apply_batch(steps.as_array().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("step 1 (add_circle)"), "{error}");
+        assert_eq!(server.editor.document.objects.len(), 0);
+        assert_eq!(server.editor.history.undo_len(), 0);
+    }
+
+    #[test]
+    fn a_batch_rejects_file_tools() {
+        let mut server = McpServer::new();
+        let steps = json!([{"tool": "save_project", "arguments": {"path": "/tmp/x.bwp"}}]);
+        assert!(server.apply_batch(steps.as_array().unwrap()).is_err());
+        let empty: Vec<serde_json::Value> = Vec::new();
+        assert!(server.apply_batch(&empty).is_err());
+    }
+
+    #[test]
+    fn check_job_reports_warnings_and_errors() {
+        let mut server = McpServer::new();
+        let report = call(&mut server, "check_job", json!({}));
+        assert!(report["result"]["ok"].as_bool().unwrap());
+        assert!(
+            report["result"]["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|issue| issue["code"] == "empty-document")
+        );
+
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 5.0}),
+        );
+        call(
+            &mut server,
+            "add_text",
+            json!({"x": 1.0, "y": 1.0, "content": "hi"}),
+        );
+        let report = call(&mut server, "check_job", json!({}));
+        assert!(
+            report["result"]["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|issue| issue["code"] == "text-not-outlined")
+        );
     }
 
     #[test]
