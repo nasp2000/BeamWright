@@ -58,9 +58,13 @@ pub fn process_luma(
     }
     settings.validate().map_err(BeamError::InvalidInput)?;
 
-    let mut adjusted: Vec<f32> = luma
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let quantize = |value: f32| value.round().clamp(0.0, 255.0) as u8;
+    // One byte per pixel instead of four keeps the peak allocation of a large
+    // image low enough for old machines.
+    let mut adjusted: Vec<u8> = luma
         .iter()
-        .map(|value| adjust(f32::from(*value), settings))
+        .map(|value| quantize(adjust(f32::from(*value), settings)))
         .collect();
     if settings.enhance_radius_px > 0 && settings.enhance_amount > 0.0 {
         enhance(
@@ -72,50 +76,49 @@ pub fn process_luma(
         );
     }
 
-    let mut burn = vec![false; adjusted.len()];
-    match settings.mode {
-        ImageMode::Threshold => {
-            for (index, value) in adjusted.iter().enumerate() {
-                burn[index] = *value < f32::from(settings.threshold);
-            }
-        }
-        ImageMode::FloydSteinberg => {
-            burn = diffuse(&adjusted, width, height, &FLOYD_STEINBERG, 16);
-        }
-        ImageMode::Atkinson => {
-            burn = diffuse(&adjusted, width, height, &ATKINSON, 8);
-        }
-        ImageMode::Stucki => {
-            burn = diffuse(&adjusted, width, height, &STUCKI, 42);
-        }
-        ImageMode::Jarvis => {
-            burn = diffuse(&adjusted, width, height, &JARVIS, 48);
-        }
-        ImageMode::Sierra => {
-            burn = diffuse(&adjusted, width, height, &SIERRA, 32);
-        }
-        ImageMode::Burkes => {
-            burn = diffuse(&adjusted, width, height, &BURKES, 32);
-        }
+    let power = match settings.mode {
+        ImageMode::Threshold => adjusted
+            .iter()
+            .map(|value| if *value < settings.threshold { 255 } else { 0 })
+            .collect(),
+        ImageMode::FloydSteinberg => diffuse(&adjusted, width, height, &FLOYD_STEINBERG, 16),
+        ImageMode::Atkinson => diffuse(&adjusted, width, height, &ATKINSON, 8),
+        ImageMode::Stucki => diffuse(&adjusted, width, height, &STUCKI, 42),
+        ImageMode::Jarvis => diffuse(&adjusted, width, height, &JARVIS, 48),
+        ImageMode::Sierra => diffuse(&adjusted, width, height, &SIERRA, 32),
+        ImageMode::Burkes => diffuse(&adjusted, width, height, &BURKES, 32),
         ImageMode::OrderedDither => {
+            let mut power = vec![0u8; adjusted.len()];
             for y in 0..height {
                 for x in 0..width {
                     let index = y * width + x;
                     let limit = (f32::from(BAYER_8[y % 8][x % 8]) + 0.5) * 255.0 / 64.0;
-                    burn[index] = adjusted[index] < limit;
+                    power[index] = if f32::from(adjusted[index]) < limit {
+                        255
+                    } else {
+                        0
+                    };
                 }
             }
+            power
         }
         ImageMode::Halftone => {
+            let mut power = vec![0u8; adjusted.len()];
             for y in 0..height {
                 for x in 0..width {
                     let index = y * width + x;
                     let limit = (f32::from(CLUSTER_4[y % 4][x % 4]) + 0.5) * 255.0 / 16.0;
-                    burn[index] = adjusted[index] < limit;
+                    power[index] = if f32::from(adjusted[index]) < limit {
+                        255
+                    } else {
+                        0
+                    };
                 }
             }
+            power
         }
         ImageMode::Newsprint => {
+            let mut power = vec![0u8; adjusted.len()];
             let (sin, cos) = settings.halftone_angle_degrees.to_radians().sin_cos();
             for y in 0..height {
                 for x in 0..width {
@@ -125,25 +128,18 @@ pub fn process_luma(
                     let u = (rx + ry) % 8;
                     let v = (rx + 2 * ry) % 8;
                     let limit = (f32::from(BAYER_8[u][v]) + 0.5) * 255.0 / 64.0;
-                    burn[index] = adjusted[index] < limit;
+                    power[index] = if f32::from(adjusted[index]) < limit {
+                        255
+                    } else {
+                        0
+                    };
                 }
             }
+            power
         }
-        ImageMode::Sketch => {
-            burn = sketch(&adjusted, width, height, settings.threshold);
-        }
-        // Grayscale keeps the prepared tone and derives the power map below.
-        ImageMode::Grayscale => {}
-    }
-    let power = if settings.mode == ImageMode::Grayscale {
-        adjusted
-            .iter()
-            .map(|value| (255.0 - value).round().clamp(0.0, 255.0) as u8)
-            .collect()
-    } else {
-        burn.iter()
-            .map(|burned| if *burned { 255 } else { 0 })
-            .collect()
+        ImageMode::Sketch => sketch(&adjusted, width, height, settings.threshold),
+        // Grayscale keeps the prepared tone as the power.
+        ImageMode::Grayscale => adjusted.iter().map(|value| 255 - value).collect(),
     };
     Ok(RasterBitmap {
         width,
@@ -238,44 +234,57 @@ const JARVIS: [(i32, i32, i32); 12] = [
     clippy::cast_sign_loss
 )]
 fn diffuse(
-    adjusted: &[f32],
+    adjusted: &[u8],
     width: usize,
     height: usize,
     kernel: &[(i32, i32, i32)],
     divisor: i32,
-) -> Vec<bool> {
-    let mut values = adjusted.to_vec();
-    let mut burn = vec![false; adjusted.len()];
+) -> Vec<u8> {
+    // Only three rows of error are needed: every kernel pushes errors to the
+    // current row and at most two rows below, so the image itself stays one
+    // byte per pixel.
+    let mut power = vec![0u8; adjusted.len()];
+    let mut errors = [
+        vec![0.0_f32; width],
+        vec![0.0_f32; width],
+        vec![0.0_f32; width],
+    ];
     for y in 0..height {
+        let row = y % 3;
         for x in 0..width {
             let index = y * width + x;
-            let old = values[index];
+            let old = f32::from(adjusted[index]) + errors[row][x];
             let new = if old < 128.0 { 0.0 } else { 255.0 };
-            burn[index] = new == 0.0;
+            power[index] = if new == 0.0 { 255 } else { 0 };
             let error = old - new;
             for (dx, dy, weight) in kernel {
                 let nx = x as i32 + dx;
                 let ny = y as i32 + dy;
                 if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                    let target = ny as usize * width + nx as usize;
-                    values[target] += error * (*weight as f32) / (divisor as f32);
+                    let target = ny as usize % 3;
+                    errors[target][nx as usize] += error * (*weight as f32) / (divisor as f32);
                 }
             }
         }
+        errors[row].fill(0.0);
     }
-    burn
+    power
 }
 
 /// Burn the edges found by a Sobel operator. `threshold` scales the gradient
 /// that is considered an edge; flat areas stay unburned.
-#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-fn sketch(adjusted: &[f32], width: usize, height: usize, threshold: u8) -> Vec<bool> {
-    let mut burn = vec![false; adjusted.len()];
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn sketch(adjusted: &[u8], width: usize, height: usize, threshold: u8) -> Vec<u8> {
+    let mut power = vec![0u8; adjusted.len()];
     if width < 3 || height < 3 {
-        return burn;
+        return power;
     }
     let limit = f32::from(threshold) * 4.0;
-    let at = |x: usize, y: usize| adjusted[y * width + x];
+    let at = |x: usize, y: usize| f32::from(adjusted[y * width + x]);
     for y in 1..height - 1 {
         for x in 1..width - 1 {
             let gx = -at(x - 1, y - 1) + at(x + 1, y - 1) - 2.0 * at(x - 1, y) + 2.0 * at(x + 1, y)
@@ -285,44 +294,75 @@ fn sketch(adjusted: &[f32], width: usize, height: usize, threshold: u8) -> Vec<b
                 + at(x - 1, y + 1)
                 + 2.0 * at(x, y + 1)
                 + at(x + 1, y + 1);
-            burn[y * width + x] = gx.hypot(gy) > limit;
+            if gx.hypot(gy) > limit {
+                power[y * width + x] = 255;
+            }
         }
     }
-    burn
+    power
 }
 
 /// Unsharp mask: add the difference between the image and a box blur.
-fn enhance(values: &mut [f32], width: usize, height: usize, radius: usize, amount: f32) {
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn enhance(values: &mut [u8], width: usize, height: usize, radius: usize, amount: f32) {
+    if radius == 0 || amount <= 0.0 {
+        return;
+    }
     let blurred = box_blur(values, width, height, radius);
     for (value, blurred) in values.iter_mut().zip(blurred) {
-        *value = (*value + amount * (*value - blurred)).clamp(0.0, 255.0);
+        let original = f32::from(*value);
+        let sharpened = original + amount * (original - f32::from(blurred));
+        *value = sharpened.round().clamp(0.0, 255.0) as u8;
     }
 }
 
-fn box_blur(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
-    if radius == 0 {
+/// Sliding-window box blur on one-byte values, with integer accumulators.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn box_blur(values: &[u8], width: usize, height: usize, radius: usize) -> Vec<u8> {
+    if radius == 0 || width == 0 || height == 0 {
         return values.to_vec();
     }
-    let mut horizontal = vec![0.0; values.len()];
-    #[allow(clippy::cast_precision_loss)]
+    let mut horizontal = vec![0u8; values.len()];
+    let last = width - 1;
     for y in 0..height {
+        let row = y * width;
+        let initial_end = radius.min(last);
+        let mut sum: u32 = (0..=initial_end).map(|x| u32::from(values[row + x])).sum();
         for x in 0..width {
-            let start = x.saturating_sub(radius);
-            let end = (x + radius).min(width - 1);
-            let sum: f32 = (start..=end).map(|sx| values[y * width + sx]).sum();
-            let count = (end - start + 1) as f32;
-            horizontal[y * width + x] = sum / count;
+            let left = x.saturating_sub(radius);
+            let right = (x + radius).min(last);
+            let count = (right - left + 1) as u32;
+            horizontal[row + x] = ((sum + count / 2) / count) as u8;
+            if x + radius + 1 < width {
+                sum += u32::from(values[row + x + radius + 1]);
+            }
+            if x >= radius {
+                sum -= u32::from(values[row + x - radius]);
+            }
         }
     }
-    let mut out = vec![0.0; values.len()];
-    #[allow(clippy::cast_precision_loss)]
-    for y in 0..height {
-        let start = y.saturating_sub(radius);
-        let end = (y + radius).min(height - 1);
-        for x in 0..width {
-            let sum: f32 = (start..=end).map(|sy| horizontal[sy * width + x]).sum();
-            let count = (end - start + 1) as f32;
-            out[y * width + x] = sum / count;
+    let mut out = vec![0u8; values.len()];
+    let last_row = height - 1;
+    for x in 0..width {
+        let initial_end = radius.min(last_row);
+        let mut sum: u32 = (0..=initial_end)
+            .map(|y| u32::from(horizontal[y * width + x]))
+            .sum();
+        for y in 0..height {
+            let top = y.saturating_sub(radius);
+            let bottom = (y + radius).min(last_row);
+            let count = (bottom - top + 1) as u32;
+            out[y * width + x] = ((sum + count / 2) / count) as u8;
+            if y + radius + 1 < height {
+                sum += u32::from(horizontal[(y + radius + 1) * width + x]);
+            }
+            if y >= radius {
+                sum -= u32::from(horizontal[(y - radius) * width + x]);
+            }
         }
     }
     out
@@ -432,6 +472,7 @@ pub fn process_object(
         )));
     }
     let luma = picture.to_luma8();
+    drop(picture);
     let width = usize::try_from(luma.width()).unwrap_or(0);
     let height = usize::try_from(luma.height()).unwrap_or(0);
     process_luma(luma.as_raw(), width, height, &image.settings)
@@ -448,6 +489,7 @@ pub fn process_file(path: &std::path::Path, settings: &ImageSettings) -> Result<
         )));
     }
     let luma = image.to_luma8();
+    drop(image);
     process_luma(
         luma.as_raw(),
         luma.width() as usize,
@@ -671,6 +713,51 @@ mod tests {
         config.highlight_lift = 0.0;
         config.shadow_lift = -1.0;
         assert!(adjust(0.0, &config).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_box_blur_preserves_flat_areas() {
+        let values = [77_u8; 5 * 4];
+        let blurred = box_blur(&values, 5, 4, 2);
+        assert_eq!(blurred, values);
+        assert_eq!(box_blur(&values, 5, 4, 0), values);
+    }
+
+    #[test]
+    fn the_box_blur_matches_a_naive_average() {
+        let values: Vec<u8> = (0..7 * 3)
+            .map(|index: usize| u8::try_from(index * 17 % 256).unwrap())
+            .collect();
+        let blurred = box_blur(&values, 7, 3, 1);
+        for y in 0..3_usize {
+            for x in 0..7_usize {
+                let mut sum = 0u32;
+                let mut count = 0u32;
+                for sy in y.saturating_sub(1)..=(y + 1).min(2) {
+                    for sx in x.saturating_sub(1)..=(x + 1).min(6) {
+                        sum += u32::from(values[sy * 7 + sx]);
+                        count += 1;
+                    }
+                }
+                let expected = u8::try_from((sum + count / 2) / count).unwrap_or(255);
+                // The separable pass rounds once between the two directions, so
+                // it may differ from the exact 2-D average by one level.
+                let difference = (i16::from(blurred[y * 7 + x]) - i16::from(expected)).abs();
+                assert!(difference <= 1, "{x},{y}: {difference}");
+            }
+        }
+    }
+
+    #[test]
+    fn enhancement_with_zero_amount_changes_nothing() {
+        let mut values: Vec<u8> = (0..16)
+            .map(|index: usize| u8::try_from(index * 13).unwrap())
+            .collect();
+        let original = values.clone();
+        enhance(&mut values, 4, 4, 2, 0.0);
+        assert_eq!(values, original);
+        enhance(&mut values, 4, 4, 0, 1.0);
+        assert_eq!(values, original);
     }
 
     #[test]

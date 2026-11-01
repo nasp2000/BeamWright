@@ -393,6 +393,7 @@ pub struct BeamWrightApp {
     report_open: bool,
     preview_toolpaths: bool,
     image_previews: std::collections::HashMap<String, ImagePreview>,
+    burn_preview: Option<BurnPreview>,
     image_original_previews: std::collections::HashMap<String, egui::TextureHandle>,
     image_adjust: Option<String>,
     image_adjust_snapshot: Option<Document>,
@@ -864,11 +865,20 @@ struct Toast {
 struct ImagePreview {
     /// Black burns on white paper, used by the canvas and the normal preview.
     texture: egui::TextureHandle,
-    /// The same preview in the burn-map palette, used only by Adjust image.
-    burn_texture: egui::TextureHandle,
     path: String,
     settings: crate::objects::ImageSettings,
     crop: Option<crate::objects::ImageCrop>,
+}
+
+/// The burn-map texture of the image currently open in Adjust image.
+///
+/// Only one exists at a time: keeping one per image would double the texture
+/// memory of a project with many images.
+struct BurnPreview {
+    object_id: String,
+    settings: crate::objects::ImageSettings,
+    crop: Option<crate::objects::ImageCrop>,
+    texture: egui::TextureHandle,
 }
 
 impl Default for BeamWrightApp {
@@ -885,6 +895,7 @@ impl BeamWrightApp {
             crate::config::preferences::AppPreferences::load_or_default(&preferences_path)
                 .unwrap_or_default();
         let mut editor = EditorState::new(document.clone());
+        editor.set_history_limit(preferences.drawing.undo_steps);
         editor.canvas.grid_spacing_mm = preferences.drawing.grid_spacing_mm;
         editor.snap_step_mm = preferences.drawing.snap_step_mm;
         editor.snap_enabled = preferences.drawing.snap_enabled;
@@ -965,6 +976,7 @@ impl BeamWrightApp {
             report_open: false,
             preview_toolpaths: false,
             image_previews: std::collections::HashMap::new(),
+            burn_preview: None,
             image_original_previews: std::collections::HashMap::new(),
             image_adjust: None,
             image_adjust_snapshot: None,
@@ -6521,6 +6533,37 @@ impl BeamWrightApp {
         }
     }
 
+    fn burn_preview_texture(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+        image: &crate::objects::ImageObject,
+    ) -> Option<egui::TextureHandle> {
+        let current = self.burn_preview.as_ref().is_some_and(|preview| {
+            preview.object_id == id
+                && preview.settings == image.settings
+                && preview.crop == image.crop
+        });
+        if !current {
+            let bitmap =
+                crate::raster::process_object(std::path::Path::new(&image.path), image).ok()?;
+            let texture = ctx.load_texture(
+                format!("burn-preview-{id}"),
+                preview_color_image(&bitmap, true),
+                egui::TextureOptions::NEAREST,
+            );
+            self.burn_preview = Some(BurnPreview {
+                object_id: id.to_string(),
+                settings: image.settings,
+                crop: image.crop,
+                texture,
+            });
+        }
+        self.burn_preview
+            .as_ref()
+            .map(|preview| preview.texture.clone())
+    }
+
     fn open_image_adjust(&mut self) {
         let Some(id) = self.editor.selection.ids().first().cloned() else {
             return;
@@ -6620,13 +6663,15 @@ impl BeamWrightApp {
         let mut target_dpi = self.image_target_dpi;
         let mut target_width_mm = self.image_target_width_mm;
         let original_texture = self.original_image_texture(ctx, &image);
-        let processed_texture = self.image_previews.get(&id).map(|preview| {
-            if burn_map {
-                preview.burn_texture.clone()
-            } else {
-                preview.texture.clone()
-            }
-        });
+        let processed_texture = self
+            .image_previews
+            .get(&id)
+            .map(|preview| preview.texture.clone());
+        let burn_texture = if burn_map {
+            self.burn_preview_texture(ctx, &id, &image)
+        } else {
+            None
+        };
 
         let mut close = false;
         let mut cancel = false;
@@ -6663,7 +6708,8 @@ impl BeamWrightApp {
                             ui.label("Preview");
                             ui.checkbox(&mut burn_map, "Burn map");
                         });
-                        if let Some(texture) = &processed_texture {
+                        if let Some(texture) = burn_texture.as_ref().or(processed_texture.as_ref())
+                        {
                             ui.add(
                                 egui::Image::new(texture)
                                     .max_size(egui::vec2(410.0, 300.0))
@@ -7085,16 +7131,10 @@ impl BeamWrightApp {
                 preview_color_image(&bitmap, false),
                 egui::TextureOptions::NEAREST,
             );
-            let burn_texture = ctx.load_texture(
-                format!("image-preview-{id}-burn-map"),
-                preview_color_image(&bitmap, true),
-                egui::TextureOptions::NEAREST,
-            );
             self.image_previews.insert(
                 id,
                 ImagePreview {
                     texture,
-                    burn_texture,
                     path,
                     settings,
                     crop,
@@ -9254,6 +9294,8 @@ impl BeamWrightApp {
         self.editor.select_whole_group = self.preferences.drawing.select_whole_group;
         self.editor.guides_visible = self.preferences.drawing.guides_visible;
         self.editor.snap_guides = self.preferences.drawing.snap_guides;
+        self.editor
+            .set_history_limit(self.preferences.drawing.undo_steps);
         self.dark_mode = self.preferences.general.theme == "dark";
     }
 
@@ -9606,6 +9648,15 @@ impl BeamWrightApp {
                                 .truncate(),
                         )
                         .on_hover_text(data);
+                        ui.end_row();
+                        ui.label("Undo steps");
+                        ui.add(
+                            egui::DragValue::new(&mut self.preferences.drawing.undo_steps)
+                                .range(5..=200),
+                        )
+                        .on_hover_text(
+                            "Snapshots kept in memory; lower values use less memory on old machines",
+                        );
                         ui.end_row();
                         ui.label("Preferences file");
                         let file = self.preferences_path.display().to_string();

@@ -2499,6 +2499,11 @@ impl EditorState {
         Some(action)
     }
 
+    /// Keep at most `steps` undo snapshots from now on.
+    pub fn set_history_limit(&mut self, steps: usize) {
+        self.history.set_limit(steps);
+    }
+
     /// Undo several steps at once and return the last reverted action.
     pub fn jump_history(&mut self, steps: usize) -> Option<String> {
         let action = self.history.jump_to(&mut self.document, steps)?;

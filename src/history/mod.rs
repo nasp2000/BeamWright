@@ -88,6 +88,14 @@ impl History {
         Some(action)
     }
 
+    /// Change how many snapshots are kept, dropping the oldest ones.
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit.max(1);
+        while self.undo.len() > self.limit {
+            self.undo.remove(0);
+        }
+    }
+
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
@@ -163,6 +171,33 @@ mod tests {
             },
         ));
         document
+    }
+
+    #[test]
+    fn lowering_the_limit_drops_only_the_oldest_steps() {
+        let mut document = Document::default();
+        let mut history = History::new(10);
+        let layer_id = document.layers[0].id.clone();
+        for index in 0..5 {
+            history.record(&document, &format!("Step {index}"));
+            document.add_object(Object::new(
+                layer_id.clone(),
+                Shape::Rect {
+                    width: 1.0,
+                    height: 1.0,
+                    corner_radius: 0.0,
+                },
+            ));
+        }
+        assert_eq!(history.labels().len(), 5);
+        history.set_limit(2);
+        assert_eq!(history.labels(), vec!["Step 3", "Step 4"]);
+        assert_eq!(
+            history.jump_to(&mut document, 10),
+            Some("Step 3".to_string())
+        );
+        assert_eq!(history.undo_len(), 0);
+        assert_eq!(history.limit, 2);
     }
 
     #[test]

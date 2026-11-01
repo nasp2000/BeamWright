@@ -89,6 +89,9 @@ pub struct DrawingPrefs {
     /// Largest raster image accepted on import, in pixels.
     #[serde(default = "default_max_image_pixels")]
     pub max_image_pixels: u64,
+    /// Number of undo snapshots kept; lower values use less memory.
+    #[serde(default = "default_undo_steps")]
+    pub undo_steps: usize,
 }
 
 impl Default for DrawingPrefs {
@@ -114,6 +117,7 @@ impl Default for DrawingPrefs {
             select_whole_group: true,
             scroll_zoom_step: default_scroll_zoom_step(),
             max_image_pixels: default_max_image_pixels(),
+            undo_steps: default_undo_steps(),
         }
     }
 }
@@ -143,6 +147,9 @@ impl DrawingPrefs {
         }
         if !(1_000_000..=500_000_000).contains(&self.max_image_pixels) {
             return Err("image pixel limit must be between 1 and 500 million".to_string());
+        }
+        if !(5..=200).contains(&self.undo_steps) {
+            return Err("undo steps must be between 5 and 200".to_string());
         }
         Ok(())
     }
@@ -174,6 +181,10 @@ fn default_scroll_zoom_step() -> f64 {
 
 fn default_max_image_pixels() -> u64 {
     50_000_000
+}
+
+fn default_undo_steps() -> usize {
+    50
 }
 
 #[cfg(test)]
@@ -211,6 +222,26 @@ mod drawing_tests {
     #[test]
     fn default_valid() {
         assert!(DrawingPrefs::default().validate().is_ok());
+    }
+
+    #[test]
+    fn undo_steps_are_bounded() {
+        assert_eq!(DrawingPrefs::default().undo_steps, 50);
+        assert!(DrawingPrefs::default().validate().is_ok());
+        for steps in [0_usize, 4, 201] {
+            let prefs = DrawingPrefs {
+                undo_steps: steps,
+                ..DrawingPrefs::default()
+            };
+            assert!(prefs.validate().is_err(), "{steps} was accepted");
+        }
+        for steps in [5_usize, 50, 200] {
+            let prefs = DrawingPrefs {
+                undo_steps: steps,
+                ..DrawingPrefs::default()
+            };
+            assert!(prefs.validate().is_ok(), "{steps} was rejected");
+        }
     }
 
     #[test]
