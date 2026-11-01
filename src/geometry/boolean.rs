@@ -1,4 +1,4 @@
-//! Polygon boolean operations (PLAN.md §6.8).
+//! Polygon boolean operations.
 //!
 //! The implementation is Greiner–Hormann: both polygons are stored as circular
 //! linked lists, every edge crossing is inserted as a shared vertex, and the
@@ -11,7 +11,7 @@
 //! removed, edges that only touch at a vertex are treated as non-crossing, and a
 //! self-intersecting polygon is used as given.
 
-/// Boolean operation kinds (PLAN.md §6.8).
+/// Boolean operation kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOp {
     Union,

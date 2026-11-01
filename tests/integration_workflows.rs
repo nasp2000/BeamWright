@@ -1,4 +1,4 @@
-//! Cross-module workflows from PLAN.md §27.2: file round-trips, profiles,
+//! Cross-module workflows: file round-trips, profiles,
 //! recovery, raster jobs and preview data.
 
 use std::fs;

@@ -1,4 +1,4 @@
-//! Fonts installed on the machine, plus the bundled fallback (PLAN.md §7).
+//! Fonts installed on the machine, plus the bundled fallback.
 //!
 //! The catalogue is built once from the platform font directories (or from
 //! `BEAMWRIGHT_FONT_DIRS`) and is never written to. Text objects store the

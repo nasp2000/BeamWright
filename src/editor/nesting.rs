@@ -1,4 +1,4 @@
-//! Nesting selected parts into the work area (PLAN.md §19.3).
+//! Nesting selected parts into the work area.
 //!
 //! The proposal is plain data: it never touches the document, so the interface
 //! can show it and the user decides whether to apply it.

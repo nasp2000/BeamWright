@@ -10,7 +10,7 @@ use super::paths::{flatten, fmt_num};
 ///
 /// Each visible object becomes one `LWPOLYLINE` with the transform baked into the
 /// vertices. Bézier segments are flattened. Layers are written as entity layer
-/// names and colours; no layer table is emitted. See `docs/formats.md`.
+/// names and colours; no layer table is emitted.
 pub fn export_dxf(document: &Document) -> Result<String> {
     let mut out = String::new();
     out.push_str("0\nSECTION\n2\nENTITIES\n");

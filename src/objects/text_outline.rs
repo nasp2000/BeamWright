@@ -1,4 +1,4 @@
-//! Convert text to vector outlines with the bundled font (PLAN.md §7).
+//! Convert text to vector outlines with the bundled font.
 //!
 //! The outline geometry is produced from a font embedded in the binary, so it
 //! never depends on a font installed on the machine. The font is `DejaVu Sans`

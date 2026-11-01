@@ -1,4 +1,4 @@
-//! Node editing (PLAN.md §6.3, §6.4).
+//! Node editing.
 //!
 //! Editing works on one path object at a time. Entering the mode bakes the
 //! object transform into the path, so node positions are document millimetres

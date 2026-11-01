@@ -1,4 +1,4 @@
-//! Live bridge to the running editor (PLAN.md §25).
+//! Live bridge to the running editor.
 //!
 //! The GUI listens on `127.0.0.1` and executes JSON-RPC requests on the UI
 //! thread, against the document that is actually open. `BeamWright mcp --live`

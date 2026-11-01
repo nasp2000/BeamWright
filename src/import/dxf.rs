@@ -18,7 +18,7 @@ const SUPPORTED: [&str; 6] = ["LINE", "CIRCLE", "ARC", "LWPOLYLINE", "ELLIPSE", 
 /// Supported entities: `LINE`, `CIRCLE`, `ARC`, `LWPOLYLINE`, `ELLIPSE` and
 /// `SPLINE` (sampled as a B-spline). Layer names and entity colours are preserved
 /// when present. Other entity types are skipped and reported in
-/// [`DxfImport::warnings`]; see `docs/formats.md`.
+/// [`DxfImport::warnings`].
 pub fn import_dxf(src: &str) -> Result<Document> {
     Ok(import_dxf_report(src)?.document)
 }

@@ -4,7 +4,7 @@
     clippy::cast_sign_loss
 )]
 
-//! Material test grid: a matrix of speed and power cells (PLAN.md §18.6).
+//! Material test grid: a matrix of speed and power cells.
 //!
 //! This is preparation only. The grid is ordinary geometry with one outline
 //! operation per cell, so the generated job differs only in feed rate and

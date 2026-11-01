@@ -32,7 +32,7 @@ pub const DEFAULT_CATEGORIES: [&str; 12] = [
 /// built-in library is identical on every run.
 const BUILTIN_TIMESTAMP: &str = "2024-01-01T00:00:00Z";
 
-/// Metadata shared by every profile type (PLAN.md §11.3, §11.4, §11.7).
+/// Metadata shared by every profile type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileMeta {
     #[serde(default)]

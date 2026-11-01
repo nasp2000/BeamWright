@@ -1,4 +1,4 @@
-/// Intersection test helpers (PLAN.md §6.9).
+/// Intersection test helpers.
 #[derive(Debug, Clone, Copy)]
 pub struct Segment {
     pub x1: f64,

@@ -334,7 +334,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
 /// Build a synthetic project and time the main file and job operations.
 ///
-/// This is the measurement tool from PLAN.md §25.3: run it on the target
+/// This is the measurement tool: run it on the target
 /// hardware to record import, export, save and G-code times.
 fn run_bench(count: usize) {
     use std::time::Instant;

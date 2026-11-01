@@ -1,6 +1,6 @@
 use crate::geometry::boolean::polygon_area;
 
-/// Offset parameters (PLAN.md §6.8, §18).
+/// Offset parameters.
 #[derive(Debug, Clone, Copy)]
 pub struct OffsetParams {
     pub distance: f64,

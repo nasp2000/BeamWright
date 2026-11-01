@@ -171,7 +171,7 @@ impl Guide {
     }
 }
 
-/// The main document (PLAN.md §4.1).
+/// The main document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub name: String,

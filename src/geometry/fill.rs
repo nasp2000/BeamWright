@@ -19,7 +19,7 @@ pub fn fill_with_holes(
     lines
 }
 
-/// Options for a linear fill (PLAN.md §18.1).
+/// Options for a linear fill.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FillOptions {
     /// Distance between two fill lines, in millimetres.

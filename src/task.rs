@@ -1,4 +1,4 @@
-//! Background work with progress and cancellation (PLAN.md §24, §25.2).
+//! Background work with progress and cancellation.
 //!
 //! Work runs on a worker thread and returns one value through a channel. The
 //! interface polls it every frame and can stop waiting; the worker checks the

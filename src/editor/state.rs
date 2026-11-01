@@ -10,7 +10,7 @@ use super::hit_test::distance_point_to_segment;
 use super::selection::Selection;
 use super::tools::Tool;
 
-/// Grid duplicate settings (PLAN.md §19.1).
+/// Grid duplicate settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridOptions {
     pub columns: usize,
@@ -2308,7 +2308,7 @@ impl EditorState {
         changed
     }
 
-    /// Duplicate the selection along a line or around a circle (PLAN.md §19.2).
+    /// Duplicate the selection along a line or around a circle.
     ///
     /// Linear copies step by `(dx, dy)` and may be rotated by a fixed angle each
     /// (repetition by distance is the same operation with a normalised step).

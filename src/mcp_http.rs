@@ -1,4 +1,4 @@
-//! MCP over HTTP for remote agents (PLAN.md §25).
+//! MCP over HTTP for remote agents.
 //!
 //! A small HTTP/1.1 front-end in front of the live bridge: `POST /mcp` with a
 //! JSON-RPC body, authenticated with `Authorization: Bearer <token>`. The

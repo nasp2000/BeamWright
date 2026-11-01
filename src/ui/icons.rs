@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_lines)]
 
-//! Icons for menus and panels (PLAN.md §23).
+//! Icons for menus and panels.
 //!
 //! The icons are drawn in code on a 16×16 grid and rasterised once into a 32×32
 //! texture per icon, so no extra dependency or image asset is needed. They are
