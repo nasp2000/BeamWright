@@ -9,8 +9,9 @@ pub enum FileMode {
     ExportSvg,
     ExportDxf,
     ExportHpgl,
+    ExportEps,
     ExportPdf,
-    ExportPng,
+    ExportImage,
     ExportGcode,
     RelinkImage,
     ImportProfiles,
@@ -32,8 +33,9 @@ impl FileMode {
             FileMode::ExportSvg => "Export SVG",
             FileMode::ExportDxf => "Export DXF",
             FileMode::ExportHpgl => "Export HPGL",
+            FileMode::ExportEps => "Export EPS",
             FileMode::ExportPdf => "Export PDF",
-            FileMode::ExportPng => "Export PNG",
+            FileMode::ExportImage => "Export image",
             FileMode::ExportGcode => "Export G-code",
             FileMode::RelinkImage => "Relink image",
             FileMode::ImportProfiles => "Import profiles",
@@ -53,8 +55,9 @@ impl FileMode {
             FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
+            | FileMode::ExportEps
             | FileMode::ExportPdf
-            | FileMode::ExportPng
+            | FileMode::ExportImage
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
             | FileMode::ExportMachines
@@ -73,8 +76,9 @@ impl FileMode {
             FileMode::ExportGcode | FileMode::PreviewGcode => "nc",
             FileMode::ExportDxf => "dxf",
             FileMode::ExportHpgl => "plt",
+            FileMode::ExportEps => "eps",
             FileMode::ExportPdf => "pdf",
-            FileMode::ExportPng | FileMode::RelinkImage => "png",
+            FileMode::ExportImage | FileMode::RelinkImage => "png",
             FileMode::OpenProject | FileMode::ImportFile | FileMode::ExportSvg => "svg",
             FileMode::ImportProfiles
             | FileMode::ExportProfiles
@@ -96,13 +100,14 @@ impl FileMode {
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::SaveArchive => "Saves .bwpz files with the images inside",
             FileMode::ImportFile => {
-                "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
+                "Shows .svg, .dxf, .plt, .hpgl, .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
             }
             FileMode::ExportSvg => "Saves .svg files",
             FileMode::ExportDxf => "Saves .dxf files",
             FileMode::ExportHpgl => "Saves .plt and .hpgl files",
+            FileMode::ExportEps => "Saves .eps files",
             FileMode::ExportPdf => "Saves .pdf files",
-            FileMode::ExportPng => "Saves .png files",
+            FileMode::ExportImage => "Saves .png, .bmp, .tif, .tiff and .webp files",
             FileMode::ExportGcode => {
                 "Saves .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
             }
@@ -131,6 +136,8 @@ impl FileMode {
                     extension.as_str(),
                     "svg"
                         | "dxf"
+                        | "plt"
+                        | "hpgl"
                         | "png"
                         | "jpg"
                         | "jpeg"
@@ -144,8 +151,11 @@ impl FileMode {
             FileMode::ExportSvg => extension == "svg",
             FileMode::ExportDxf => extension == "dxf",
             FileMode::ExportHpgl => extension == "plt" || extension == "hpgl",
+            FileMode::ExportEps => extension == "eps",
             FileMode::ExportPdf => extension == "pdf",
-            FileMode::ExportPng => extension == "png",
+            FileMode::ExportImage => {
+                matches!(extension.as_str(), "png" | "bmp" | "tif" | "tiff" | "webp")
+            }
             FileMode::ExportGcode => matches!(
                 extension.as_str(),
                 "nc" | "gcode" | "gco" | "gc" | "ngc" | "tap" | "cnc" | "mpf" | "txt"
@@ -364,7 +374,7 @@ impl FileDialog {
                 FileMode::SaveProject
                     | FileMode::ExportSvg
                     | FileMode::ExportDxf
-                    | FileMode::ExportPng
+                    | FileMode::ExportImage
                     | FileMode::ExportGcode
                     | FileMode::ExportProfiles
                     | FileMode::ExportMachines
@@ -392,8 +402,9 @@ impl FileDialog {
             | FileMode::ExportSvg
             | FileMode::ExportDxf
             | FileMode::ExportHpgl
+            | FileMode::ExportEps
             | FileMode::ExportPdf
-            | FileMode::ExportPng
+            | FileMode::ExportImage
             | FileMode::ExportGcode
             | FileMode::ExportProfiles
             | FileMode::ExportMachines

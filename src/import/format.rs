@@ -13,6 +13,7 @@ pub fn detect_format(path: &Path) -> &'static str {
     {
         Some("svg") => "svg",
         Some("dxf") => "dxf",
+        Some("plt" | "hpgl") => "hpgl",
         Some("png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff" | "webp" | "gif") => "raster",
         Some("bwp") => "bwp",
         Some("bwpz") => "archive",
@@ -61,6 +62,17 @@ pub fn import_with_report_cancellable(
                 warnings: report.warnings,
             }
         }
+        "hpgl" => {
+            let source = std::fs::read_to_string(path)?;
+            if cancel() {
+                return Err(BeamError::InvalidInput("cancelled".to_string()));
+            }
+            let report = crate::import::hpgl::import_hpgl_report(&source)?;
+            ImportOutcome {
+                document: report.document,
+                warnings: report.warnings,
+            }
+        }
         "bwp" => {
             let (document, note) = crate::document::serialization::load_with_recovery(path)?;
             ImportOutcome {
@@ -83,7 +95,7 @@ pub fn import_with_report_cancellable(
         },
         other => {
             return Err(BeamError::Unsupported(format!(
-                "cannot import '{other}' files; supported formats: .svg, .dxf, raster images, .bwp and .bwpz"
+                "cannot import '{other}' files; supported formats: .svg, .dxf, .plt, .hpgl, raster images, .bwp and .bwpz"
             )));
         }
     };
@@ -119,6 +131,14 @@ pub fn import_with_report_limited(path: &Path, max_pixels: u64) -> Result<Import
             document: crate::import::raster::import_raster_with_limit(path, max_pixels)?,
             warnings: Vec::new(),
         }),
+        "hpgl" => {
+            let source = std::fs::read_to_string(path)?;
+            let report = crate::import::hpgl::import_hpgl_report(&source)?;
+            Ok(ImportOutcome {
+                document: report.document,
+                warnings: report.warnings,
+            })
+        }
         "bwp" => {
             let (document, note) = crate::document::serialization::load_with_recovery(path)?;
             Ok(ImportOutcome {
@@ -127,7 +147,7 @@ pub fn import_with_report_limited(path: &Path, max_pixels: u64) -> Result<Import
             })
         }
         other => Err(BeamError::Unsupported(format!(
-            "cannot import '{other}' files; supported formats: .svg, .dxf, raster images and .bwp"
+            "cannot import '{other}' files; supported formats: .svg, .dxf, .plt, .hpgl, raster images and .bwp"
         ))),
     }
 }

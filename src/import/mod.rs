@@ -1,5 +1,6 @@
 pub mod dxf;
 pub mod format;
+pub mod hpgl;
 pub mod raster;
 pub mod svg;
 
