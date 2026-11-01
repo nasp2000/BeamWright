@@ -220,7 +220,126 @@ pub fn build_toolpaths_cancellable(
             }
         }
     }
+    if let Some(stock) = document.stock {
+        let clipped = clip_to_stock(&mut toolpaths, stock);
+        if clipped > 0 {
+            warnings.push(format!(
+                "{clipped} cut segment(s) were clipped to the material area"
+            ));
+        }
+    }
     Ok((toolpaths, warnings))
+}
+
+/// Clip every cut move to the material area.
+///
+/// Cuts that cross the border are shortened, cuts outside it are dropped and
+/// the laser is turned off between the remaining parts. Travels are kept so the
+/// head can reach the next part. Returns the number of cut moves that were
+/// shortened or removed.
+pub fn clip_to_stock(toolpaths: &mut [Toolpath], stock: crate::document::MaterialZone) -> usize {
+    let mut affected = 0;
+    for toolpath in toolpaths.iter_mut() {
+        let mut output = toolpath.clone();
+        output.moves.clear();
+        let mut path_point: Option<Point2> = None;
+        let mut head: Option<Point2> = None;
+        let mut laser_on = false;
+        for movement in &toolpath.moves {
+            let point = Point2::new(movement.x, movement.y);
+            if movement.kind == MoveKind::Travel {
+                output.push(MoveKind::Travel, movement.x, movement.y);
+                path_point = Some(point);
+                head = Some(point);
+                laser_on = false;
+                continue;
+            }
+            let Some(from) = path_point else {
+                path_point = Some(point);
+                continue;
+            };
+            path_point = Some(point);
+            let Some((start, end)) = clip_segment(from, point, stock) else {
+                affected += 1;
+                if laser_on {
+                    output.push(MoveKind::Travel, from.x, from.y);
+                    head = Some(from);
+                    laser_on = false;
+                }
+                continue;
+            };
+            if start > 0.0 || end < 1.0 {
+                affected += 1;
+            }
+            let entry = lerp(from, point, start);
+            let exit = lerp(from, point, end);
+            if !laser_on || start > 0.0 {
+                // A travel also switches the laser off before the new part.
+                if !head.is_some_and(|point| point.distance(entry) <= 1e-9) {
+                    output.push(MoveKind::Travel, entry.x, entry.y);
+                }
+            }
+            if let Some(power) = movement.power {
+                output.push_powered(MoveKind::Cut, exit.x, exit.y, power);
+            } else {
+                output.push(MoveKind::Cut, exit.x, exit.y);
+            }
+            head = Some(exit);
+            laser_on = true;
+            if end < 1.0 {
+                // Stop the cut at the border; the rest of the segment is outside.
+                output.push(MoveKind::Travel, exit.x, exit.y);
+                laser_on = false;
+            }
+        }
+        *toolpath = output;
+    }
+    affected
+}
+
+/// Liang–Barsky clip of one segment against a rectangle.
+///
+/// Returns the parameters of the visible part along `from → to`, or `None` when
+/// the segment misses the rectangle entirely.
+fn clip_segment(
+    from: Point2,
+    to: Point2,
+    stock: crate::document::MaterialZone,
+) -> Option<(f64, f64)> {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let mut start = 0.0_f64;
+    let mut end = 1.0_f64;
+    for (direction, distance) in [
+        (-dx, from.x - stock.x_mm),
+        (dx, stock.max_x() - from.x),
+        (-dy, from.y - stock.y_mm),
+        (dy, stock.max_y() - from.y),
+    ] {
+        if direction.abs() < 1e-12 {
+            if distance < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let ratio = distance / direction;
+        if direction < 0.0 {
+            if ratio > end {
+                return None;
+            }
+            if ratio > start {
+                start = ratio;
+            }
+        } else {
+            if ratio < start {
+                return None;
+            }
+            if ratio < end {
+                end = ratio;
+            }
+        }
+    }
+    Some((start, end))
 }
 
 /// Build a raster toolpath for one image object.
@@ -1576,6 +1695,110 @@ mod tests {
         assert!((cuts[1] - 150.0).abs() < 1e-9);
         assert!((cuts[2] - 100.0).abs() < 1e-9);
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn stock(x: f64, y: f64, width: f64, height: f64) -> crate::document::MaterialZone {
+        crate::document::MaterialZone::new(x, y, width, height)
+    }
+
+    #[test]
+    fn cuts_inside_the_material_area_are_untouched() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 1.0, 1.0);
+        toolpath.push(MoveKind::Cut, 9.0, 9.0);
+        let mut toolpaths = vec![toolpath.clone()];
+        let affected = clip_to_stock(&mut toolpaths, stock(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(affected, 0);
+        assert_eq!(toolpaths[0].moves.len(), 2);
+        assert_eq!(toolpaths[0].moves[1].x, 9.0);
+        assert_eq!(toolpaths[0].moves[1].y, 9.0);
+    }
+
+    #[test]
+    fn a_cut_crossing_the_border_is_shortened() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, -5.0, 5.0);
+        toolpath.push(MoveKind::Cut, 15.0, 5.0);
+        let mut toolpaths = vec![toolpath];
+        let affected = clip_to_stock(&mut toolpaths, stock(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(affected, 1);
+        let moves = &toolpaths[0].moves;
+        let cut = moves
+            .iter()
+            .find(|movement| movement.kind == MoveKind::Cut)
+            .unwrap();
+        assert!((cut.x - 10.0).abs() < 1e-9);
+        assert!((cut.y - 5.0).abs() < 1e-9);
+        // The entry point is inside the material, on the left border.
+        let travel = moves
+            .iter()
+            .rev()
+            .find(|movement| movement.kind == MoveKind::Travel)
+            .unwrap();
+        assert!(travel.x >= -1e-9);
+    }
+
+    #[test]
+    fn cuts_outside_the_material_area_are_removed() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, 20.0, 20.0);
+        toolpath.push(MoveKind::Cut, 30.0, 30.0);
+        let mut toolpaths = vec![toolpath];
+        let affected = clip_to_stock(&mut toolpaths, stock(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(affected, 1);
+        assert!(toolpaths[0].is_empty());
+    }
+
+    #[test]
+    fn clipping_keeps_the_per_move_power() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 500.0, 1);
+        toolpath.push(MoveKind::Travel, -5.0, 5.0);
+        toolpath.push_powered(MoveKind::Cut, 15.0, 5.0, 125.0);
+        let mut toolpaths = vec![toolpath];
+        clip_to_stock(&mut toolpaths, stock(0.0, 0.0, 10.0, 10.0));
+        let cut = toolpaths[0]
+            .moves
+            .iter()
+            .find(|movement| movement.kind == MoveKind::Cut)
+            .unwrap();
+        assert_eq!(cut.power, Some(125.0));
+    }
+
+    #[test]
+    fn a_job_is_clipped_to_the_material_area_and_reported() {
+        let mut document = Document {
+            width_mm: 300.0,
+            height_mm: 200.0,
+            ..Document::default()
+        };
+        document.stock = Some(stock(0.0, 0.0, 10.0, 10.0));
+        let layer_id = document.layers[0].id.clone();
+        let object = Object::new(
+            layer_id,
+            Shape::Rect {
+                width: 20.0,
+                height: 5.0,
+                corner_radius: 0.0,
+            },
+        );
+        document.add_object(object);
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_ne!(toolpaths.len(), 0);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("clipped")),
+            "the clip was not reported: {warnings:?}"
+        );
+        let material = document.stock.unwrap();
+        for toolpath in &toolpaths {
+            for movement in &toolpath.moves {
+                if movement.kind == MoveKind::Cut {
+                    assert!(movement.x >= material.x_mm - 1e-9);
+                    assert!(movement.x <= material.max_x() + 1e-9);
+                    assert!(movement.y >= material.y_mm - 1e-9);
+                    assert!(movement.y <= material.max_y() + 1e-9);
+                }
+            }
+        }
     }
 
     #[test]

@@ -1305,6 +1305,91 @@ impl BeamWrightApp {
                         ));
                         ui.end_row();
                     });
+                ui.separator();
+                ui.strong("Material area");
+                let (page_width, page_height) = (
+                    self.editor.document.width_mm,
+                    self.editor.document.height_mm,
+                );
+                let mut enabled = self.editor.document.stock.is_some();
+                if ui
+                    .checkbox(&mut enabled, "Clip the job to a material area")
+                    .on_hover_text(
+                        "Cuts are shortened or dropped outside this rectangle; travels keep the head moving",
+                    )
+                    .changed()
+                {
+                    self.editor.document.stock = if enabled {
+                        Some(crate::document::MaterialZone::new(
+                            0.0,
+                            0.0,
+                            page_width,
+                            page_height,
+                        ))
+                    } else {
+                        None
+                    };
+                    changed = true;
+                }
+                if let Some(stock) = &mut self.editor.document.stock {
+                    egui::Grid::new("material_area_grid")
+                        .num_columns(2)
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("X / Y");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut stock.x_mm)
+                                            .speed(1.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut stock.y_mm)
+                                            .speed(1.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+                            ui.label("Width / height");
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut stock.width_mm)
+                                            .speed(1.0)
+                                            .range(0.1..=100_000.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut stock.height_mm)
+                                            .speed(1.0)
+                                            .range(0.1..=100_000.0)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed();
+                            });
+                            ui.end_row();
+                        });
+                    ui.horizontal(|ui| {
+                        if ui.button("Use the page size").clicked() {
+                            *stock = crate::document::MaterialZone::new(
+                                0.0,
+                                0.0,
+                                page_width,
+                                page_height,
+                            );
+                            changed = true;
+                        }
+                        if let Err(error) = stock.validate() {
+                            ui.colored_label(egui::Color32::from_rgb(200, 60, 60), error);
+                        }
+                    });
+                }
             });
         if changed {
             self.needs_fit = true;

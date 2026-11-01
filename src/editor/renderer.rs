@@ -70,6 +70,11 @@ impl Theme {
         Color32::from_rgb(0, 170, 90)
     }
 
+    /// Outline of the material area the job is clipped to.
+    pub fn material(self) -> Color32 {
+        Color32::from_rgb(47, 182, 166)
+    }
+
     pub fn object_color(self, color: Option<&str>, fallback: Color32) -> Color32 {
         color
             .and_then(parse_hex_color)
@@ -109,6 +114,7 @@ pub fn paint_canvas(
 ) {
     painter.rect_filled(rect, 0.0, theme.canvas_background());
     paint_page(painter, rect, editor, theme);
+    paint_material_area(painter, rect, editor, theme);
     if editor.canvas.grid_visible {
         paint_grid(painter, rect, editor, theme);
     }
@@ -456,6 +462,28 @@ fn paint_page(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme)
             egui::StrokeKind::Inside,
         );
     }
+}
+
+/// Draw the material rectangle the job is clipped to, over the page.
+fn paint_material_area(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {
+    let Some(stock) = editor.document.stock else {
+        return;
+    };
+    let area = Rect::from_two_pos(
+        screen_pos(rect, editor, Point2::new(stock.x_mm, stock.max_y())),
+        screen_pos(rect, editor, Point2::new(stock.max_x(), stock.y_mm)),
+    )
+    .intersect(rect);
+    if !area.is_positive() {
+        return;
+    }
+    let color = theme.material();
+    painter.rect_filled(
+        area,
+        0.0,
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 18),
+    );
+    painter.rect_stroke(area, 0.0, Stroke::new(1.5, color), egui::StrokeKind::Inside);
 }
 
 fn paint_grid(painter: &Painter, rect: Rect, editor: &EditorState, theme: Theme) {

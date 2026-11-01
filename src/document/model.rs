@@ -101,6 +101,58 @@ impl Object {
     }
 }
 
+/// A rectangle in document millimetres.
+///
+/// Used for the material area a job is clipped to and, from the same type, for
+/// areas the job must avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MaterialZone {
+    pub x_mm: f64,
+    pub y_mm: f64,
+    pub width_mm: f64,
+    pub height_mm: f64,
+}
+
+impl MaterialZone {
+    pub fn new(x_mm: f64, y_mm: f64, width_mm: f64, height_mm: f64) -> Self {
+        Self {
+            x_mm,
+            y_mm,
+            width_mm,
+            height_mm,
+        }
+    }
+
+    pub fn max_x(self) -> f64 {
+        self.x_mm + self.width_mm
+    }
+
+    pub fn max_y(self) -> f64 {
+        self.y_mm + self.height_mm
+    }
+
+    pub fn contains(self, point: crate::geometry::Point2) -> bool {
+        point.x >= self.x_mm
+            && point.x <= self.max_x()
+            && point.y >= self.y_mm
+            && point.y <= self.max_y()
+    }
+
+    pub fn validate(self) -> Result<(), String> {
+        if !self.x_mm.is_finite() || !self.y_mm.is_finite() {
+            return Err("material area position must be finite".to_string());
+        }
+        if !self.width_mm.is_finite()
+            || !self.height_mm.is_finite()
+            || self.width_mm <= 0.0
+            || self.height_mm <= 0.0
+        {
+            return Err("material area must have a positive size".to_string());
+        }
+        Ok(())
+    }
+}
+
 /// A horizontal or vertical guide line, in document millimetres.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
@@ -134,6 +186,9 @@ pub struct Document {
     /// Guide lines drawn over the page and used by snapping.
     #[serde(default)]
     pub guides: Vec<Guide>,
+    /// Material rectangle; when set, jobs are clipped to it.
+    #[serde(default)]
+    pub stock: Option<MaterialZone>,
     pub format_version: u32,
 }
 
@@ -237,6 +292,7 @@ impl Default for Document {
             objects: Vec::new(),
             operations: Vec::new(),
             guides: Vec::new(),
+            stock: None,
             format_version: CURRENT_FORMAT_VERSION,
         }
     }
@@ -277,6 +333,11 @@ impl Document {
         }
         if self.format_version == 0 {
             return Err("format version must be >= 1".to_string());
+        }
+        if let Some(stock) = self.stock {
+            stock
+                .validate()
+                .map_err(|error| format!("material area: {error}"))?;
         }
         if self.layers.is_empty() {
             return Err("document must have at least one layer".to_string());
@@ -518,6 +579,42 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_material_area_round_trips_and_validates() {
+        let mut document = Document::default();
+        assert!(document.stock.is_none());
+        document.stock = Some(MaterialZone::new(10.0, 20.0, 100.0, 80.0));
+        assert!(document.validate().is_ok());
+        let json = serde_json::to_string(&document).unwrap();
+        let loaded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.stock, document.stock);
+
+        // Projects written before the material area existed load without one.
+        let old = r#"{"name":"Old","unit":"Millimeters","width_mm":300,"height_mm":200,
+            "origin":"BottomLeft","layers":[],"objects":[],"format_version":2}"#;
+        let loaded: Document = serde_json::from_str(old).unwrap();
+        assert!(loaded.stock.is_none());
+
+        for zone in [
+            MaterialZone::new(0.0, 0.0, 0.0, 10.0),
+            MaterialZone::new(0.0, 0.0, 10.0, -1.0),
+            MaterialZone::new(f64::NAN, 0.0, 10.0, 10.0),
+        ] {
+            document.stock = Some(zone);
+            assert!(document.validate().is_err(), "{zone:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_material_area_contains_its_edges() {
+        let zone = MaterialZone::new(0.0, 0.0, 10.0, 5.0);
+        assert!(zone.contains(crate::geometry::Point2::new(0.0, 0.0)));
+        assert!(zone.contains(crate::geometry::Point2::new(10.0, 5.0)));
+        assert!(!zone.contains(crate::geometry::Point2::new(10.1, 2.0)));
+        assert_eq!(zone.max_x(), 10.0);
+        assert_eq!(zone.max_y(), 5.0);
     }
 
     #[test]
