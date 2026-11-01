@@ -18,6 +18,7 @@ pub struct McpServer {
     editor: EditorState,
     path: Option<PathBuf>,
     clipboard: Vec<Object>,
+    checkpoints: crate::checkpoints::Checkpoints,
 }
 
 impl Default for McpServer {
@@ -53,6 +54,7 @@ impl McpServer {
             editor: EditorState::new(Document::default()),
             path: None,
             clipboard: Vec::new(),
+            checkpoints: crate::checkpoints::Checkpoints::new(),
         }
     }
 
@@ -298,6 +300,61 @@ impl McpServer {
                     .collect();
                 Ok(json!({"objects": objects}))
             }
+            "checkpoint" => {
+                let name = string(arguments, "name").unwrap_or_else(|| {
+                    format!("checkpoint {}", self.checkpoints.len().saturating_add(1))
+                });
+                let index = self.checkpoints.push(name.clone(), &self.editor.document);
+                Ok(json!({
+                    "index": index,
+                    "name": name,
+                    "total": self.checkpoints.len(),
+                }))
+            }
+            "restore_checkpoint" => {
+                let index = if let Some(index) = arguments.get("index").and_then(Value::as_u64) {
+                    usize::try_from(index).map_err(|_| {
+                        BeamError::InvalidInput("the checkpoint index is too large".to_string())
+                    })?
+                } else {
+                    let name = string(arguments, "name").ok_or_else(|| {
+                        BeamError::InvalidInput("pass a checkpoint index or name".to_string())
+                    })?;
+                    self.checkpoints.find(&name).ok_or_else(|| {
+                        BeamError::InvalidInput(format!("unknown checkpoint: {name}"))
+                    })?
+                };
+                let document = self.checkpoints.get(index).ok_or_else(|| {
+                    BeamError::InvalidInput(format!("unknown checkpoint index: {index}"))
+                })?;
+                let name = self
+                    .checkpoints
+                    .name(index)
+                    .unwrap_or("checkpoint")
+                    .to_string();
+                self.editor
+                    .record_action(&format!("Restore checkpoint '{name}'"));
+                self.editor.document = document;
+                let ids = self.editor.selection.ids().to_vec();
+                for id in ids {
+                    if self.editor.document.object(&id).is_none() {
+                        self.editor.selection.remove(&id);
+                    }
+                }
+                Ok(json!({
+                    "index": index,
+                    "name": name,
+                    "objects": self.editor.document.objects.len(),
+                }))
+            }
+            "list_checkpoints" => Ok(json!({
+                "checkpoints": (0..self.checkpoints.len())
+                    .map(|index| json!({
+                        "index": index,
+                        "name": self.checkpoints.name(index),
+                    }))
+                    .collect::<Vec<_>>(),
+            })),
             "list_parameters" => {
                 let document = &self.editor.document;
                 let values = crate::parameters::resolved(&document.parameters);
@@ -1593,6 +1650,23 @@ fn tool_definitions() -> Vec<Value> {
                 "include_hidden": {"type": "boolean"}
             }}),
         ),
+        tool_with(
+            "checkpoint",
+            "Store a named snapshot of the current document; the session keeps the last 16.",
+            json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+        ),
+        tool_with(
+            "restore_checkpoint",
+            "Restore a checkpoint by index or name; the restore is one undo step.",
+            json!({"type": "object", "properties": {
+                "index": {"type": "integer", "minimum": 0},
+                "name": {"type": "string"}
+            }}),
+        ),
+        tool(
+            "list_checkpoints",
+            "List the checkpoints kept in this session.",
+        ),
         tool("estimate", "Estimate job paths, lines, bytes and duration."),
         tool_with(
             "check_job",
@@ -1803,6 +1877,63 @@ mod tests {
                 .iter()
                 .any(|issue| issue["code"] == "text-not-outlined")
         );
+    }
+
+    #[test]
+    fn checkpoints_restore_by_index_and_name() {
+        let mut server = McpServer::new();
+        call(
+            &mut server,
+            "add_rectangle",
+            json!({"width": 10.0, "height": 5.0}),
+        );
+        let saved = call(&mut server, "checkpoint", json!({"name": "before circle"}));
+        assert_eq!(saved["result"]["index"], 0);
+        call(&mut server, "add_circle", json!({"radius": 2.0}));
+        assert_eq!(server.editor.document.objects.len(), 2);
+
+        let restored = call(
+            &mut server,
+            "restore_checkpoint",
+            json!({"name": "before circle"}),
+        );
+        assert_eq!(restored["result"]["objects"], 1);
+        assert_eq!(server.editor.document.objects.len(), 1);
+        assert_eq!(
+            server.editor.history.undo_label(),
+            Some("Restore checkpoint 'before circle'")
+        );
+        let label = server.editor.undo();
+        assert_eq!(label.as_deref(), Some("Restore checkpoint 'before circle'"));
+        assert_eq!(server.editor.document.objects.len(), 2);
+
+        let by_index = call(&mut server, "restore_checkpoint", json!({"index": 0}));
+        assert_eq!(by_index["result"]["objects"], 1);
+        let listed = call(&mut server, "list_checkpoints", json!({}));
+        assert_eq!(listed["result"]["checkpoints"][0]["name"], "before circle");
+    }
+
+    #[test]
+    fn unknown_checkpoints_are_rejected_and_the_ring_is_bounded() {
+        let mut server = McpServer::new();
+        let missing = call(&mut server, "restore_checkpoint", json!({"name": "nope"}));
+        assert!(missing.get("error").is_some());
+        let missing = call(&mut server, "restore_checkpoint", json!({"index": 3}));
+        assert!(missing.get("error").is_some());
+        let missing = call(&mut server, "restore_checkpoint", json!({}));
+        assert!(missing.get("error").is_some());
+        for index in 0..20 {
+            call(
+                &mut server,
+                "checkpoint",
+                json!({"name": format!("cp{index}")}),
+            );
+        }
+        let listed = call(&mut server, "list_checkpoints", json!({}));
+        let checkpoints = listed["result"]["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), crate::checkpoints::MAX_CHECKPOINTS);
+        assert_eq!(checkpoints[0]["name"], "cp4");
+        assert_eq!(checkpoints[0]["index"], 0);
     }
 
     #[test]

@@ -9,6 +9,7 @@
 pub mod app;
 pub mod bridge;
 pub mod centerline;
+pub mod checkpoints;
 pub mod cli;
 pub mod color;
 pub mod config;
