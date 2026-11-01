@@ -56,6 +56,7 @@ enum ContextAction {
     TextToOutlines,
     AdjustImage,
     VectorizeImage,
+    CenterlineImage,
     ExportSvg,
     ExportDxf,
     ExportGcode,
@@ -88,6 +89,7 @@ impl ContextAction {
             ContextAction::TextToOutlines => "Text to outlines",
             ContextAction::AdjustImage => "Adjust image...",
             ContextAction::VectorizeImage => "Vectorize image...",
+            ContextAction::CenterlineImage => "Trace centerline...",
             ContextAction::ExportSvg => "Export selection as SVG...",
             ContextAction::ExportDxf => "Export selection as DXF...",
             ContextAction::ExportGcode => "Export selection as G-code...",
@@ -120,6 +122,7 @@ impl ContextAction {
             ContextAction::TextToOutlines => Icon::TextOutline,
             ContextAction::AdjustImage => Icon::Image,
             ContextAction::VectorizeImage => Icon::Bezier,
+            ContextAction::CenterlineImage => Icon::Pencil,
             ContextAction::ExportSvg | ContextAction::ExportDxf | ContextAction::ExportGcode => {
                 Icon::Export
             }
@@ -165,6 +168,7 @@ fn object_context_actions(
     if image_selected {
         actions.push(ContextAction::AdjustImage);
         actions.push(ContextAction::VectorizeImage);
+        actions.push(ContextAction::CenterlineImage);
     }
     actions.extend([
         ContextAction::ExportSvg,
@@ -4569,7 +4573,9 @@ impl BeamWrightApp {
                 ContextAction::Group => count >= 2,
                 ContextAction::EditNodes => count == 1,
                 ContextAction::TextToOutlines => text_selected,
-                ContextAction::AdjustImage | ContextAction::VectorizeImage => image_selected,
+                ContextAction::AdjustImage
+                | ContextAction::VectorizeImage
+                | ContextAction::CenterlineImage => image_selected,
                 _ => true,
             };
             if icons::button_enabled(ui, enabled, action.icon(), action.label()).clicked() {
@@ -4683,6 +4689,7 @@ impl BeamWrightApp {
             ContextAction::TextToOutlines => self.apply_text_outlines(),
             ContextAction::AdjustImage => self.open_image_adjust(),
             ContextAction::VectorizeImage => self.vectorize_selected_image(),
+            ContextAction::CenterlineImage => self.centerline_selected_image(),
             ContextAction::ExportSvg => {
                 self.export_subset = true;
                 self.open_dialog(FileMode::ExportSvg);
@@ -5710,6 +5717,66 @@ impl BeamWrightApp {
             self.editor.selection.add(new_id.clone());
         }
         self.status = format!("Vectorized into {} contour(s)", created.len());
+    }
+
+    fn centerline_selected_image(&mut self) {
+        let Some(id) = self.editor.selection.ids().first().cloned() else {
+            return;
+        };
+        let Some(object) = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let crate::document::Shape::Image(image) = &object.shape else {
+            return;
+        };
+        let Some((min, max)) = object.bounds() else {
+            return;
+        };
+        let bitmap = match crate::raster::process_object(std::path::Path::new(&image.path), image) {
+            Ok(bitmap) => bitmap,
+            Err(error) => {
+                self.status = format!("Cannot read the image: {error}");
+                return;
+            }
+        };
+        let lines = crate::centerline::trace(&bitmap, max.x - min.x, max.y - min.y, 0.2);
+        if lines.is_empty() {
+            self.status = "The image has no strokes to trace".to_string();
+            return;
+        }
+        self.editor.record_action("Trace centerline");
+        let operation_id = self
+            .editor
+            .document
+            .objects
+            .iter()
+            .find(|candidate| candidate.id == id)
+            .and_then(|candidate| candidate.operation_id.clone());
+        let mut created = Vec::new();
+        for line in &lines {
+            let mut new_object = crate::document::Object::new(
+                object.layer_id.clone(),
+                crate::document::Shape::Path(crate::centerline::to_path(line)),
+            );
+            new_object.name = "Centerline".to_string();
+            new_object.transform = crate::geometry::Transform2::translate(min.x, min.y);
+            new_object.operation_id.clone_from(&operation_id);
+            new_object.style.stroke = Some("#000000".to_string());
+            new_object.style.fill = None;
+            created.push(self.editor.document.add_object(new_object).id.clone());
+        }
+        self.editor.selection.clear();
+        for new_id in &created {
+            self.editor.selection.add(new_id.clone());
+        }
+        self.status = format!("Traced {} centerline(s)", created.len());
     }
 
     fn open_image_adjust(&mut self) {
