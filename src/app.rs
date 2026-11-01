@@ -1207,12 +1207,16 @@ impl BeamWrightApp {
             FileMode::ImportFile => {
                 builder = builder.add_filter(
                     "Drawing or image",
-                    &["svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"],
+                    &[
+                        "svg", "dxf", "png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "gif",
+                    ],
                 );
             }
             FileMode::RelinkImage => {
-                builder =
-                    builder.add_filter("Image", &["png", "jpg", "jpeg", "bmp", "tif", "tiff"]);
+                builder = builder.add_filter(
+                    "Image",
+                    &["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "gif"],
+                );
             }
             FileMode::ExportSvg => builder = builder.add_filter("SVG", &["svg"]),
             FileMode::ExportDxf => builder = builder.add_filter("DXF", &["dxf"]),

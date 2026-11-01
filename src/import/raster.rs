@@ -70,6 +70,22 @@ mod tests {
     }
 
     #[test]
+    fn imports_gif_and_webp() {
+        let image = image::RgbaImage::from_pixel(4, 3, image::Rgba([0, 0, 0, 255]));
+        let gif = temp_dir().join("bw_import_image.gif");
+        image.save(&gif).unwrap();
+        let document = import_raster(&gif).unwrap();
+        assert_eq!(document.objects.len(), 1);
+        let _ = std::fs::remove_file(&gif);
+
+        let webp = temp_dir().join("bw_import_image.webp");
+        image.save(&webp).unwrap();
+        let document = import_raster(&webp).unwrap();
+        assert_eq!(document.objects.len(), 1);
+        let _ = std::fs::remove_file(&webp);
+    }
+
+    #[test]
     fn imports_png_with_physical_size() {
         let path = temp_dir().join("bw_import_image.png");
         let image = image::RgbaImage::from_pixel(4, 3, image::Rgba([255, 0, 0, 255]));

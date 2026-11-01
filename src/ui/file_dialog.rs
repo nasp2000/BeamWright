@@ -85,7 +85,7 @@ impl FileMode {
             FileMode::SaveProject => "Saves .bwp files",
             FileMode::SaveArchive => "Saves .bwpz files with the images inside",
             FileMode::ImportFile => {
-                "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif and .tiff files"
+                "Shows .svg, .dxf, .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
             }
             FileMode::ExportSvg => "Saves .svg files",
             FileMode::ExportDxf => "Saves .dxf files",
@@ -95,7 +95,9 @@ impl FileMode {
             FileMode::ExportGcode => {
                 "Saves .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
             }
-            FileMode::RelinkImage => "Shows .png, .jpg, .jpeg, .bmp, .tif and .tiff files",
+            FileMode::RelinkImage => {
+                "Shows .png, .jpg, .jpeg, .bmp, .tif, .tiff, .webp and .gif files"
+            }
             FileMode::PreviewGcode => {
                 "Shows .nc, .gcode, .gco, .gc, .ngc, .tap, .cnc, .mpf and .txt files"
             }
@@ -116,7 +118,16 @@ impl FileMode {
             FileMode::ImportFile => {
                 matches!(
                     extension.as_str(),
-                    "svg" | "dxf" | "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
+                    "svg"
+                        | "dxf"
+                        | "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "bmp"
+                        | "tif"
+                        | "tiff"
+                        | "webp"
+                        | "gif"
                 )
             }
             FileMode::ExportSvg => extension == "svg",
@@ -131,7 +142,7 @@ impl FileMode {
             FileMode::RelinkImage => {
                 matches!(
                     extension.as_str(),
-                    "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff"
+                    "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff" | "webp" | "gif"
                 )
             }
             FileMode::PreviewGcode => matches!(

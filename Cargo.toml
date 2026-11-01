@@ -31,7 +31,7 @@ thiserror = "=1.0.69"
 ab_glyph = "=0.2.32"
 rfd = "=0.15.3"
 arboard = "=3.7.0"
-image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tiff", "gif", "webp"] }
 kurbo = "=0.13.1"
 quick-xml = "=0.38.4"
 

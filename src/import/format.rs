@@ -13,7 +13,7 @@ pub fn detect_format(path: &Path) -> &'static str {
     {
         Some("svg") => "svg",
         Some("dxf") => "dxf",
-        Some("png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff") => "raster",
+        Some("png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff" | "webp" | "gif") => "raster",
         Some("bwp") => "bwp",
         Some("bwpz") => "archive",
         _ => "unknown",
