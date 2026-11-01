@@ -75,12 +75,14 @@ impl GCodeWriter {
                     let _ = write!(out, "S0{newline}");
                 }
                 let mut laser_on = false;
+                let mut current_power = 0.0;
                 for movement in &toolpath.moves {
                     match movement.kind {
                         MoveKind::Travel => {
                             if laser_on {
                                 let _ = write!(out, "S0{newline}");
                                 laser_on = false;
+                                current_power = 0.0;
                             }
                             if self.options.include_travel || pass == 0 {
                                 let _ = write!(
@@ -92,7 +94,12 @@ impl GCodeWriter {
                             }
                         }
                         MoveKind::Cut => {
+                            let power = movement.power.unwrap_or(toolpath.power);
                             if laser_on {
+                                if (power - current_power).abs() > 0.5 {
+                                    let _ = write!(out, "S{power:.0}{newline}");
+                                    current_power = power;
+                                }
                                 let _ = write!(
                                     out,
                                     "G1 X{} Y{}{newline}",
@@ -102,13 +109,13 @@ impl GCodeWriter {
                             } else {
                                 let _ = write!(
                                     out,
-                                    "G1 X{} Y{} F{:.0} S{:.0}{newline}",
+                                    "G1 X{} Y{} F{:.0} S{power:.0}{newline}",
                                     fmt_num(movement.x, precision),
                                     fmt_num(movement.y, precision),
-                                    toolpath.speed,
-                                    toolpath.power
+                                    toolpath.speed
                                 );
                                 laser_on = true;
+                                current_power = power;
                             }
                         }
                     }
@@ -200,6 +207,24 @@ mod tests {
         let writer = GCodeWriter::new(options);
         let text = writer.render(&[sample()]);
         assert_eq!(text.matches("G0 ").count(), 1);
+    }
+
+    #[test]
+    fn a_move_can_change_the_power_without_turning_the_laser_off() {
+        let mut toolpath = Toolpath::new("Raster", 3000.0, 800.0, 1);
+        toolpath.push(MoveKind::Travel, 0.0, 0.0);
+        toolpath.push_powered(MoveKind::Cut, 1.0, 0.0, 800.0);
+        toolpath.push_powered(MoveKind::Cut, 2.0, 0.0, 400.0);
+        toolpath.push_powered(MoveKind::Cut, 3.0, 0.0, 400.0);
+        toolpath.push_powered(MoveKind::Cut, 4.0, 0.0, 0.0);
+        let text = GCodeWriter::new(GCodeOptions::default()).render(&[toolpath]);
+        assert!(text.contains("G1 X1 Y0 F3000 S800"), "{text}");
+        assert_eq!(text.matches("S400").count(), 1, "{text}");
+        assert_eq!(text.matches("S800").count(), 2, "{text}");
+        // The pass start, the change to zero power and the footer.
+        assert_eq!(text.matches("S0").count(), 3, "{text}");
+        // The unchanged power is not repeated for the third move.
+        assert_eq!(text.matches("G1 X").count(), 4, "{text}");
     }
 
     #[test]

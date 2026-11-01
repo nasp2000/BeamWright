@@ -13,6 +13,11 @@ pub struct Move {
     pub kind: MoveKind,
     pub x: f64,
     pub y: f64,
+    /// Power for this move alone, when it differs from the toolpath power.
+    ///
+    /// Grayscale engraving uses it to vary `S` along the raster; `None` means
+    /// the toolpath power applies.
+    pub power: Option<f64>,
 }
 
 /// One continuous operation: a set of moves repeated for every pass.
@@ -75,7 +80,22 @@ impl Toolpath {
     }
 
     pub fn push(&mut self, kind: MoveKind, x: f64, y: f64) {
-        self.moves.push(Move { kind, x, y });
+        self.moves.push(Move {
+            kind,
+            x,
+            y,
+            power: None,
+        });
+    }
+
+    /// Push a move with its own laser power.
+    pub fn push_powered(&mut self, kind: MoveKind, x: f64, y: f64, power: f64) {
+        self.moves.push(Move {
+            kind,
+            x,
+            y,
+            power: Some(power),
+        });
     }
 
     pub fn start(&self) -> Option<Point2> {
@@ -133,6 +153,15 @@ mod tests {
         toolpath.push(MoveKind::Cut, 3.0, 4.0);
         assert!((toolpath.cut_length() - 5.0).abs() < 1e-9);
         assert!(toolpath.end().is_some());
+    }
+
+    #[test]
+    fn moves_carry_an_optional_power() {
+        let mut toolpath = Toolpath::new("a", 1000.0, 200.0, 1);
+        toolpath.push(MoveKind::Cut, 1.0, 1.0);
+        toolpath.push_powered(MoveKind::Cut, 2.0, 1.0, 120.0);
+        assert_eq!(toolpath.moves[0].power, None);
+        assert_eq!(toolpath.moves[1].power, Some(120.0));
     }
 
     #[test]

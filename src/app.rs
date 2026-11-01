@@ -9284,14 +9284,15 @@ fn preview_color_image(bitmap: &crate::raster::RasterBitmap, burn_map: bool) -> 
     let mut pixels = Vec::with_capacity(width * height * 4);
     for y in 0..height {
         for x in 0..width {
-            let burned = bitmap.get(
+            let level = bitmap.power_at(
                 (x * step).min(bitmap.width - 1),
                 (y * step).min(bitmap.height - 1),
             );
-            let color = match (burn_map, burned) {
+            let color = match (burn_map, level > 0) {
                 (true, true) => BURN_MAP_BURN,
                 (true, false) => BURN_MAP_PAPER,
-                (false, true) => egui::Color32::BLACK,
+                // A grayscale job burns partial power as a grey tone.
+                (false, true) => egui::Color32::from_gray(255 - level),
                 (false, false) => egui::Color32::WHITE,
             };
             pixels.extend_from_slice(&color.to_array());
@@ -9310,7 +9311,7 @@ mod tests {
         let bitmap = crate::raster::RasterBitmap {
             width: 2,
             height: 1,
-            burn: vec![true, false],
+            power: vec![255, 0],
         };
         let image = preview_color_image(&bitmap, false);
         assert_eq!(image.size, [2, 1]);
@@ -9323,7 +9324,7 @@ mod tests {
         let bitmap = crate::raster::RasterBitmap {
             width: 2,
             height: 1,
-            burn: vec![true, false],
+            power: vec![255, 0],
         };
         let image = preview_color_image(&bitmap, true);
         assert_eq!(image.size, [2, 1]);
@@ -9338,7 +9339,7 @@ mod tests {
         let bitmap = crate::raster::RasterBitmap {
             width: 1000,
             height: 500,
-            burn: vec![false; 500_000],
+            power: vec![0; 500_000],
         };
         let image = preview_color_image(&bitmap, false);
         assert!(image.size[0] <= 320);
@@ -9351,7 +9352,7 @@ mod tests {
         let bitmap = crate::raster::RasterBitmap {
             width: 1,
             height: 1,
-            burn: vec![true],
+            power: vec![255],
         };
         let image = preview_color_image(&bitmap, false);
         assert_eq!(image.size, [1, 1]);

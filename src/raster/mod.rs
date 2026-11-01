@@ -4,22 +4,29 @@ use crate::objects::{ImageMode, ImageSettings};
 /// Maximum number of pixels accepted from an imported image.
 pub const MAX_PIXELS: u64 = 50_000_000;
 
-/// Burn/no-burn bitmap produced from an image and its settings.
+/// Power map produced from an image and its settings.
+///
+/// Most modes are binary and store only 0 or 255; grayscale engraving stores the
+/// prepared tone as the power of every pixel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RasterBitmap {
     pub width: usize,
     pub height: usize,
-    /// `true` where the laser burns.
-    pub burn: Vec<bool>,
+    /// Laser power per pixel: 0 does not burn, 255 is full power.
+    pub power: Vec<u8>,
 }
 
 impl RasterBitmap {
     pub fn burned(&self) -> usize {
-        self.burn.iter().filter(|value| **value).count()
+        self.power.iter().filter(|value| **value > 0).count()
     }
 
     pub fn get(&self, x: usize, y: usize) -> bool {
-        self.burn[y * self.width + x]
+        self.power_at(x, y) > 0
+    }
+
+    pub fn power_at(&self, x: usize, y: usize) -> u8 {
+        self.power[y * self.width + x]
     }
 }
 
@@ -125,11 +132,23 @@ pub fn process_luma(
         ImageMode::Sketch => {
             burn = sketch(&adjusted, width, height, settings.threshold);
         }
+        // Grayscale keeps the prepared tone and derives the power map below.
+        ImageMode::Grayscale => {}
     }
+    let power = if settings.mode == ImageMode::Grayscale {
+        adjusted
+            .iter()
+            .map(|value| (255.0 - value).round().clamp(0.0, 255.0) as u8)
+            .collect()
+    } else {
+        burn.iter()
+            .map(|burned| if *burned { 255 } else { 0 })
+            .collect()
+    };
     Ok(RasterBitmap {
         width,
         height,
-        burn,
+        power,
     })
 }
 
@@ -522,7 +541,7 @@ mod object_tests {
         });
         let bitmap = process_object(&path, &object).unwrap();
         // The left half is black, so every cropped pixel burns.
-        assert!(bitmap.burn.iter().all(|value| *value));
+        assert!(bitmap.power.iter().all(|value| *value > 0));
         let _ = std::fs::remove_file(&path);
     }
 }
@@ -652,6 +671,40 @@ mod tests {
         config.highlight_lift = 0.0;
         config.shadow_lift = -1.0;
         assert!(adjust(0.0, &config).abs() < 1e-4);
+    }
+
+    #[test]
+    fn grayscale_mode_maps_tone_to_power() {
+        let bitmap =
+            process_luma(&[0, 64, 192, 255], 4, 1, &settings(ImageMode::Grayscale)).unwrap();
+        assert_eq!(bitmap.power_at(0, 0), 255);
+        assert_eq!(bitmap.power_at(1, 0), 191);
+        assert_eq!(bitmap.power_at(2, 0), 63);
+        assert_eq!(bitmap.power_at(3, 0), 0);
+        assert!(bitmap.get(0, 0));
+        assert!(!bitmap.get(3, 0));
+        assert_eq!(bitmap.burned(), 3);
+    }
+
+    #[test]
+    fn binary_modes_store_only_full_power_or_none() {
+        let bitmap =
+            process_luma(&[0, 100, 200, 255], 2, 2, &settings(ImageMode::Threshold)).unwrap();
+        assert_eq!(bitmap.power, vec![255, 255, 0, 0]);
+        let dithered = process_luma(
+            &[0, 255, 255, 255],
+            2,
+            2,
+            &settings(ImageMode::FloydSteinberg),
+        )
+        .unwrap();
+        assert!(
+            dithered
+                .power
+                .iter()
+                .all(|value| *value == 0 || *value == 255),
+            "a binary mode produced a partial power"
+        );
     }
 
     #[test]

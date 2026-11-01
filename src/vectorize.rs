@@ -172,17 +172,20 @@ mod tests {
     use super::{to_path, trace};
     use crate::raster::RasterBitmap;
 
-    fn bitmap(width: usize, height: usize, burn: Vec<bool>) -> RasterBitmap {
+    fn bitmap(width: usize, height: usize, burn: &[bool]) -> RasterBitmap {
         RasterBitmap {
             width,
             height,
-            burn,
+            power: burn
+                .iter()
+                .map(|value| if *value { 255 } else { 0 })
+                .collect(),
         }
     }
 
     #[test]
     fn a_square_becomes_one_closed_contour() {
-        let image = bitmap(4, 4, vec![true; 16]);
+        let image = bitmap(4, 4, &[true; 16]);
         let loops = trace(&image, 40.0, 40.0, 0.0);
         assert_eq!(loops.len(), 1);
         let path = to_path(&loops[0]);
@@ -195,7 +198,7 @@ mod tests {
         let mut burn = vec![false; 16];
         burn[0] = true;
         burn[15] = true;
-        let image = bitmap(4, 4, burn);
+        let image = bitmap(4, 4, &burn);
         let loops = trace(&image, 4.0, 4.0, 0.0);
         assert_eq!(loops.len(), 2);
     }
@@ -203,7 +206,7 @@ mod tests {
     #[test]
     #[allow(clippy::assert_is_empty)]
     fn an_empty_bitmap_has_no_contours() {
-        let image = bitmap(4, 4, vec![false; 16]);
+        let image = bitmap(4, 4, &[false; 16]);
         assert!(trace(&image, 4.0, 4.0, 0.0).is_empty());
     }
 
@@ -211,7 +214,7 @@ mod tests {
     fn the_coordinates_use_millimetres_and_flip_y() {
         let mut burn = vec![false; 16];
         burn[0] = true;
-        let image = bitmap(4, 4, burn);
+        let image = bitmap(4, 4, &burn);
         let loops = trace(&image, 40.0, 40.0, 0.0);
         assert_eq!(loops.len(), 1);
         let xs: Vec<f64> = loops[0].iter().map(|point| point.x).collect();

@@ -226,7 +226,9 @@ pub fn build_toolpaths_cancellable(
 /// Build a raster toolpath for one image object.
 ///
 /// Consecutive burned pixels in a row become one cut segment; the image's
-/// top-left pixel maps to the object's local top-left corner.
+/// top-left pixel maps to the object's local top-left corner. In grayscale mode
+/// every segment carries its own power, quantised to sixteen levels so equal
+/// tones merge into a single move.
 fn raster_toolpath(
     object: &Object,
     image: &crate::objects::ImageObject,
@@ -253,29 +255,54 @@ fn raster_toolpath(
     let pixel_x = width_mm / bitmap.width as f64;
     #[allow(clippy::cast_precision_loss)]
     let pixel_y = height_mm / bitmap.height as f64;
+    let local = TransformBake {
+        transform: object.transform,
+        pixel_x,
+        pixel_y,
+        height_px: bitmap.height,
+    };
+    let variable = image.settings.mode == crate::objects::ImageMode::Grayscale;
     for row in 0..bitmap.height {
         if row % 64 == 0 && cancel() {
             return Err(cancelled());
         }
-        let mut run_start: Option<usize> = None;
-        for column in 0..=bitmap.width {
-            let burned = column < bitmap.width && bitmap.get(column, row);
-            match (burned, run_start) {
-                (true, None) => run_start = Some(column),
-                (false, Some(start)) => {
-                    let local = TransformBake {
-                        transform: object.transform,
-                        pixel_x,
-                        pixel_y,
-                        height_px: bitmap.height,
-                    };
-                    let (x0, y0) = local.point(start, row);
-                    let (x1, y1) = local.point(column, row);
-                    toolpath.push(MoveKind::Travel, x0, y0);
-                    toolpath.push(MoveKind::Cut, x1, y1);
-                    run_start = None;
+        if variable {
+            let mut run: Option<(usize, u8)> = None;
+            for column in 0..=bitmap.width {
+                let level = if column < bitmap.width {
+                    grayscale_level(bitmap.power_at(column, row))
+                } else {
+                    0
+                };
+                match (level, run) {
+                    (0, None) => {}
+                    (0, Some((start, current))) => {
+                        push_raster_run(&mut toolpath, &local, start, column, row, current);
+                        run = None;
+                    }
+                    (next, Some((_, current))) if next == current => {}
+                    (next, Some((start, current))) => {
+                        push_raster_run(&mut toolpath, &local, start, column, row, current);
+                        run = Some((column, next));
+                    }
+                    (next, None) => run = Some((column, next)),
                 }
-                _ => {}
+            }
+        } else {
+            let mut run_start: Option<usize> = None;
+            for column in 0..=bitmap.width {
+                let burned = column < bitmap.width && bitmap.get(column, row);
+                match (burned, run_start) {
+                    (true, None) => run_start = Some(column),
+                    (false, Some(start)) => {
+                        let (x0, y0) = local.point(start, row);
+                        let (x1, y1) = local.point(column, row);
+                        toolpath.push(MoveKind::Travel, x0, y0);
+                        toolpath.push(MoveKind::Cut, x1, y1);
+                        run_start = None;
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -287,6 +314,27 @@ fn raster_toolpath(
             .with_operation(object.operation_id.as_deref())
             .with_operation_name(resolved.operation_name.as_deref()),
     ))
+}
+
+/// Quantise a 0–255 pixel power to one of sixteen engraving levels.
+fn grayscale_level(power: u8) -> u8 {
+    u8::try_from((u32::from(power) * 16 + 127) / 255).unwrap_or(16)
+}
+
+/// Append one grayscale run, with the toolpath power scaled by `level`/16.
+fn push_raster_run(
+    toolpath: &mut Toolpath,
+    local: &TransformBake,
+    start: usize,
+    end: usize,
+    row: usize,
+    level: u8,
+) {
+    let (x0, y0) = local.point(start, row);
+    let (x1, y1) = local.point(end, row);
+    toolpath.push(MoveKind::Travel, x0, y0);
+    let power = toolpath.power * f64::from(level) / 16.0;
+    toolpath.push_powered(MoveKind::Cut, x1, y1, power);
 }
 
 struct TransformBake {
@@ -778,7 +826,10 @@ pub fn merge_collinear(toolpaths: &mut [Toolpath]) {
             if movement.kind == MoveKind::Cut && merged.len() >= 2 {
                 let last = &merged[merged.len() - 1];
                 let before = &merged[merged.len() - 2];
-                if before.kind == MoveKind::Cut && last.kind == MoveKind::Cut {
+                if before.kind == MoveKind::Cut
+                    && last.kind == MoveKind::Cut
+                    && last.power == movement.power
+                {
                     let first_x = last.x - before.x;
                     let first_y = last.y - before.y;
                     let second_x = movement.x - last.x;
@@ -1495,6 +1546,35 @@ mod tests {
         assert_eq!(toolpaths[0].moves.len(), 4);
         assert_eq!(toolpaths[0].speed, 3000.0);
         assert!((toolpaths[0].power - 200.0).abs() < 1e-9);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn grayscale_image_varies_the_power_along_the_raster() {
+        let path = std::env::temp_dir().join("beamwright_job_grayscale.png");
+        let mut picture = image::GrayImage::new(4, 1);
+        picture.put_pixel(0, 0, image::Luma([0]));
+        picture.put_pixel(1, 0, image::Luma([64]));
+        picture.put_pixel(2, 0, image::Luma([128]));
+        picture.put_pixel(3, 0, image::Luma([255]));
+        picture.save(&path).unwrap();
+        let mut document = image_document(&path);
+        if let Shape::Image(image) = &mut document.objects[0].shape {
+            image.settings.mode = crate::objects::ImageMode::Grayscale;
+        }
+        let (toolpaths, warnings) = build_toolpaths(&document);
+        assert_eq!(warnings.len(), 0);
+        assert_eq!(toolpaths.len(), 1);
+        let cuts: Vec<f64> = toolpaths[0]
+            .moves
+            .iter()
+            .filter(|movement| movement.kind == MoveKind::Cut)
+            .map(|movement| movement.power.unwrap())
+            .collect();
+        assert_eq!(cuts.len(), 3, "each tone change starts a new segment");
+        assert!((cuts[0] - 200.0).abs() < 1e-9);
+        assert!((cuts[1] - 150.0).abs() < 1e-9);
+        assert!((cuts[2] - 100.0).abs() < 1e-9);
         let _ = std::fs::remove_file(&path);
     }
 

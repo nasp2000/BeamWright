@@ -26,6 +26,12 @@ pub enum ImageMode {
     Newsprint,
     /// Edge detection: burns the outlines of the image.
     Sketch,
+    /// Grayscale engraving: every pixel carries its own power.
+    ///
+    /// The prepared luminance becomes the laser power, quantised to 16 levels so
+    /// neighbouring pixels with the same tone merge into one move. This is the
+    /// only mode that writes a variable `S` along the raster.
+    Grayscale,
 }
 
 impl ImageMode {
@@ -42,10 +48,11 @@ impl ImageMode {
             ImageMode::Halftone => "Halftone dots",
             ImageMode::Newsprint => "Newsprint",
             ImageMode::Sketch => "Sketch (edges)",
+            ImageMode::Grayscale => "Grayscale (variable power)",
         }
     }
 
-    pub fn all() -> [ImageMode; 11] {
+    pub fn all() -> [ImageMode; 12] {
         [
             ImageMode::Threshold,
             ImageMode::FloydSteinberg,
@@ -58,6 +65,7 @@ impl ImageMode {
             ImageMode::Halftone,
             ImageMode::Newsprint,
             ImageMode::Sketch,
+            ImageMode::Grayscale,
         ]
     }
 }
